@@ -146,6 +146,18 @@ describe("parseArgs", () => {
 			expect(result.export).toBe("session.jsonl");
 		});
 
+		test("parses --validate-session", () => {
+			const result = parseArgs(["--validate-session", "/tmp/session.jsonl"]);
+			expect(result.validateSession).toBe("/tmp/session.jsonl");
+			expect(result.messages).toEqual([]);
+		});
+
+		test("reports missing --validate-session value", () => {
+			const result = parseArgs(["--validate-session"]);
+			expect(result.validateSession).toBeUndefined();
+			expect(result.diagnostics).toEqual([{ type: "error", message: "--validate-session requires a path" }]);
+		});
+
 		test("parses --thinking", () => {
 			const result = parseArgs(["--thinking", "high"]);
 			expect(result.thinking).toBe("high");

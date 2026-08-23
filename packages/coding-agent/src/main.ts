@@ -56,6 +56,12 @@ import {
 	type SessionCwdIssue,
 } from "./core/session-cwd.ts";
 import { assertValidSessionId, SessionManager } from "./core/session-manager.ts";
+import {
+	formatValidationReport,
+	hasErrors,
+	type SessionValidationReport,
+	validateSessionFile,
+} from "./core/sessions/validator.ts";
 import { collectSettingsDiagnostics, deduplicateDiagnostics } from "./core/settings-diagnostics.ts";
 import { SettingsManager } from "./core/settings-manager.ts";
 import { printTimings, resetTimings, time } from "./core/timings.ts";
@@ -626,6 +632,19 @@ export async function main(args: string[], options?: MainOptions) {
 		}
 		console.log(`Exported to: ${result}`);
 		process.exit(0);
+	}
+
+	if (parsed.validateSession !== undefined) {
+		let report: SessionValidationReport;
+		try {
+			report = validateSessionFile(parsed.validateSession);
+		} catch (error: unknown) {
+			const message = error instanceof Error ? error.message : "Failed to validate session";
+			console.error(chalk.red(`Error: ${message}`));
+			process.exit(1);
+		}
+		console.log(formatValidationReport(report));
+		process.exit(hasErrors(report) ? 1 : 0);
 	}
 
 	let appMode = resolveAppMode(parsed, process.stdin.isTTY, process.stdout.isTTY);
