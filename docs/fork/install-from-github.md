@@ -1,6 +1,6 @@
-# Installing the Fork from GitHub Packages
+# Installing the Fork
 
-The fork publishes its own npm packages to the GitHub Packages registry (`npm.pkg.github.com`) under the `@r-dson` scope. Nothing is published to npmjs.org.
+The fork distributes `pi` from GitHub only. Every release attaches a self-contained npm tarball (`pi-fork.tgz`) to its GitHub Release, and publishes the individual workspace packages to the GitHub Packages registry under the `@r-dson` scope. Nothing is published to npmjs.org.
 
 ## Triggering a release
 
@@ -10,9 +10,35 @@ Releases are manual:
 2. Click **Run workflow**, choose `main` as the branch.
 3. Optionally fill **Release version**. Leave it empty for the default `<upstream-version>-fork.<run number>` (for example `0.84.2-fork.42`).
 
-The workflow builds the workspace, stages every public package with its manifest rewritten to the fork scope, publishes to GitHub Packages, then tags `v<version>` and creates a GitHub Release listing the published packages. It never modifies tracked files and creates no commits; the only git object it produces is the tag.
+The workflow builds the workspace, stages every public package with its manifest rewritten to the fork scope, publishes to GitHub Packages, then tags `v<version>` and creates a GitHub Release listing the published packages and attaching `pi-fork.tgz`. It never modifies tracked files and creates no commits; the only git object it produces is the tag.
 
-## Installing
+## Install (recommended: standalone, no configuration)
+
+The standalone tarball carries the coding-agent release bundle — all workspace packages are already inlined into it — plus only the dependencies that resolve from the public npm registry. No `.npmrc` mapping, no PAT:
+
+```sh
+npm install -g https://github.com/R-Dson/pi/releases/latest/download/pi-fork.tgz
+```
+
+Or via the install script, which verifies `npm` and `curl`, downloads the tarball to a temp file, and installs it with `npm install -g --ignore-scripts`:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/R-Dson/pi/main/scripts/install-fork.sh | sh
+```
+
+Pass a release version (without the leading `v`) to pin instead of tracking the latest:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/R-Dson/pi/main/scripts/install-fork.sh | sh -s 0.84.2-fork.42
+```
+
+The binary is `pi`, same as upstream; the installed package is `@r-dson/pi-standalone`. Re-running either command upgrades in place.
+
+The asset filename is identical across releases, so `releases/latest/download/pi-fork.tgz` always resolves to the newest release. The tarball itself is served by GitHub Releases over TLS; its dependencies come from the public npm registry only, so installing never touches GitHub authentication.
+
+## Install via GitHub Packages
+
+Secondary channel: use it when you want the individual `@r-dson/*` packages as libraries rather than just the CLI. Unlike the standalone tarball, this channel always requires a PAT (see below).
 
 Map the fork scope to the GitHub Packages registry in your `.npmrc` (usually `~/.npmrc`):
 
@@ -42,7 +68,8 @@ Note: OAuth tokens from `gh auth login` are rejected by the npm registry; it mus
 
 - All public workspace packages (9 total), renamed `@earendil-works/X` → `@r-dson/X`. The rename happens at publish time only; repo manifests stay identical to upstream so merges stay clean.
 - Inter-package dependencies are rewritten to the `@r-dson` scope and pinned to the exact release version, so a fork install cannot accidentally resolve upstream `@earendil-works` packages from npmjs.org.
-- `npm-shrinkwrap.json` and `install-lock` are excluded: the shrinkwrap pins `@earendil-works/*` names that do not exist on the fork registry. Dependency integrity comes from the exact version pins in the rewritten manifests instead.
+- `pi-fork.tgz`, the standalone tarball: a `@r-dson/pi-standalone` package assembled from the coding-agent bundle. Its manifest is derived mechanically from `packages/coding-agent/package.json` — dependencies minus the `@earendil-works/*` entries (verbatim pins), `optionalDependencies` and `engines` copied — so there is no curated dependency list to keep in sync.
+- `npm-shrinkwrap.json` and `install-lock` are excluded from registry publishes: the shrinkwrap pins `@earendil-works/*` names that do not exist on the fork registry. Dependency integrity comes from the exact version pins in the rewritten manifests instead.
 - Staging also drops `node_modules`, `src`, `test`, and dotfiles; the staged `.npmrc` is written by the publish script itself.
 
 ## Versioning scheme
@@ -50,4 +77,4 @@ Note: OAuth tokens from `gh auth login` are rejected by the npm registry; it mus
 - Lockstep, like upstream: every fork release publishes all packages at one version.
 - Default version: `<upstream-version>-fork.<workflow run number>`, for example `0.84.2-fork.42`. The prerelease suffix keeps fork versions distinguishable from upstream releases of the same base.
 - Explicit version: pass it in the workflow's **Release version** input (must match `x.y.z` with an optional `-prerelease`).
-- Each release tags `v<version>` and creates a GitHub Release; re-running the workflow for an already-published version skips the existing packages.
+- Each release tags `v<version>` and creates a GitHub Release with `pi-fork.tgz` attached under that stable name; re-running the workflow for an already-published version skips the existing packages.
