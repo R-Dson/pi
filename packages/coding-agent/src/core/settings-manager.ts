@@ -10,6 +10,8 @@ import { normalizePath, resolvePath } from "../utils/paths.ts";
 import { stripBom } from "../utils/text.ts";
 import { DEFAULT_HTTP_IDLE_TIMEOUT_MS, parseHttpIdleTimeoutMs } from "./http-dispatcher.ts";
 import { DEFAULT_MAX_TOOL_OUTPUT_BYTES } from "./tools/output-bounds.ts";
+import type { PermissionRule, ToolProfile } from "./tools/permissions.ts";
+import { resolveProfileConfig } from "./tools/permissions.ts";
 
 export interface CompactionSettings {
 	enabled?: boolean; // default: true
@@ -75,6 +77,30 @@ export interface ToolsSettings {
 	 * file (persisted sessions). Default: 204800 (200KB). Values <= 0 disable bounding.
 	 */
 	maxToolOutputBytes?: number;
+	/**
+	 * Tool permission policy. Default mode "legacy" keeps current behavior with no
+	 * evaluation. Mode "policy" evaluates `rules` at execution time (see
+	 * core/tools/permissions.ts for matching and precedence semantics).
+	 */
+	permissions?: ToolPermissionsSettings;
+}
+
+export interface ToolPermissionsSettings {
+	/** "legacy" (default): no evaluation. "policy": evaluate rules before each tool call. */
+	mode?: "legacy" | "policy";
+	/**
+	 * Ordered permission rules; precedence deny > ask > allow > default, last matching rule wins.
+	 * Any matching rule here overrides the profile preset's rules. Visibility evaluates
+	 * rules with no call args, so a rule with a `path`/`command` matcher never affects
+	 * hiding — an arg-scoped allow cannot un-hide a tool a preset hid.
+	 */
+	rules?: PermissionRule[];
+	/**
+	 * Tool profile preset ("code" default, "review", "minimal") resolved to base-layer
+	 * permission rules that user `rules` override. Applies only in policy mode;
+	 * legacy mode ignores profiles entirely. Unknown values fall back to "code".
+	 */
+	profile?: ToolProfile;
 }
 
 export type DefaultProjectTrust = "ask" | "always" | "never";
@@ -1265,6 +1291,29 @@ export class SettingsManager {
 	getMaxToolOutputBytes(): number {
 		const value = this.settings.tools?.maxToolOutputBytes;
 		return typeof value === "number" && Number.isFinite(value) ? value : DEFAULT_MAX_TOOL_OUTPUT_BYTES;
+	}
+
+	getPermissionSettings(): { mode: "legacy" | "policy"; rules: PermissionRule[]; baseRules: PermissionRule[] } {
+		const permissions = this.settings.tools?.permissions;
+		const mode = permissions?.mode === "policy" ? "policy" : "legacy";
+		const rules = Array.isArray(permissions?.rules) ? permissions.rules : [];
+		// Profiles resolve to ordinary base-layer rules and apply only in policy
+		// mode; legacy mode ignores them entirely.
+		const baseRules = mode === "policy" ? resolveProfileConfig(permissions?.profile).permissionRules : [];
+		return { mode, rules, baseRules };
+	}
+
+	/** Replace the user permission rule list. Takes effect on the next tool call or active-tool change. */
+	setPermissionRules(rules: PermissionRule[]): void {
+		if (!this.globalSettings.tools) {
+			this.globalSettings.tools = {};
+		}
+		if (!this.globalSettings.tools.permissions) {
+			this.globalSettings.tools.permissions = {};
+		}
+		this.globalSettings.tools.permissions.rules = rules;
+		this.markModified("tools", "permissions");
+		this.save();
 	}
 
 	setEnabledModels(patterns: string[] | undefined): void {

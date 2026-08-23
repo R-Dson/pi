@@ -4,6 +4,7 @@ import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DEFAULT_HTTP_IDLE_TIMEOUT_MS } from "../src/core/http-dispatcher.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
+import { resolveProfileConfig } from "../src/core/tools/permissions.ts";
 
 describe("SettingsManager", () => {
 	const testDir = join(process.cwd(), "test-settings-tmp");
@@ -618,6 +619,73 @@ describe("SettingsManager", () => {
 				tools: { maxToolOutputBytes: "lots" as unknown as number },
 			});
 			expect(manager.getMaxToolOutputBytes()).toBe(200 * 1024);
+		});
+	});
+
+	describe("tools.permissions", () => {
+		it("should default to legacy mode with no rules", () => {
+			const settings = SettingsManager.inMemory().getPermissionSettings();
+			expect(settings.mode).toBe("legacy");
+			expect(settings.rules).toEqual([]);
+		});
+
+		it("should return the configured mode and rules", () => {
+			const rules = [{ capability: "process.execute" as const, effect: "deny" as const }];
+			const manager = SettingsManager.inMemory({
+				tools: { permissions: { mode: "policy", rules } },
+			});
+			expect(manager.getPermissionSettings()).toEqual({ mode: "policy", rules, baseRules: [] });
+		});
+
+		it("should fall back to legacy mode when mode is not a known value", () => {
+			const manager = SettingsManager.inMemory({
+				tools: { permissions: { mode: "strict" as unknown as "policy" } },
+			});
+			expect(manager.getPermissionSettings().mode).toBe("legacy");
+		});
+
+		it("should default rules to an empty list when unset", () => {
+			const manager = SettingsManager.inMemory({ tools: { permissions: { mode: "policy" } } });
+			expect(manager.getPermissionSettings()).toEqual({ mode: "policy", rules: [], baseRules: [] });
+		});
+
+		it("should treat a non-array rules value as empty", () => {
+			const manager = SettingsManager.inMemory({
+				tools: { permissions: { mode: "policy", rules: "nope" as unknown as [] } },
+			});
+			expect(manager.getPermissionSettings().rules).toEqual([]);
+		});
+
+		it("should support in-memory settings updates via applyOverrides", () => {
+			const manager = SettingsManager.inMemory();
+			manager.applyOverrides({ tools: { permissions: { mode: "policy" } } });
+			expect(manager.getPermissionSettings().mode).toBe("policy");
+		});
+
+		it("should resolve a profile to base rules in policy mode", () => {
+			const manager = SettingsManager.inMemory({
+				tools: { permissions: { mode: "policy", profile: "review" } },
+			});
+			expect(manager.getPermissionSettings().baseRules).toEqual(resolveProfileConfig("review").permissionRules);
+		});
+
+		it("should default the profile to code (no base rules)", () => {
+			const manager = SettingsManager.inMemory({ tools: { permissions: { mode: "policy" } } });
+			expect(manager.getPermissionSettings().baseRules).toEqual([]);
+		});
+
+		it("should treat an unknown profile as code", () => {
+			const manager = SettingsManager.inMemory({
+				tools: { permissions: { mode: "policy", profile: "lite" as unknown as "review" } },
+			});
+			expect(manager.getPermissionSettings().baseRules).toEqual([]);
+		});
+
+		it("should ignore profiles in legacy mode", () => {
+			const manager = SettingsManager.inMemory({
+				tools: { permissions: { mode: "legacy", profile: "review" } },
+			});
+			expect(manager.getPermissionSettings().baseRules).toEqual([]);
 		});
 	});
 });
