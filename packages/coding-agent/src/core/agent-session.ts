@@ -21,6 +21,7 @@ import type {
 	AgentMessage,
 	AgentState,
 	AgentTool,
+	BeforeToolCallResult,
 	PrepareNextTurnContext,
 	ThinkingLevel,
 } from "@earendil-works/pi-agent-core";
@@ -85,6 +86,7 @@ import {
 	type SessionCompactFailedEvent,
 	type SessionStartEvent,
 	type ShutdownHandler,
+	type ToolCallEventResult,
 	type ToolDefinition,
 	type ToolExecutionEndEvent,
 	type ToolExecutionStartEvent,
@@ -110,6 +112,7 @@ import { type BuildSystemPromptOptions, buildSystemPrompt } from "./system-promp
 import { type BashOperations, createLocalBashOperations } from "./tools/bash.ts";
 import { createAllToolDefinitions } from "./tools/index.ts";
 import { boundToolResultText } from "./tools/output-bounds.ts";
+import { evaluatePermission } from "./tools/permissions.ts";
 import { createToolDefinitionFromAgentTool } from "./tools/tool-definition-wrapper.ts";
 import { addUsageToTotals, createUsageTotals } from "./usage-totals.ts";
 
@@ -495,27 +498,41 @@ export class AgentSession {
 	 * new runner without reinstalling hooks. Extension-specific tool wrappers are still used to adapt
 	 * registered tool execution to the extension context. Tool call and tool result interception now
 	 * happens here instead of in wrappers.
+	 *
+	 * beforeToolCall order: extension `tool_call` handlers run first (an extension block wins), then
+	 * the permission policy evaluates the call when `tools.permissions.mode` is "policy". Legacy mode
+	 * performs no evaluation, keeping current behavior byte-identical.
 	 */
 	private _installAgentToolHooks(): void {
 		this.agent.beforeToolCall = async ({ toolCall, args }) => {
 			const runner = this._extensionRunner;
-			if (!runner.hasHandlers("tool_call")) {
-				return undefined;
+			let extensionResult: ToolCallEventResult | undefined;
+			if (runner.hasHandlers("tool_call")) {
+				try {
+					extensionResult = await runner.emitToolCall({
+						type: "tool_call",
+						toolName: toolCall.name,
+						toolCallId: toolCall.id,
+						input: args as Record<string, unknown>,
+					});
+				} catch (err) {
+					if (err instanceof Error) {
+						throw err;
+					}
+					throw new Error(`Extension failed, blocking execution: ${String(err)}`);
+				}
 			}
 
-			try {
-				return await runner.emitToolCall({
-					type: "tool_call",
-					toolName: toolCall.name,
-					toolCallId: toolCall.id,
-					input: args as Record<string, unknown>,
-				});
-			} catch (err) {
-				if (err instanceof Error) {
-					throw err;
-				}
-				throw new Error(`Extension failed, blocking execution: ${String(err)}`);
+			if (extensionResult?.block) {
+				return extensionResult;
 			}
+
+			const permissionBlock = this._evaluateToolPermission(toolCall.name, args);
+			if (permissionBlock) {
+				return permissionBlock;
+			}
+
+			return extensionResult;
 		};
 
 		this.agent.afterToolCall = async ({ toolCall, args, result, isError }) => {
@@ -566,6 +583,47 @@ export class AgentSession {
 				isError: hookResult?.isError ?? isError,
 				usage: hookResult?.usage,
 			};
+		};
+	}
+
+	/**
+	 * Evaluate the permission policy for a tool call. Runs only in policy mode.
+	 *
+	 * Interim "ask" semantics: there is no interactive approval UI yet, so ask
+	 * blocks with an actionable reason explaining how to adjust the rules.
+	 *
+	 * @returns A blocking BeforeToolCallResult for deny/ask, or undefined to proceed.
+	 */
+	private _evaluateToolPermission(toolName: string, args: unknown): BeforeToolCallResult | undefined {
+		const { mode, rules } = this.settingsManager.getPermissionSettings();
+		if (mode !== "policy") {
+			return undefined;
+		}
+
+		const decision = evaluatePermission({
+			toolName,
+			capability: this.getToolDefinition(toolName)?.capability,
+			args: typeof args === "object" && args !== null ? (args as Record<string, unknown>) : {},
+			rules,
+			// Unmatched calls proceed: rules opt calls out, policy mode is not default-deny.
+			defaultEffect: "allow",
+		});
+
+		if (decision.kind === "allow") {
+			return undefined;
+		}
+
+		if (decision.kind === "deny") {
+			return { block: true, reason: `Blocked by tool permission policy. ${decision.reason}` };
+		}
+
+		return {
+			block: true,
+			reason:
+				`Approval required by tool permission policy. ${decision.reason} ` +
+				"There is no interactive approval flow yet, so this call was blocked. " +
+				"To let it run, ask the user to change the matching rule in the tools.permissions.rules setting " +
+				'to effect "allow" (or remove it).',
 		};
 	}
 

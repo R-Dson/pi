@@ -10,6 +10,7 @@ import { normalizePath, resolvePath } from "../utils/paths.ts";
 import { stripBom } from "../utils/text.ts";
 import { DEFAULT_HTTP_IDLE_TIMEOUT_MS, parseHttpIdleTimeoutMs } from "./http-dispatcher.ts";
 import { DEFAULT_MAX_TOOL_OUTPUT_BYTES } from "./tools/output-bounds.ts";
+import type { PermissionRule } from "./tools/permissions.ts";
 
 export interface CompactionSettings {
 	enabled?: boolean; // default: true
@@ -75,6 +76,19 @@ export interface ToolsSettings {
 	 * file (persisted sessions). Default: 204800 (200KB). Values <= 0 disable bounding.
 	 */
 	maxToolOutputBytes?: number;
+	/**
+	 * Tool permission policy. Default mode "legacy" keeps current behavior with no
+	 * evaluation. Mode "policy" evaluates `rules` at execution time (see
+	 * core/tools/permissions.ts for matching and precedence semantics).
+	 */
+	permissions?: ToolPermissionsSettings;
+}
+
+export interface ToolPermissionsSettings {
+	/** "legacy" (default): no evaluation. "policy": evaluate rules before each tool call. */
+	mode?: "legacy" | "policy";
+	/** Ordered permission rules; precedence deny > ask > allow > default, last matching rule wins. */
+	rules?: PermissionRule[];
 }
 
 export type DefaultProjectTrust = "ask" | "always" | "never";
@@ -1265,6 +1279,13 @@ export class SettingsManager {
 	getMaxToolOutputBytes(): number {
 		const value = this.settings.tools?.maxToolOutputBytes;
 		return typeof value === "number" && Number.isFinite(value) ? value : DEFAULT_MAX_TOOL_OUTPUT_BYTES;
+	}
+
+	getPermissionSettings(): { mode: "legacy" | "policy"; rules: PermissionRule[] } {
+		const permissions = this.settings.tools?.permissions;
+		const mode = permissions?.mode === "policy" ? "policy" : "legacy";
+		const rules = Array.isArray(permissions?.rules) ? permissions.rules : [];
+		return { mode, rules };
 	}
 
 	setEnabledModels(patterns: string[] | undefined): void {

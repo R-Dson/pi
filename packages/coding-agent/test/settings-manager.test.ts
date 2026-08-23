@@ -620,4 +620,45 @@ describe("SettingsManager", () => {
 			expect(manager.getMaxToolOutputBytes()).toBe(200 * 1024);
 		});
 	});
+
+	describe("tools.permissions", () => {
+		it("should default to legacy mode with no rules", () => {
+			const settings = SettingsManager.inMemory().getPermissionSettings();
+			expect(settings.mode).toBe("legacy");
+			expect(settings.rules).toEqual([]);
+		});
+
+		it("should return the configured mode and rules", () => {
+			const rules = [{ capability: "process.execute" as const, effect: "deny" as const }];
+			const manager = SettingsManager.inMemory({
+				tools: { permissions: { mode: "policy", rules } },
+			});
+			expect(manager.getPermissionSettings()).toEqual({ mode: "policy", rules });
+		});
+
+		it("should fall back to legacy mode when mode is not a known value", () => {
+			const manager = SettingsManager.inMemory({
+				tools: { permissions: { mode: "strict" as unknown as "policy" } },
+			});
+			expect(manager.getPermissionSettings().mode).toBe("legacy");
+		});
+
+		it("should default rules to an empty list when unset", () => {
+			const manager = SettingsManager.inMemory({ tools: { permissions: { mode: "policy" } } });
+			expect(manager.getPermissionSettings()).toEqual({ mode: "policy", rules: [] });
+		});
+
+		it("should treat a non-array rules value as empty", () => {
+			const manager = SettingsManager.inMemory({
+				tools: { permissions: { mode: "policy", rules: "nope" as unknown as [] } },
+			});
+			expect(manager.getPermissionSettings().rules).toEqual([]);
+		});
+
+		it("should support in-memory settings updates via applyOverrides", () => {
+			const manager = SettingsManager.inMemory();
+			manager.applyOverrides({ tools: { permissions: { mode: "policy" } } });
+			expect(manager.getPermissionSettings().mode).toBe("policy");
+		});
+	});
 });
