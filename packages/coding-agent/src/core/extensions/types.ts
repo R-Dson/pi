@@ -82,6 +82,7 @@ import type {
 	ReadToolInput,
 	WriteToolInput,
 } from "../tools/index.ts";
+import type { ToolCapability } from "../tools/permissions.ts";
 
 export type { ExecOptions, ExecResult } from "../exec.ts";
 export type { BuildSystemPromptOptions } from "../system-prompt.ts";
@@ -457,6 +458,13 @@ export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = un
 	promptSnippet?: string;
 	/** Optional guideline bullets appended to the default system prompt Guidelines section when this tool is active. */
 	promptGuidelines?: string[];
+	/**
+	 * Capability this tool exercises (e.g. "filesystem.read"), used by permission
+	 * policy evaluation when `tools.permissions.mode` is "policy". Undefined for
+	 * tools without a fixed capability; such tools match only permission rules
+	 * that do not specify a `capability`.
+	 */
+	capability?: ToolCapability;
 	/** Parameter schema (TypeBox) */
 	parameters: TParams;
 	/** Optional provider-side constrained sampling request for this tool. Set false to explicitly disable it, equivalent to leaving it undefined. */
