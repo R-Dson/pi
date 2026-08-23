@@ -31,6 +31,7 @@ const smallOutputTool: AgentTool = {
 	parameters: Type.Object({}),
 	execute: async () => ({
 		content: [{ type: "text", text: smallOutput }],
+		details: undefined,
 	}),
 };
 
