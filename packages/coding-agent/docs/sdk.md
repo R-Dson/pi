@@ -372,8 +372,8 @@ import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 
 const modelRuntime = await ModelRuntime.create();
 
-// create() restores cached catalogs but does not refresh them from pi.dev by default.
-// Opt in to a create-time network refresh and bound how long it may take:
+// create() restores cached catalogs; there is no remote catalog fetch in this fork.
+// allowModelNetwork only enables provider availability checks at create time:
 const refreshedRuntime = await ModelRuntime.create({
   allowModelNetwork: true,
   modelRefreshTimeoutMs: 15_000,

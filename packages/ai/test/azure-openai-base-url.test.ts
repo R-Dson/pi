@@ -1,4 +1,3 @@
-import { arch, platform, release } from "node:os";
 import { Type } from "typebox";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { stream as streamAzureOpenAIResponses } from "../src/api/azure-openai-responses.ts";
@@ -40,8 +39,6 @@ vi.mock("openai", () => {
 
 	return { AzureOpenAI };
 });
-
-const PI_USER_AGENT = `pi (${platform()} ${release()}; ${arch()})`;
 
 const context: Context = {
 	messages: [{ role: "user", content: "hello", timestamp: Date.now() }],
@@ -217,11 +214,11 @@ describe("azure-openai-responses base URL normalization", () => {
 });
 
 describe("azure-openai-responses user agent", () => {
-	it("uses pi's User-Agent by default", async () => {
-		expect((await captureClientHeaders())["User-Agent"]).toBe(PI_USER_AGENT);
+	it("sends no app User-Agent by default (node's default goes out)", async () => {
+		expect(await captureClientHeaders()).not.toHaveProperty("User-Agent");
 	});
 
-	it("lets explicit headers override the default User-Agent", async () => {
+	it("lets explicit model headers set a User-Agent", async () => {
 		expect((await captureClientHeaders({ "User-Agent": "custom-agent" }))["User-Agent"]).toBe("custom-agent");
 	});
 });
