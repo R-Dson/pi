@@ -78,6 +78,12 @@ Plan phase 8 says: after at least one stable release, remove temporary compatibi
 
 Removal set today: empty. The one future removal candidate (permissions legacy default) is gated on a stable fork release; revisit this table at that point.
 
+## Sync log
+
+| Date | Upstream range | Conflicts | Notes |
+| --- | --- | --- | --- |
+| 2026-08-24 | 460191cfc..a470b121b (4 commits) | `agent-session.ts` (import trim vs fork's `join` usage; resolved by taking upstream imports + re-adding `join`) | README untouched upstream, no port needed; ledger assumptions re-verified; fork test set green |
+
 ## Upstream Sync Procedure
 
 1. Merge upstream `main` into fork `main` as a dedicated `upstream-sync:` commit; never mix fork feature changes into a sync commit.
