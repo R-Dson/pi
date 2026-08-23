@@ -5,43 +5,19 @@
 </p>
 <p align="center">
   <a href="https://discord.com/invite/3cU7Bz4UPx"><img alt="Discord" src="https://img.shields.io/badge/discord-community-5865F2?style=flat-square&logo=discord&logoColor=white" /></a>
-  <a href="https://www.npmjs.com/package/@earendil-works/pi-coding-agent"><img alt="npm" src="https://img.shields.io/npm/v/@earendil-works/pi-coding-agent?style=flat-square" /></a>
 </p>
 
-> **Fork notice** — this is R-Dson's fork of [earendil-works/pi](https://github.com/earendil-works/pi). It extends Pi's session and tool runtime while keeping the upstream patch surface small; see [Fork additions](#fork-additions) below and the fork ledger at [docs/fork/upstream-integration.md](docs/fork/upstream-integration.md).
+# Pi — fork with a hardened session and tool runtime
 
-> New issues and PRs from new contributors are auto-closed by default. Maintainers review auto-closed issues daily. See [CONTRIBUTING.md](CONTRIBUTING.md).
+Pi is an interactive, self-extensible coding agent, plus the agent runtime and unified multi-provider LLM API underneath it.
 
-# Pi Agent Harness
+This is R-Dson's fork of [earendil-works/pi](https://github.com/earendil-works/pi). The fork tracks upstream and adds a focused runtime layer on top: crash-safe sessions with validation and recovery, time-limited and output-bounded tool execution, opt-in permission policies, and runtime diagnostics. **Everything defaults to upstream behavior** — every fork decision and changed upstream file is recorded in the [fork ledger](docs/fork/upstream-integration.md).
 
-This is the home of the Pi agent harness project including our self extensible coding agent.
+## Install
 
-* **[@earendil-works/pi-coding-agent](packages/coding-agent)**: Interactive coding agent CLI
-* **[@earendil-works/pi-agent-core](packages/agent)**: Agent runtime with tool calling and state management
-* **[@earendil-works/pi-ai](packages/ai)**: Unified multi-provider LLM API (OpenAI, Anthropic, Google, …)
+From this repo's GitHub Releases (nothing is published to npmjs.org). Needs Node.js >= 22.19 with npm.
 
-To learn more about Pi:
-
-* [Visit pi.dev](https://pi.dev), the project website with demos
-* [Read the documentation](https://pi.dev/docs/latest), but you can also ask the agent to explain itself
-
-## All Packages
-
-| Package | Description |
-|---------|-------------|
-| **[@earendil-works/pi-telemetry](packages/telemetry)** | Vendor-neutral telemetry contracts, reference adapter, conformance tests, and typed schemas |
-| **[@earendil-works/pi-ai](packages/ai)** | Unified multi-provider LLM API (OpenAI, Anthropic, Google, etc.) |
-| **[@earendil-works/pi-agent-core](packages/agent)** | Agent runtime with tool calling and state management |
-| **[@earendil-works/pi-coding-agent](packages/coding-agent)** | Interactive coding agent CLI |
-| **[@earendil-works/pi-tui](packages/tui)** | Terminal UI library with differential rendering |
-
-For Slack/chat automation and workflows see [earendil-works/pi-chat](https://github.com/earendil-works/pi-chat).
-
-## Installing the fork
-
-Releases are published from this repo only (GitHub Releases and GitHub Packages) — nothing is pushed to npmjs.org.
-
-Zero-configuration install from the latest release (needs Node.js >= 22.19 with npm; no PAT, no `.npmrc`):
+Zero configuration, no PAT, no `.npmrc`:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/R-Dson/pi/main/scripts/install-fork.sh | sh
@@ -50,31 +26,88 @@ curl -fsSL https://raw.githubusercontent.com/R-Dson/pi/main/scripts/install-fork
 Alternatives:
 
 - Direct tarball: `npm install -g --allow-remote=all https://github.com/R-Dson/pi/releases/latest/download/pi-fork.tgz` (the flag is required on npm >= 12, which blocks remote-tarball installs by default)
-- Individual `@r-dson/*` packages from GitHub Packages, for library use (requires a `read:packages` PAT): [docs/fork/install-from-github.md](docs/fork/install-from-github.md)
-- New releases are cut manually: Actions → **Fork Release** → Run workflow
+- Individual `@r-dson/*` packages from GitHub Packages, for library use (requires a `read:packages` PAT): [install docs](docs/fork/install-from-github.md)
+- From source: `npm install --ignore-scripts && npm run build && ./pi-test.sh`
 
-## Fork additions
+The binary is `pi`, same as upstream. Re-running the install upgrades in place; pass a version to the script (`| sh -s 0.84.2-fork.2`) to pin.
 
-All additions default to upstream behavior; the fork ledger records every decision and changed upstream file ([docs/fork/upstream-integration.md](docs/fork/upstream-integration.md)).
+## Getting started
 
-- **Session reliability** (`packages/coding-agent/src/core/sessions/`): pure, golden-tested context projector; session validator with `pi --validate-session <path>`; torn-tail recovery read; interrupted-turn repair at resume (dangling tool calls get terminal results, so strict providers accept the next request).
-- **Tool runtime**: optional per-tool `timeoutMs` enforced in the agent loop (`packages/agent`); tool result text bounded (default 200 KB, `tools.maxToolOutputBytes`) with head+tail excerpt and full-output artifact spill under `<sessionDir>/artifacts/<sessionId>/`.
-- **Permissions (opt-in)**: tool capability metadata, allow/ask/deny rules with deny > ask > allow precedence, model-visible tool hiding, and `code` / `review` / `minimal` profiles — legacy behavior stays the default (`tools.permissions` in settings).
-- **Diagnostics**: session stats report tool output volume, truncated bytes, and artifact counts alongside the existing token/cache stats.
+```sh
+pi            # interactive mode; authenticate a provider on first run
+pi -p "..."   # one-shot prompt
+```
 
-## Permissions & Containerization
+Usage, providers, extensions, skills, and themes work exactly as upstream — see [pi.dev/docs](https://pi.dev/docs/latest). The rest of this README covers what the fork adds on top.
 
-Pi does not include a built-in permission system for restricting filesystem, process, network, or credential access. By default, it runs with the permissions of the user and process that launched it.
+## What the fork adds
 
-If you need stronger boundaries, containerize or sandbox Pi. See [packages/coding-agent/docs/containerization.md](packages/coding-agent/docs/containerization.md) for three patterns:
+### Session reliability
 
-- **Gondolin extension**: keep `pi` and provider auth on the host while routing built-in tools and `!` commands into a local Linux micro-VM.
-- **Plain Docker**: run the whole `pi` process in a local container for simple isolation.
-- **OpenShell**: run the whole `pi` process in a policy-controlled sandbox.
+Session files are validated and repaired instead of silently mis-loading:
 
-## Contributing
+```sh
+$ pi --validate-session ~/.pi/agent/sessions/--.../2026-08-23T..._....jsonl
+error torn-tail: final line is incomplete JSON (412 bytes); likely torn by an interrupted append (line 210)
+1 error, 0 warnings
+```
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines and [AGENTS.md](AGENTS.md) for project-specific rules (for both humans and agents).  Longer term plans for Pi can also be found in [RFCs](https://rfc.earendil.com/keyword/pi/).
+- Structural validation: torn tails, malformed lines, duplicate ids, broken/cyclic ancestry, orphan and duplicate tool results, off-path compactions, interrupted turns — reported with entry/line locations; loading itself stays tolerant.
+- Interrupted-turn repair: resuming a session that crashed mid-tool-call appends terminal tool results for the dangling calls (append-only — history is never rewritten), so strict providers like Anthropic accept the next request.
+- The context projector is a pure, golden-tested module (`core/sessions/`), pinning current behavior as the equivalence baseline for future work.
+
+### Tool runtime
+
+- Optional per-tool `timeoutMs` on `AgentTool`, enforced in the agent loop (stdlib `AbortSignal.any`/`AbortSignal.timeout`); a tool that exceeds its deadline gets a terminal timeout error result, and tools that never settle still terminate.
+- Tool result text sent to the model is bounded (default 200 KB, `tools.maxToolOutputBytes` in settings; `<= 0` disables). Oversized output keeps a head+tail excerpt with an omitted-bytes marker; the full output spills to `<sessionDir>/artifacts/<sessionId>/` for persisted sessions.
+
+### Permissions (opt-in)
+
+Legacy behavior is the default. Opt in with `tools.permissions` in settings:
+
+```json
+{
+  "tools": {
+    "permissions": {
+      "mode": "policy",
+      "profile": "review",
+      "rules": [{ "tool": "bash", "command": "git", "effect": "allow" }]
+    }
+  }
+}
+```
+
+- Tools carry capability metadata (`filesystem.read`, `filesystem.write`, `process.execute`, `network.access`, `session.modify`).
+- Rules match on tool, capability, path prefix, or command prefix; precedence is deny > ask > allow > default, with user rules overriding profile presets.
+- `deny` rules with `hide: true` remove a tool from the model-visible tool list entirely.
+- Profiles: `code` (default, everything), `review` (read-only), `minimal` (core editing tools only) — plain rule presets, no mode checks scattered through the runtime.
+
+### Diagnostics
+
+Session stats (`/session` panel) report tool output volume, truncated bytes, and artifact counts alongside the existing token/cache/cost stats.
+
+## Relationship to upstream
+
+Pi is built by [Mario Zechner (badlogic)](https://github.com/badlogic) and [earendil works](https://github.com/earendil-works) — this fork builds on their work and merges upstream regularly rather than diverging:
+
+- Upstream's README is preserved verbatim at [docs/fork/upstream-README.md](docs/fork/upstream-README.md); upstream README changes get ported into this one during syncs.
+- The [fork ledger](docs/fork/upstream-integration.md) records every decision, every changed upstream file, and the sync procedure.
+- Contributions and bug reports for core Pi belong upstream ([CONTRIBUTING.md](CONTRIBUTING.md), [Discord](https://discord.com/invite/3cU7Bz4UPx), [pi.dev](https://pi.dev)).
+
+For stronger isolation than permission policies, containerization patterns (Gondolin micro-VM, Docker, OpenShell) are documented in [packages/coding-agent/docs/containerization.md](packages/coding-agent/docs/containerization.md).
+
+## Packages
+
+| Package | Description |
+|---------|-------------|
+| **[@earendil-works/pi-coding-agent](packages/coding-agent)** | Interactive coding agent CLI (the `pi` binary) |
+| **[@earendil-works/pi-agent-core](packages/agent)** | Agent runtime with tool calling and state management |
+| **[@earendil-works/pi-ai](packages/ai)** | Unified multi-provider LLM API (OpenAI, Anthropic, Google, …) |
+| **[@earendil-works/pi-tui](packages/tui)** | Terminal UI library with differential rendering |
+| **[@earendil-works/pi-client](packages/client) / [pi-server](packages/server) / [pi-protocol](packages/protocol)** | RPC client/server and protocol types |
+| **[@earendil-works/pi-telemetry](packages/telemetry)** | Vendor-neutral telemetry contracts and schemas |
+
+Fork releases publish these as `@r-dson/*` to GitHub Packages and as a standalone `@r-dson/pi-standalone` tarball.
 
 ## Development
 
@@ -87,18 +120,9 @@ npm run check         # Lint, format, and type check
 ./pi-test.sh         # Run pi from sources (can be run from any directory)
 ```
 
-## Building standalone binaries from release source
+## Releasing
 
-GitHub releases include a versioned source archive covered by the release's `SHA256SUMS` file. Extract it and run the same build script used for the official standalone binaries:
-
-```bash
-VERSION="<release-version>"
-tar -xzf "pi-${VERSION}-source.tar.gz"
-cd "pi-${VERSION}"
-./scripts/build-binaries.sh --offline-model-data --platform linux-x64 --out "$PWD/out"
-```
-
-The source archive includes the generated provider model data used for the release. `--offline-model-data` builds with that snapshot instead of refreshing it from live provider catalogs. The script still installs dependencies, builds the monorepo, compiles the Bun executable, and stages its runtime assets. Package maintainers who provide dependencies separately can pass `--skip-install --skip-deps`.
+Manual, fork-only: Actions → **Fork Release** → Run workflow (empty version = `<upstream-version>-fork.<run number>`). The workflow builds the workspace, publishes all public packages as `@r-dson/*` to GitHub Packages, attaches a self-contained `pi-fork.tgz` to the GitHub Release, and tags `v<version>`. Repo manifests are never modified; the scope rename happens at publish time. Details: [docs/fork/install-from-github.md](docs/fork/install-from-github.md).
 
 ## Supply-chain hardening
 
@@ -108,27 +132,10 @@ We treat npm dependency changes as reviewed code changes.
 - `.npmrc` sets `save-exact=true` and `min-release-age=2` to avoid same-day dependency releases during npm resolution.
 - `package-lock.json` is the dependency ground truth. Pre-commit blocks accidental lockfile commits unless `PI_ALLOW_LOCKFILE_CHANGE=1` is set.
 - `npm run check` verifies pinned direct deps, native TypeScript import compatibility, and the generated coding-agent shrinkwrap.
-- The published CLI package includes `packages/coding-agent/npm-shrinkwrap.json`, generated from the root lockfile, to pin transitive deps for npm users.
-- Release smoke tests use `npm run release:local` to build, pack, and create isolated npm and Bun installs outside the repo before tagging a release.
-- Local release installs, documented npm installs, and `pi update --self` use `--ignore-scripts` where supported.
-- CI installs with `npm ci --ignore-scripts`, and a scheduled GitHub workflow runs `npm audit --omit=dev` plus `npm audit signatures --omit=dev`.
+- Fork publishes exclude the shrinkwrap (it pins upstream package names that do not exist on the fork registry); dependency integrity comes from exact version pins in the published manifests.
+- Pre-release smoke: `npm run release:local` builds an unpublished release (isolated npm and Bun installs outside the repo) for manual testing.
+- Installs use `--ignore-scripts`; CI installs with `npm ci --ignore-scripts`.
 - Shrinkwrap generation has an explicit allowlist for dependency lifecycle scripts; new lifecycle-script deps fail checks until reviewed.
-
-## Share your OSS coding agent sessions
-
-If you use Pi or other coding agents for open source work, please share your sessions.
-
-Public OSS session data helps improve coding agents with real-world tasks, tool use, failures, and fixes instead of toy benchmarks.
-
-For the full explanation, see [this post on X](https://x.com/badlogicgames/status/2037811643774652911).
-
-To publish sessions, use [`badlogic/pi-share-hf`](https://github.com/badlogic/pi-share-hf). Read its README.md for setup instructions. All you need is a Hugging Face account, the Hugging Face CLI, and `pi-share-hf`.
-
-You can also watch [this video](https://x.com/badlogicgames/status/2041151967695634619), where I show how I publish my `pi-mono` sessions.
-
-I regularly publish my own `pi-mono` work sessions here:
-
-- [badlogicgames/pi-mono on Hugging Face](https://huggingface.co/datasets/badlogicgames/pi-mono)
 
 ## License
 
