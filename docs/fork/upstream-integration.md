@@ -22,7 +22,7 @@ Pre-made architectural decisions, with one-line rationales. Do not revisit witho
 
 ## Changed Upstream Files
 
-Every upstream file the fork modifies, and the assumptions each change rests on.
+Every upstream source file and shared test utility the fork modifies, and the assumptions each change rests on. Plain per-feature test files are covered by their feature's row instead.
 
 | File | Why | Fork module called | Assumptions | Tests |
 | --- | --- | --- | --- | --- |
