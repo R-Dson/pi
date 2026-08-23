@@ -14,7 +14,7 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { basename, dirname } from "node:path";
+import { basename, dirname, join } from "node:path";
 import type {
 	Agent,
 	AgentEvent,
@@ -109,6 +109,7 @@ import { createSyntheticSourceInfo, type SourceInfo } from "./source-info.ts";
 import { type BuildSystemPromptOptions, buildSystemPrompt } from "./system-prompt.ts";
 import { type BashOperations, createLocalBashOperations } from "./tools/bash.ts";
 import { createAllToolDefinitions } from "./tools/index.ts";
+import { boundToolResultText } from "./tools/output-bounds.ts";
 import { createToolDefinitionFromAgentTool } from "./tools/tool-definition-wrapper.ts";
 import { addUsageToTotals, createUsageTotals } from "./usage-totals.ts";
 
@@ -274,6 +275,15 @@ export interface SessionStats {
 	assistantMessages: number;
 	toolCalls: number;
 	toolResults: number;
+	/** Total UTF-8 bytes of text content across toolResult messages. Session-wide (derived from entries, survives resume). */
+	toolOutputBytes: number;
+	/**
+	 * UTF-8 bytes removed from tool results by output bounding. Covers the
+	 * current session run only; counters are not resumed.
+	 */
+	truncatedToolOutputBytes: number;
+	/** Tool results spilled to artifact files by output bounding. Current session run only; not resumed. */
+	toolOutputArtifacts: number;
 	totalMessages: number;
 	tokens: {
 		input: number;
@@ -343,6 +353,11 @@ export class AgentSession {
 	// Bash execution state
 	private readonly _bashAbortControllers = new Set<AbortController>();
 	private _pendingBashMessages: BashExecutionMessage[] = [];
+
+	// Tool output diagnostics, accumulated at the output-bounding hook.
+	// In-memory only: a resumed session restarts these counters from zero.
+	private _truncatedToolOutputBytes = 0;
+	private _toolOutputArtifacts = 0;
 
 	// Extension system
 	private _extensionRunner!: ExtensionRunner;
@@ -524,12 +539,29 @@ export class AgentSession {
 				autoResizeImages: this.settingsManager.getImageAutoResize(),
 			});
 
-			if (!hookResult && normalizedContent === content) {
+			// Runs last so bounding applies to the final model-visible text.
+			const bounded = await boundToolResultText(normalizedContent, {
+				maxBytes: this.settingsManager.getMaxToolOutputBytes(),
+				toolName: toolCall.name,
+				toolCallId: toolCall.id,
+				artifactsDir: this.sessionManager.isPersisted()
+					? join(this.sessionManager.getSessionDir(), "artifacts", this.sessionManager.getSessionId())
+					: undefined,
+			});
+
+			if (bounded.bounded) {
+				this._truncatedToolOutputBytes += bounded.totalBytes - bounded.shownBytes;
+				if (bounded.artifactPath) {
+					this._toolOutputArtifacts++;
+				}
+			}
+
+			if (!hookResult && normalizedContent === content && !bounded.bounded) {
 				return undefined;
 			}
 
 			return {
-				content: normalizedContent,
+				content: bounded.content,
 				details: hookResult?.details,
 				isError: hookResult?.isError ?? isError,
 				usage: hookResult?.usage,
@@ -3250,6 +3282,7 @@ export class AgentSession {
 		let toolResults = 0;
 		let totalMessages = 0;
 		let toolCalls = 0;
+		let toolOutputBytes = 0;
 		const usageTotals = createUsageTotals();
 
 		for (const entry of this.sessionManager.getEntries()) {
@@ -3263,6 +3296,11 @@ export class AgentSession {
 				userMessages++;
 			} else if (message.role === "toolResult") {
 				toolResults++;
+				for (const block of message.content) {
+					if (block.type === "text") {
+						toolOutputBytes += Buffer.byteLength(block.text, "utf-8");
+					}
+				}
 				if (message.usage) {
 					addUsageToTotals(usageTotals, message.usage);
 				}
@@ -3283,6 +3321,9 @@ export class AgentSession {
 			assistantMessages,
 			toolCalls,
 			toolResults,
+			toolOutputBytes,
+			truncatedToolOutputBytes: this._truncatedToolOutputBytes,
+			toolOutputArtifacts: this._toolOutputArtifacts,
 			totalMessages,
 			tokens: {
 				input: usageTotals.input,
