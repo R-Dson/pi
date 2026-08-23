@@ -96,7 +96,7 @@ Then just talk to pi. By default, pi gives the model four tools: `read`, `write`
 
 ## Providers & Models
 
-For each built-in provider, pi maintains a list of tool-capable models. Configured provider catalogs refresh automatically; run `pi update --models` to force an immediate refresh. Authenticate via subscription (`/login`) or API key, then select any model from that provider via `/model` (or Ctrl+L). Press Ctrl+S in the model picker to save the highlighted model as the startup default.
+For each built-in provider, pi maintains a list of tool-capable models. Configured provider catalogs refresh automatically; run `pi update --models` to force an immediate refresh. Authenticate via subscription (`/login`) or API key, then select any model from that provider via `/model` (or Ctrl+L).
 
 **Subscriptions:**
 - Anthropic Claude Pro/Max
@@ -178,10 +178,9 @@ Type `/` in the editor to trigger commands. [Extensions](#extensions) can regist
 |---------|-------------|
 | `/login`, `/logout` | Manage provider credentials |
 | [`/llama`](docs/llama-cpp.md) | Download, load, and unload llama.cpp router models |
-| `/model` | Switch models; Ctrl+S in the picker saves the startup default |
-| `/thinking` | Switch thinking level; Ctrl+S in the picker saves the startup default |
+| `/model` | Switch models |
 | `/scoped-models` | Enable/disable models for Ctrl+P cycling |
-| `/settings` | Theme, message delivery, transport, and other preferences |
+| `/settings` | Thinking level, theme, message delivery, transport |
 | `/resume` | Pick from previous sessions |
 | `/new` | Start a new session |
 | `/name <name>` | Set session display name |
@@ -217,7 +216,7 @@ See `/hotkeys` for the full list. Customize via `~/.pi/agent/keybindings.json`. 
 | Shift+Tab | Cycle thinking level |
 | Ctrl+O | Collapse/expand tool output |
 | Ctrl+T | Collapse/expand thinking blocks |
-| Ctrl+X | Copy the last assistant message; with fullscreen copy-on-select disabled, copy the active text selection |
+| Ctrl+X | Copy the last assistant message |
 
 ### Message Queue
 
@@ -585,7 +584,7 @@ cat README.md | pi -p "Summarize this text"
 | `--no-builtin-tools`, `-nbt` | Disable built-in tools by default but keep extension/custom tools enabled |
 | `--no-tools`, `-nt` | Disable all tools by default |
 
-Available built-in tools: `read`, `bash`, `powershell` (Windows), `edit`, `write`, `grep`, `find`, `ls`
+Available built-in tools: `read`, `bash`, `edit`, `write`, `grep`, `find`, `ls`
 
 ### Resource Options
 
@@ -683,7 +682,7 @@ pi --thinking high "Solve this complex problem"
 | `PI_CACHE_RETENTION` | Set to `long` for extended prompt cache (Anthropic: 1h, OpenAI: 24h) |
 | `VISUAL`, `EDITOR` | Fallback external editor for Ctrl+G when `externalEditor` is unset; defaults to Notepad on Windows and `nano` elsewhere |
 
-Commands run by the LLM-callable `bash` and `powershell` tools also receive current session metadata:
+Commands run by the LLM-callable bash tool also receive current session metadata:
 
 | Variable | Description |
 |----------|-------------|
@@ -693,7 +692,7 @@ Commands run by the LLM-callable `bash` and `powershell` tools also receive curr
 | `PI_MODEL` | Currently selected model ID |
 | `PI_REASONING_LEVEL` | Current effective reasoning level |
 
-These values are resolved when each command starts. See [Environment Variables](docs/environment-variables.md#shell-tool-session-environment) for semantics, examples, and custom-tool opt-out.
+These values are resolved when each command starts. See [Environment Variables](docs/environment-variables.md#bash-tool-session-environment) for semantics, examples, and custom-tool opt-out.
 
 ---
 

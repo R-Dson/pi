@@ -12,7 +12,6 @@ import {
 	getShellConfig,
 	getShellEnv,
 	killProcessTree,
-	type ShellConfig,
 	trackDetachedChildPid,
 	untrackDetachedChildPid,
 } from "../../utils/shell.ts";
@@ -40,7 +39,7 @@ function resolveTimeoutMs(timeout: number | undefined): number | undefined {
 }
 
 const bashSchema = Type.Object({
-	command: Type.String({ description: "Shell command to execute" }),
+	command: Type.String({ description: "Bash command to execute" }),
 	timeout: Type.Optional(Type.Number({ description: "Timeout in seconds (optional, no default timeout)" })),
 });
 
@@ -80,19 +79,24 @@ export interface BashOperations {
 	) => Promise<{ exitCode: number | null }>;
 }
 
-/** Shared process execution used by the built-in shell tools. */
-export function createLocalShellOperations(shellName: string, resolveShellConfig: () => ShellConfig): BashOperations {
+/**
+ * Create bash operations using pi's built-in local shell execution backend.
+ *
+ * This is useful for extensions that intercept user_bash and still want pi's
+ * standard local shell behavior while wrapping or rewriting commands.
+ */
+export function createLocalBashOperations(options?: { shellPath?: string }): BashOperations {
 	return {
 		exec: async (command, cwd, { onData, signal, timeout, env }) => {
 			const timeoutMs = resolveTimeoutMs(timeout);
 			if (signal?.aborted) {
 				throw new Error("aborted");
 			}
-			const shellConfig = resolveShellConfig();
+			const shellConfig = getShellConfig(options?.shellPath);
 			try {
 				await fsAccess(cwd, constants.F_OK);
 			} catch {
-				throw new Error(`Working directory does not exist: ${cwd}\nCannot execute ${shellName} commands.`);
+				throw new Error(`Working directory does not exist: ${cwd}\nCannot execute bash commands.`);
 			}
 
 			const commandFromStdin = shellConfig.commandTransport === "stdin";
@@ -149,16 +153,6 @@ export function createLocalShellOperations(shellName: string, resolveShellConfig
 	};
 }
 
-/**
- * Create bash operations using pi's built-in local shell execution backend.
- *
- * This is useful for extensions that intercept user_bash and still want pi's
- * standard local shell behavior while wrapping or rewriting commands.
- */
-export function createLocalBashOperations(options?: { shellPath?: string }): BashOperations {
-	return createLocalShellOperations("bash", () => getShellConfig(options?.shellPath));
-}
-
 export interface BashSpawnContext {
 	command: string;
 	cwd: string;
@@ -211,7 +205,7 @@ export interface BashToolOptions {
 const BASH_PREVIEW_LINES = 5;
 const BASH_UPDATE_THROTTLE_MS = 100;
 
-export type BashRenderState = {
+type BashRenderState = {
 	startedAt: number | undefined;
 	endedAt: number | undefined;
 	interval: NodeJS.Timeout | undefined;
@@ -235,12 +229,12 @@ function formatDuration(ms: number): string {
 	return `${(ms / 1000).toFixed(1)}s`;
 }
 
-function formatShellCall(args: { command?: string; timeout?: number } | undefined, prompt: string): string {
+function formatBashCall(args: { command?: string; timeout?: number } | undefined): string {
 	const command = str(args?.command);
 	const timeout = args?.timeout as number | undefined;
 	const timeoutSuffix = timeout ? theme.fg("muted", ` (timeout ${timeout}s)`) : "";
 	const commandDisplay = command === null ? invalidArgText(theme) : command ? command : theme.fg("toolOutput", "...");
-	return theme.fg("toolTitle", theme.bold(`${prompt} ${commandDisplay}`)) + timeoutSuffix;
+	return theme.fg("toolTitle", theme.bold(`$ ${commandDisplay}`)) + timeoutSuffix;
 }
 
 function rebuildBashResultRenderComponent(
@@ -325,19 +319,8 @@ function rebuildBashResultRenderComponent(
 	}
 }
 
-export interface ShellToolConfig {
-	name: string;
-	label: string;
-	shellName: string;
-	prompt: string;
-	promptSnippet: string;
-	promptGuidelines?: readonly string[];
-	tempFilePrefix: string;
-}
-
-export function createShellToolDefinition(
+export function createBashToolDefinition(
 	cwd: string,
-	config: ShellToolConfig,
 	options?: BashToolOptions,
 ): ToolDefinition<typeof bashSchema, BashToolDetails | undefined, BashRenderState> {
 	const ops = options?.operations ?? createLocalBashOperations({ shellPath: options?.shellPath });
@@ -345,11 +328,11 @@ export function createShellToolDefinition(
 	const exposeSessionEnvironment = options?.exposeSessionEnvironment ?? true;
 	const spawnHook = options?.spawnHook;
 	return {
-		name: config.name,
-		label: config.label,
-		description: `Execute a ${config.shellName} command in the current working directory. Returns stdout and stderr. Output is truncated to last ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first). If truncated, full output is saved to a temp file. Optionally provide a timeout in seconds.`,
-		promptSnippet: config.promptSnippet,
-		promptGuidelines: exposeSessionEnvironment && config.promptGuidelines ? [...config.promptGuidelines] : undefined,
+		name: "bash",
+		label: "bash",
+		description: `Execute a bash command in the current working directory. Returns stdout and stderr. Output is truncated to last ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first). If truncated, full output is saved to a temp file. Optionally provide a timeout in seconds.`,
+		promptSnippet: bashToolSystemPromptContribution.snippet,
+		promptGuidelines: exposeSessionEnvironment ? [...bashToolSystemPromptContribution.guidelines] : undefined,
 		parameters: bashSchema,
 		constrainedSampling: getExperimentalToolSampling(),
 		async execute(
@@ -361,7 +344,7 @@ export function createShellToolDefinition(
 		) {
 			const resolvedCommand = commandPrefix ? `${commandPrefix}\n${command}` : command;
 			const spawnContext = resolveSpawnContext(resolvedCommand, cwd, spawnHook, exposeSessionEnvironment, ctx);
-			const output = new OutputAccumulator({ tempFilePrefix: config.tempFilePrefix });
+			const output = new OutputAccumulator({ tempFilePrefix: "pi-bash" });
 			let acceptingOutput = true;
 			let updateTimer: NodeJS.Timeout | undefined;
 			let updateDirty = false;
@@ -485,7 +468,7 @@ export function createShellToolDefinition(
 				state.endedAt = undefined;
 			}
 			const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
-			text.setText(formatShellCall(args, config.prompt));
+			text.setText(formatBashCall(args));
 			return text;
 		},
 		renderResult(result, options, _theme, context) {
@@ -514,23 +497,6 @@ export function createShellToolDefinition(
 			return component;
 		},
 	};
-}
-
-const bashToolConfig: ShellToolConfig = {
-	name: "bash",
-	label: "bash",
-	shellName: "bash",
-	prompt: "$",
-	promptSnippet: bashToolSystemPromptContribution.snippet,
-	promptGuidelines: bashToolSystemPromptContribution.guidelines,
-	tempFilePrefix: "pi-bash",
-};
-
-export function createBashToolDefinition(
-	cwd: string,
-	options?: BashToolOptions,
-): ToolDefinition<typeof bashSchema, BashToolDetails | undefined, BashRenderState> {
-	return createShellToolDefinition(cwd, bashToolConfig, options);
 }
 
 export function createBashTool(cwd: string, options?: BashToolOptions): AgentTool<typeof bashSchema> {

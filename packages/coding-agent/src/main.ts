@@ -7,7 +7,6 @@
 
 import { createInterface } from "node:readline";
 import { type ImageContent, modelsAreEqual } from "@earendil-works/pi-ai";
-import { setCapabilityOverrides } from "@earendil-works/pi-tui";
 import chalk from "chalk";
 import { type Args, type Mode, normalizeSessionName, parseArgs, printHelp } from "./cli/args.ts";
 import {
@@ -57,6 +56,12 @@ import {
 	type SessionCwdIssue,
 } from "./core/session-cwd.ts";
 import { assertValidSessionId, SessionManager } from "./core/session-manager.ts";
+import {
+	formatValidationReport,
+	hasErrors,
+	type SessionValidationReport,
+	validateSessionFile,
+} from "./core/sessions/validator.ts";
 import { collectSettingsDiagnostics, deduplicateDiagnostics } from "./core/settings-diagnostics.ts";
 import { SettingsManager } from "./core/settings-manager.ts";
 import { printTimings, resetTimings, time } from "./core/timings.ts";
@@ -65,7 +70,7 @@ import { builtInExtensions } from "./extensions/index.ts";
 import { runMigrations, showDeprecationWarnings } from "./migrations.ts";
 import { InteractiveMode, runPrintMode, runRpcMode } from "./modes/index.ts";
 import { initTheme, stopThemeWatcher } from "./modes/interactive/theme/theme.ts";
-import { cleanupManagedInstall, handleConfigCommand, handlePackageCommand } from "./package-manager-cli.ts";
+import { handleConfigCommand, handlePackageCommand } from "./package-manager-cli.ts";
 import { isLocalPath, normalizePath, resolvePath } from "./utils/paths.ts";
 import { cleanupWindowsSelfUpdateQuarantine } from "./utils/windows-self-update.ts";
 
@@ -574,7 +579,6 @@ export async function main(args: string[], options?: MainOptions) {
 	if (process.platform === "win32") {
 		cleanupWindowsSelfUpdateQuarantine(getPackageDir());
 	}
-	cleanupManagedInstall();
 
 	const cwd = process.cwd();
 	const agentDir = getAgentDir();
@@ -628,6 +632,19 @@ export async function main(args: string[], options?: MainOptions) {
 		}
 		console.log(`Exported to: ${result}`);
 		process.exit(0);
+	}
+
+	if (parsed.validateSession !== undefined) {
+		let report: SessionValidationReport;
+		try {
+			report = validateSessionFile(parsed.validateSession);
+		} catch (error: unknown) {
+			const message = error instanceof Error ? error.message : "Failed to validate session";
+			console.error(chalk.red(`Error: ${message}`));
+			process.exit(1);
+		}
+		console.log(formatValidationReport(report));
+		process.exit(hasErrors(report) ? 1 : 0);
 	}
 
 	let appMode = resolveAppMode(parsed, process.stdin.isTTY, process.stdout.isTTY);
@@ -845,7 +862,6 @@ export async function main(args: string[], options?: MainOptions) {
 	time("createAgentSessionRuntime");
 	const { services, session, modelFallbackMessage } = runtime;
 	const { settingsManager, modelRuntime, resourceLoader } = services;
-	setCapabilityOverrides(settingsManager.getTerminalCapabilityOverrides());
 	applyHttpProxySettings(settingsManager.getGlobalSettings().httpProxy);
 	configureHttpDispatcher(settingsManager.getHttpIdleTimeoutMs());
 

@@ -37,6 +37,7 @@ export interface Args {
 	noExtensions?: boolean;
 	print?: boolean;
 	export?: string;
+	validateSession?: string;
 	noSkills?: boolean;
 	skills?: string[];
 	promptTemplates?: string[];
@@ -163,6 +164,12 @@ export function parseArgs(args: string[]): Args {
 			}
 		} else if (arg === "--export" && i + 1 < args.length) {
 			result.export = args[++i];
+		} else if (arg === "--validate-session") {
+			if (i + 1 < args.length) {
+				result.validateSession = args[++i];
+			} else {
+				result.diagnostics.push({ type: "error", message: "--validate-session requires a path" });
+			}
 		} else if ((arg === "--extension" || arg === "-e") && i + 1 < args.length) {
 			result.extensions = result.extensions ?? [];
 			result.extensions.push(args[++i]);
@@ -310,6 +317,7 @@ ${chalk.bold("Options:")}
   --no-themes                    Disable theme discovery and loading
   --no-context-files, -nc        Disable AGENTS.md and CLAUDE.md discovery and loading
   --export <file>                Export session file to HTML and exit
+  --validate-session <path>      Validate a session file and print a report, then exit
   --list-models [search]         List available models (with optional fuzzy search)
   --verbose                      Force verbose startup (overrides quietStartup setting)
   --tui-mode <mode>              TUI mode: regular (default) or fullscreen
@@ -435,13 +443,12 @@ ${chalk.bold("Environment Variables:")}
   PI_SHARE_VIEWER_URL              - Base URL for /share command (default: https://pi.dev/session/)
 
 ${chalk.bold("Built-in Tool Names:")}
-  read       - Read file contents
-  bash       - Execute bash commands
-  powershell - Execute PowerShell commands on Windows
-  edit       - Edit files with find/replace
-  write      - Write files (creates/overwrites)
-  grep       - Search file contents (read-only, off by default)
-  find       - Find files by glob pattern (read-only, off by default)
-  ls         - List directory contents (read-only, off by default)
+  read   - Read file contents
+  bash   - Execute bash commands
+  edit   - Edit files with find/replace
+  write  - Write files (creates/overwrites)
+  grep   - Search file contents (read-only, off by default)
+  find   - Find files by glob pattern (read-only, off by default)
+  ls     - List directory contents (read-only, off by default)
 `);
 }

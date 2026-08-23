@@ -182,11 +182,11 @@ export const TUI_KEYBINDINGS = {
 		description: "Scroll viewport down one line",
 	},
 	"tui.altScreen.previousPrompt": {
-		defaultKeys: ["ctrl+shift+up", "ctrl+up"],
+		defaultKeys: "ctrl+shift+up",
 		description: "Jump to previous semantic prompt",
 	},
 	"tui.altScreen.nextPrompt": {
-		defaultKeys: ["ctrl+shift+down", "ctrl+down"],
+		defaultKeys: "ctrl+shift+down",
 		description: "Jump to next semantic prompt",
 	},
 	"tui.altScreen.search": {

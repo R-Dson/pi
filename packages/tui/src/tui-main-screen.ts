@@ -5,72 +5,6 @@ import { type TUI, TuiBase, type TuiStopOptions } from "./tui.ts";
 import { visibleWidth } from "./utils.ts";
 
 const KITTY_SEQUENCE_PREFIX = "\x1b_G";
-const MAX_RENDER_WRITE_CHARS = 1024 * 1024;
-
-/**
- * Streams terminal output in 1 MiB chunks so a full render never forms one string large enough to exceed V8's limit.
- *
- * `append()` fills the current chunk and flushes it when full. Oversized input is split at chunk boundaries, preserving
- * surrogate pairs so each write remains valid UTF-16. Callers append synchronized-output begin/end sequences themselves;
- * the final `flush()` writes any remainder, including the end sequence.
- */
-class BoundedTerminalWriter {
-	private buffer = "";
-	private writtenChars = 0;
-	private readonly write: (data: string) => void;
-
-	constructor(write: (data: string) => void) {
-		this.write = write;
-	}
-
-	/**
-	 * Append terminal data, flushing full chunks as needed. Callers must call `flush()` after the final append.
-	 * @param value Terminal data to write in order; oversized values are split without splitting surrogate pairs.
-	 */
-	append(value: string): void {
-		let offset = 0;
-		while (offset < value.length) {
-			const capacity = MAX_RENDER_WRITE_CHARS - this.buffer.length;
-			if (capacity === 0) {
-				this.flush();
-				continue;
-			}
-
-			let end = Math.min(value.length, offset + capacity);
-			if (
-				end < value.length &&
-				value.charCodeAt(end - 1) >= 0xd800 &&
-				value.charCodeAt(end - 1) <= 0xdbff &&
-				value.charCodeAt(end) >= 0xdc00 &&
-				value.charCodeAt(end) <= 0xdfff
-			) {
-				end--;
-			}
-			if (end === offset) {
-				this.flush();
-				continue;
-			}
-
-			this.buffer += value.slice(offset, end);
-			offset = end;
-			if (this.buffer.length === MAX_RENDER_WRITE_CHARS) {
-				this.flush();
-			}
-		}
-	}
-
-	/** Write the current chunk, if any, and retain only its character count for debug output. */
-	flush(): void {
-		if (!this.buffer) return;
-		this.write(this.buffer);
-		this.writtenChars += this.buffer.length;
-		this.buffer = "";
-	}
-
-	get length(): number {
-		return this.writtenChars + this.buffer.length;
-	}
-}
 
 interface KittyImageHeader {
 	ids: number[];
@@ -275,31 +209,30 @@ export class TuiMainScreen extends TuiBase implements TUI {
 		// Helper to clear scrollback and viewport and render all new lines
 		const fullRender = (clear: boolean): void => {
 			this.fullRedrawCount += 1;
-			const output = new BoundedTerminalWriter((data) => this.terminal.write(data));
-			output.append("\x1b[?2026h"); // Begin synchronized output
+			let buffer = "\x1b[?2026h"; // Begin synchronized output
 			if (clear) {
-				output.append(this.deleteKittyImages(this.previousKittyImageIds));
-				output.append("\x1b[2J\x1b[H\x1b[3J"); // Clear screen, home, then clear scrollback
+				buffer += this.deleteKittyImages(this.previousKittyImageIds);
+				buffer += "\x1b[2J\x1b[H\x1b[3J"; // Clear screen, home, then clear scrollback
 			}
 			for (let i = 0; i < newLines.length; i++) {
-				if (i > 0) output.append("\r\n");
+				if (i > 0) buffer += "\r\n";
 				const line = newLines[i];
 				const isImage = isImageLine(line);
 				const imageReservedRows = isImage ? this.getKittyImageReservedRows(newLines, i) : 1;
 				if (imageReservedRows > 1 && imageReservedRows <= height) {
 					for (let row = 1; row < imageReservedRows; row++) {
-						output.append("\r\n");
+						buffer += "\r\n";
 					}
-					output.append(`\x1b[${imageReservedRows - 1}A`);
-					output.append(line);
-					output.append(`\x1b[${imageReservedRows - 1}B`);
+					buffer += `\x1b[${imageReservedRows - 1}A`;
+					buffer += line;
+					buffer += `\x1b[${imageReservedRows - 1}B`;
 					i += imageReservedRows - 1;
 					continue;
 				}
-				output.append(line);
+				buffer += line;
 			}
-			output.append("\x1b[?2026l"); // End synchronized output
-			output.flush();
+			buffer += "\x1b[?2026l"; // End synchronized output
+			this.terminal.write(buffer);
 			this.cursorRow = Math.max(0, newLines.length - 1);
 			this.hardwareCursorRow = this.cursorRow;
 			// Reset max lines when clearing, otherwise track growth
@@ -398,9 +331,8 @@ export class TuiMainScreen extends TuiBase implements TUI {
 		// All changes are in deleted lines (nothing to render, just clear)
 		if (firstChanged >= newLines.length) {
 			if (this.previousLines.length > newLines.length) {
-				const output = new BoundedTerminalWriter((data) => this.terminal.write(data));
-				output.append("\x1b[?2026h");
-				output.append(this.deleteChangedKittyImages(firstChanged, lastChanged));
+				let buffer = "\x1b[?2026h";
+				buffer += this.deleteChangedKittyImages(firstChanged, lastChanged);
 				// Move to end of new content (clamp to 0 for empty content)
 				const targetRow = Math.max(0, newLines.length - 1);
 				if (targetRow < prevViewportTop) {
@@ -409,9 +341,9 @@ export class TuiMainScreen extends TuiBase implements TUI {
 					return;
 				}
 				const lineDiff = computeLineDiff(targetRow);
-				if (lineDiff > 0) output.append(`\x1b[${lineDiff}B`);
-				else if (lineDiff < 0) output.append(`\x1b[${-lineDiff}A`);
-				output.append("\r");
+				if (lineDiff > 0) buffer += `\x1b[${lineDiff}B`;
+				else if (lineDiff < 0) buffer += `\x1b[${-lineDiff}A`;
+				buffer += "\r";
 				// Clear extra lines without scrolling
 				const extraLines = this.previousLines.length - newLines.length;
 				if (extraLines > height) {
@@ -421,18 +353,18 @@ export class TuiMainScreen extends TuiBase implements TUI {
 				}
 				const clearStartOffset = newLines.length === 0 ? 0 : 1;
 				if (extraLines > 0 && clearStartOffset > 0) {
-					output.append(`\x1b[${clearStartOffset}B`);
+					buffer += `\x1b[${clearStartOffset}B`;
 				}
 				for (let i = 0; i < extraLines; i++) {
-					output.append("\r\x1b[2K");
-					if (i < extraLines - 1) output.append("\x1b[1B");
+					buffer += "\r\x1b[2K";
+					if (i < extraLines - 1) buffer += "\x1b[1B";
 				}
 				const moveBack = Math.max(0, extraLines - 1 + clearStartOffset);
 				if (moveBack > 0) {
-					output.append(`\x1b[${moveBack}A`);
+					buffer += `\x1b[${moveBack}A`;
 				}
-				output.append("\x1b[?2026l");
-				output.flush();
+				buffer += "\x1b[?2026l";
+				this.terminal.write(buffer);
 				this.cursorRow = targetRow;
 				this.hardwareCursorRow = targetRow;
 			}
@@ -454,20 +386,19 @@ export class TuiMainScreen extends TuiBase implements TUI {
 		}
 
 		// Render from first changed line to end
-		// Keep updates wrapped in synchronized output while writing bounded chunks.
-		const output = new BoundedTerminalWriter((data) => this.terminal.write(data));
-		output.append("\x1b[?2026h"); // Begin synchronized output
-		output.append(this.deleteChangedKittyImages(firstChanged, lastChanged));
+		// Build buffer with all updates wrapped in synchronized output
+		let buffer = "\x1b[?2026h"; // Begin synchronized output
+		buffer += this.deleteChangedKittyImages(firstChanged, lastChanged);
 		const prevViewportBottom = prevViewportTop + height - 1;
 		const moveTargetRow = appendStart ? firstChanged - 1 : firstChanged;
 		if (moveTargetRow > prevViewportBottom) {
 			const currentScreenRow = Math.max(0, Math.min(height - 1, hardwareCursorRow - prevViewportTop));
 			const moveToBottom = height - 1 - currentScreenRow;
 			if (moveToBottom > 0) {
-				output.append(`\x1b[${moveToBottom}B`);
+				buffer += `\x1b[${moveToBottom}B`;
 			}
 			const scroll = moveTargetRow - prevViewportBottom;
-			output.append("\r\n".repeat(scroll));
+			buffer += "\r\n".repeat(scroll);
 			prevViewportTop += scroll;
 			viewportTop += scroll;
 			hardwareCursorRow = moveTargetRow;
@@ -476,18 +407,18 @@ export class TuiMainScreen extends TuiBase implements TUI {
 		// Move cursor to first changed line (use hardwareCursorRow for actual position)
 		const lineDiff = computeLineDiff(moveTargetRow);
 		if (lineDiff > 0) {
-			output.append(`\x1b[${lineDiff}B`); // Move down
+			buffer += `\x1b[${lineDiff}B`; // Move down
 		} else if (lineDiff < 0) {
-			output.append(`\x1b[${-lineDiff}A`); // Move up
+			buffer += `\x1b[${-lineDiff}A`; // Move up
 		}
 
-		output.append(appendStart ? "\r\n" : "\r"); // Move to column 0
+		buffer += appendStart ? "\r\n" : "\r"; // Move to column 0
 
 		// Only render changed lines (firstChanged to lastChanged), not all lines to end
 		// This reduces flicker when only a single line changes (e.g., spinner animation)
 		const renderEnd = Math.min(lastChanged, newLines.length - 1);
 		for (let i = firstChanged; i <= renderEnd; i++) {
-			if (i > firstChanged) output.append("\r\n");
+			if (i > firstChanged) buffer += "\r\n";
 			const line = newLines[i];
 			const isImage = isImageLine(line);
 			const imageReservedRows = isImage ? this.getKittyImageReservedRows(newLines, i, renderEnd) : 1;
@@ -501,18 +432,18 @@ export class TuiMainScreen extends TuiBase implements TUI {
 					return;
 				}
 
-				output.append("\x1b[2K");
+				buffer += "\x1b[2K";
 				for (let row = 1; row < imageReservedRows; row++) {
-					output.append("\r\n\x1b[2K");
+					buffer += "\r\n\x1b[2K";
 				}
-				output.append(`\x1b[${imageReservedRows - 1}A`);
-				output.append(line);
-				output.append(`\x1b[${imageReservedRows - 1}B`);
+				buffer += `\x1b[${imageReservedRows - 1}A`;
+				buffer += line;
+				buffer += `\x1b[${imageReservedRows - 1}B`;
 				i += imageReservedRows - 1;
 				continue;
 			}
 
-			output.append("\x1b[2K"); // Clear current line
+			buffer += "\x1b[2K"; // Clear current line
 			if (!isImage && visibleWidth(line) > width) {
 				// Log all lines to crash file for debugging
 				const crashLogPath = path.join(this.logDirectory, "pi-crash.log");
@@ -541,7 +472,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
 				].join("\n");
 				throw new Error(errorMsg);
 			}
-			output.append(line);
+			buffer += line;
 		}
 
 		// Track where cursor ended up after rendering
@@ -552,18 +483,18 @@ export class TuiMainScreen extends TuiBase implements TUI {
 			// Move to end of new content first if we stopped before it
 			if (renderEnd < newLines.length - 1) {
 				const moveDown = newLines.length - 1 - renderEnd;
-				output.append(`\x1b[${moveDown}B`);
+				buffer += `\x1b[${moveDown}B`;
 				finalCursorRow = newLines.length - 1;
 			}
 			const extraLines = this.previousLines.length - newLines.length;
 			for (let i = newLines.length; i < this.previousLines.length; i++) {
-				output.append("\r\n\x1b[2K");
+				buffer += "\r\n\x1b[2K";
 			}
 			// Move cursor back to end of new content
-			output.append(`\x1b[${extraLines}A`);
+			buffer += `\x1b[${extraLines}A`;
 		}
 
-		output.append("\x1b[?2026l"); // End synchronized output
+		buffer += "\x1b[?2026l"; // End synchronized output
 
 		if (process.env.PI_TUI_DEBUG === "1") {
 			const debugDir = "/tmp/tui";
@@ -589,12 +520,13 @@ export class TuiMainScreen extends TuiBase implements TUI {
 				JSON.stringify(this.previousLines, null, 2),
 				"",
 				"=== buffer ===",
-				`[${output.length} chars written in bounded chunks]`,
+				JSON.stringify(buffer),
 			].join("\n");
 			fs.writeFileSync(debugPath, debugData);
 		}
 
-		output.flush();
+		// Write entire buffer at once
+		this.terminal.write(buffer);
 
 		// Track cursor position for next render
 		// cursorRow tracks end of content (for viewport calculation)

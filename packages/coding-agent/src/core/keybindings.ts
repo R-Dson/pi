@@ -58,37 +58,12 @@ export interface AppKeybindings {
 
 export type AppKeybinding = keyof AppKeybindings;
 
-export function useWindowsKeybindings(
-	platform: NodeJS.Platform = process.platform,
-	env: NodeJS.ProcessEnv = process.env,
-): boolean {
-	return platform === "win32" || (platform === "linux" && Boolean(env.WSL_DISTRO_NAME || env.WSL_INTEROP));
-}
-
 declare module "@earendil-works/pi-tui" {
 	interface Keybindings extends AppKeybindings {}
 }
 
-const windowsKeybindings = useWindowsKeybindings();
-
 export const KEYBINDINGS = {
 	...TUI_KEYBINDINGS,
-	"tui.editor.undo": {
-		...TUI_KEYBINDINGS["tui.editor.undo"],
-		defaultKeys: process.platform === "win32" ? "ctrl+z" : windowsKeybindings ? "alt+z" : "ctrl+-",
-	},
-	"tui.altScreen.previousPrompt": {
-		...TUI_KEYBINDINGS["tui.altScreen.previousPrompt"],
-		defaultKeys: windowsKeybindings ? "ctrl+up" : ["ctrl+shift+up", "ctrl+up"],
-	},
-	"tui.altScreen.nextPrompt": {
-		...TUI_KEYBINDINGS["tui.altScreen.nextPrompt"],
-		defaultKeys: windowsKeybindings ? "ctrl+down" : ["ctrl+shift+down", "ctrl+down"],
-	},
-	"tui.altScreen.search": {
-		...TUI_KEYBINDINGS["tui.altScreen.search"],
-		defaultKeys: windowsKeybindings ? "ctrl+f" : "ctrl+shift+f",
-	},
 	"app.interrupt": { defaultKeys: "escape", description: "Cancel or abort" },
 	"app.clear": { defaultKeys: "ctrl+c", description: "Clear editor" },
 	"app.exit": { defaultKeys: "ctrl+d", description: "Exit when editor is empty" },
@@ -105,7 +80,7 @@ export const KEYBINDINGS = {
 		description: "Cycle to next model",
 	},
 	"app.model.cycleBackward": {
-		defaultKeys: windowsKeybindings ? "alt+p" : "shift+ctrl+p",
+		defaultKeys: "shift+ctrl+p",
 		description: "Cycle to previous model",
 	},
 	"app.model.select": { defaultKeys: "ctrl+l", description: "Open model selector" },
@@ -127,15 +102,15 @@ export const KEYBINDINGS = {
 		description: "Copy message to clipboard",
 	},
 	"app.message.followUp": {
-		defaultKeys: windowsKeybindings ? "ctrl+q" : "alt+enter",
+		defaultKeys: "alt+enter",
 		description: "Queue follow-up message",
 	},
 	"app.message.dequeue": {
-		defaultKeys: windowsKeybindings ? "alt+q" : "alt+up",
+		defaultKeys: "alt+up",
 		description: "Restore queued messages",
 	},
 	"app.clipboard.pasteImage": {
-		defaultKeys: windowsKeybindings ? "alt+v" : "ctrl+v",
+		defaultKeys: process.platform === "win32" ? "alt+v" : "ctrl+v",
 		description: "Paste image from clipboard (text fallback)",
 	},
 	"app.session.new": { defaultKeys: [], description: "Start a new session" },
