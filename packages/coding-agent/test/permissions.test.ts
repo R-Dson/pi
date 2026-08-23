@@ -335,6 +335,84 @@ describe("evaluatePermission reasons", () => {
 	});
 });
 
+describe("evaluatePermission hide flag and match reporting", () => {
+	it("marks the decision hidden when the winning deny rule has hide", () => {
+		const decision = evaluate([{ tool: "edit", effect: "deny", hide: true }], {
+			toolName: "edit",
+			capability: "filesystem.write",
+			args: {},
+		});
+		expect(decision.kind).toBe("deny");
+		expect(decision.matched).toBe(true);
+		expect(decision.hidden).toBe(true);
+	});
+
+	it("does not mark hidden when the winning deny rule lacks hide", () => {
+		const decision = evaluate([{ tool: "edit", effect: "deny" }], {
+			toolName: "edit",
+			capability: "filesystem.write",
+			args: {},
+		});
+		expect(decision.kind).toBe("deny");
+		expect(decision.hidden).toBe(false);
+	});
+
+	it("reports matched false and hidden false when no rule matched", () => {
+		const decision = evaluate([{ tool: "read", effect: "deny" }], {
+			toolName: "edit",
+			args: {},
+			defaultEffect: "allow",
+		});
+		expect(decision.kind).toBe("allow");
+		expect(decision.matched).toBe(false);
+		expect(decision.hidden).toBe(false);
+	});
+
+	it("the last matching deny rule decides hiding: a later deny without hide un-hides", () => {
+		const decision = evaluate(
+			[
+				{ tool: "edit", effect: "deny", hide: true },
+				{ tool: "edit", effect: "deny" },
+			],
+			{ toolName: "edit", args: {} },
+		);
+		expect(decision.kind).toBe("deny");
+		expect(decision.hidden).toBe(false);
+	});
+
+	it("ignores hide on allow and ask rules", () => {
+		for (const effect of ["allow", "ask"] as const) {
+			const decision = evaluate([{ tool: "bash", effect, hide: true }], {
+				toolName: "bash",
+				capability: "process.execute",
+				args: { command: "ls" },
+			});
+			expect(decision.kind, effect).toBe(effect);
+			expect(decision.hidden, effect).toBe(false);
+		}
+	});
+
+	it("arg-dependent rules cannot hide: with no args, path and command matchers do not match", () => {
+		// Visibility filtering evaluates with no call args, so a deny rule whose
+		// matcher needs a path/command value never decides hiding.
+		const pathDecision = evaluate([{ path: "/etc", effect: "deny", hide: true }], {
+			toolName: "write",
+			args: {},
+			defaultEffect: "allow",
+		});
+		expect(pathDecision.kind).toBe("allow");
+		expect(pathDecision.hidden).toBe(false);
+
+		const commandDecision = evaluate([{ command: "rm", effect: "deny", hide: true }], {
+			toolName: "bash",
+			args: {},
+			defaultEffect: "allow",
+		});
+		expect(commandDecision.kind).toBe("allow");
+		expect(commandDecision.hidden).toBe(false);
+	});
+});
+
 describe("evaluatePermission capability coverage", () => {
 	it("accepts every documented capability value", () => {
 		for (const capability of ALL_CAPABILITIES) {
