@@ -54,6 +54,22 @@ Every upstream source file and shared test utility the fork modifies, and the as
 | `packages/coding-agent/src/modes/interactive/interactive-mode.ts` | `/session` panel Tools line renders tool output volume and, when truncation happened, removed bytes and artifact count | none (display-only; formats via upstream `formatSize` from `core/tools/truncate.ts`) | Reads additive `SessionStats` fields only; truncation detail line appears only when `truncatedToolOutputBytes > 0`; no other panel behavior changes | `packages/coding-agent/test/suite/tool-output-bounds.test.ts`, `packages/coding-agent/test/agent-session-stats.test.ts` (fields the panel renders) |
 | `packages/coding-agent/src/core/sdk.ts` | Interrupted-turn recovery wiring in `createAgentSession`: after the existing session context is built and before agent state adopts the messages, dangling final-turn tool calls get terminal error toolResults appended; the context is re-derived only when something was appended | `core/sessions/recovery.ts` | Runs only when the loaded session has messages (brand-new sessions untouched); repair is append-only through `SessionManager.appendMessage`, so persisted history is never rewritten and in-memory sessions resume repaired too | `packages/coding-agent/test/session-recovery.test.ts` |
 
+## Phase 8 Compatibility Audit (issue #13)
+
+Plan phase 8 says: after at least one stable release, remove temporary compatibility paths. Audit of everything the fork added, and each item's disposition:
+
+| Path / flag | Disposition |
+| --- | --- |
+| Dual projection execution | Never existed — the projector extraction replaced the inline code and the golden tests proved equivalence. Nothing to remove. |
+| `tools.permissions.mode` (legacy \| policy, default legacy) | Keep. Policy mode is new; the removal path is flipping the default once policy proves out across at least one stable release. |
+| `tools.maxToolOutputBytes`, `tools.permissions.profile`, `tools.permissions.rules` | Keep. Configuration, not temporary flags. |
+| Session readers (v1/v2/v3 migrations) | Keep — upstream-owned, retained indefinitely per the plan. |
+| Legacy tool adapters | None were added (`AgentTool` gained only optional `timeoutMs`; `ToolDefinition` only optional `capability`). |
+| Golden/equivalence tests | Keep — permanent regression baselines, not scaffolding. |
+| `recoverSessionEntries`, `--validate-session` | Keep — the recovery read API and its diagnostic surface. |
+
+Removal set today: empty. The one future removal candidate (permissions legacy default) is gated on a stable fork release; revisit this table at that point.
+
 ## Upstream Sync Procedure
 
 1. Merge upstream `main` into fork `main` as a dedicated `upstream-sync:` commit; never mix fork feature changes into a sync commit.
