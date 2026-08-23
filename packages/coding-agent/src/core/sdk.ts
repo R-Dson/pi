@@ -14,6 +14,7 @@ import { mergeProviderAttributionHeaders } from "./provider-attribution.ts";
 import type { ResourceLoader } from "./resource-loader.ts";
 import { DefaultResourceLoader } from "./resource-loader.ts";
 import { getDefaultSessionDir, SessionManager } from "./session-manager.ts";
+import { appendInterruptedTurnResults } from "./sessions/recovery.ts";
 import { SettingsManager } from "./settings-manager.ts";
 import { time } from "./timings.ts";
 import {
@@ -187,9 +188,17 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	}
 
 	// Check if session has existing data to restore
-	const existingSession = sessionManager.buildSessionContext();
+	let existingSession = sessionManager.buildSessionContext();
 	const hasExistingSession = existingSession.messages.length > 0;
 	const hasThinkingEntry = sessionManager.getBranch().some((entry) => entry.type === "thinking_level_change");
+
+	// A crash mid-tool-execution leaves the final assistant message with tool
+	// calls and no results; strict providers reject tool_use without tool_result.
+	// Append one terminal error toolResult per dangling call (append-only) before
+	// the messages are adopted, then re-derive the context so it includes them.
+	if (hasExistingSession && appendInterruptedTurnResults(sessionManager).length > 0) {
+		existingSession = sessionManager.buildSessionContext();
+	}
 
 	let model = options.model;
 	let modelFallbackMessage: string | undefined;
