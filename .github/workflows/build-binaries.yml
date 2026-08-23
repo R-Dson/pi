@@ -1,9 +1,8 @@
 name: Build Binaries
 
+# fork: the tag trigger is removed; releases are cut by fork-release.yml. Manual
+# dispatch (with an explicit tag input) remains for recovery scenarios.
 on:
-  push:
-    tags:
-      - 'v*'
   workflow_dispatch:
     inputs:
       tag:

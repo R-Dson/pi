@@ -133,10 +133,16 @@ We treat npm dependency changes as reviewed code changes.
 - `package-lock.json` is the dependency ground truth. Pre-commit blocks accidental lockfile commits unless `PI_ALLOW_LOCKFILE_CHANGE=1` is set.
 - `npm run check` verifies pinned direct deps, native TypeScript import compatibility, and the generated coding-agent shrinkwrap.
 - Fork publishes exclude the shrinkwrap (it pins upstream package names that do not exist on the fork registry); dependency integrity comes from exact version pins in the published manifests.
-- Release smoke tests use `npm run release:local` to build, pack, and create isolated npm and Bun installs outside the repo before tagging a release.
+- Pre-release smoke: `npm run release:local` builds an unpublished release (isolated npm and Bun installs outside the repo) for manual testing.
 - Installs use `--ignore-scripts`; CI installs with `npm ci --ignore-scripts`.
 - Shrinkwrap generation has an explicit allowlist for dependency lifecycle scripts; new lifecycle-script deps fail checks until reviewed.
 
 ## License
 
 MIT
+
+<p align="center">
+  <a href="https://pi.dev">pi.dev</a> domain graciously donated by
+  <br /><br />
+  <a href="https://exe.dev"><img src="packages/coding-agent/docs/images/exy.png" alt="Exy mascot" width="48" /><br />exe.dev</a>
+</p>
