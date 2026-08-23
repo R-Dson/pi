@@ -20,11 +20,11 @@ Pre-made architectural decisions, with one-line rationales. Do not revisit witho
 
 ## Changed Upstream Files
 
-Every upstream file the fork modifies, and the assumptions each change rests on. Later tickets fill this in; it is empty at the fork baseline.
+Every upstream file the fork modifies, and the assumptions each change rests on. Later tickets fill this in.
 
 | File | Why | Fork module called | Assumptions | Tests |
 | --- | --- | --- | --- | --- |
-| — | — | — | — | — |
+| `.github/workflows/ci.yml` | Fork runs stacked PRs whose bases are feature branches, so CI must not filter `pull_request` to `main`; `workflow_dispatch` allows manual runs | none (trigger-only change) | Trigger-only change; job steps (build, check, test) identical to upstream, so upstream merges only ever conflict on the `on:` block | The CI run on every stacked PR |
 
 ## Upstream Sync Procedure
 
