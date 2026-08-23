@@ -2,8 +2,10 @@ name: Fork Release
 
 # Manual fork-only release to GitHub Packages (npm.pkg.github.com). Never runs on
 # push/PR. Publishes all public workspace packages as @r-dson/* at a publish-time
-# version, then tags v<version> and creates a GitHub Release. Repo files (manifests,
-# changelogs) are never modified; the only git object created is the tag.
+# version, then tags v<version> and creates a GitHub Release that also carries a
+# self-contained pi-fork.tgz asset (installable from the release URL with no
+# registry configuration). Repo files (manifests, changelogs) are never modified;
+# the only git object created is the tag.
 
 on:
   workflow_dispatch:
@@ -112,6 +114,15 @@ jobs:
             echo
             cat release-packages.md
             echo
+            echo "## Standalone install (no registry configuration)"
+            echo
+            echo "Install the CLI from the release asset alone; dependencies resolve from the public npm registry, no PAT needed:"
+            echo
+            echo '```sh'
+            echo "npm install -g https://github.com/R-Dson/pi/releases/latest/download/pi-fork.tgz"
+            echo "curl -fsSL https://raw.githubusercontent.com/R-Dson/pi/main/scripts/install-fork.sh | sh"
+            echo '```'
+            echo
             echo "Install instructions: [\`docs/fork/install-from-github.md\`](docs/fork/install-from-github.md)"
           } > RELEASE_NOTES.md
 
@@ -119,3 +130,21 @@ jobs:
             --verify-tag \
             --title "${TAG}" \
             --notes-file RELEASE_NOTES.md
+
+      - name: Build standalone tarball
+        env:
+          FORK_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          node scripts/fork-standalone-package.mjs --version "$FORK_VERSION"
+
+      - name: Upload standalone tarball
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          FORK_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          gh release upload "v${FORK_VERSION}" .fork-publish/pi-fork.tgz --clobber
