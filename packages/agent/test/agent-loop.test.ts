@@ -1482,6 +1482,403 @@ describe("agentLoop with AgentMessage", () => {
 	});
 });
 
+describe("agentLoop tool timeouts", () => {
+	const toolSchema = Type.Object({});
+
+	it("aborts a tool that exceeds timeoutMs and records a terminal timeout error", async () => {
+		let receivedSignal: AbortSignal | undefined;
+		const tool: AgentTool<typeof toolSchema, { value: string }> = {
+			name: "hang",
+			label: "Hang",
+			description: "Never settles on its own",
+			parameters: toolSchema,
+			timeoutMs: 25,
+			execute(_toolCallId, _params, signal) {
+				receivedSignal = signal;
+				return new Promise<never>((_resolve, reject) => {
+					signal?.addEventListener("abort", () => reject(new Error("hang tool aborted")), {
+						once: true,
+					});
+				});
+			},
+		};
+
+		const context: AgentContext = {
+			systemPrompt: "",
+			messages: [],
+			tools: [tool],
+		};
+
+		const config: AgentLoopConfig = {
+			model: createModel(),
+			convertToLlm: identityConverter,
+		};
+
+		let callIndex = 0;
+		const events: AgentEvent[] = [];
+		const stream = agentLoop([createUserMessage("hang")], context, config, undefined, () => {
+			const mockStream = new MockAssistantStream();
+			queueMicrotask(() => {
+				if (callIndex === 0) {
+					const message = createAssistantMessage(
+						[{ type: "toolCall", id: "tool-1", name: "hang", arguments: {} }],
+						"toolUse",
+					);
+					mockStream.push({ type: "done", reason: "toolUse", message });
+				} else {
+					const message = createAssistantMessage([{ type: "text", text: "done" }]);
+					mockStream.push({ type: "done", reason: "stop", message });
+				}
+				callIndex++;
+			});
+			return mockStream;
+		});
+
+		for await (const event of stream) {
+			events.push(event);
+		}
+
+		// The deadline aborted the tool's signal and the loop completed with a
+		// terminal error result mentioning the timeout.
+		expect(receivedSignal?.aborted).toBe(true);
+		const toolEnd = events.find((e) => e.type === "tool_execution_end");
+		expect(toolEnd).toBeDefined();
+		if (toolEnd?.type === "tool_execution_end") {
+			expect(toolEnd.isError).toBe(true);
+			const text = toolEnd.result.content.find((c: { type: string }) => c.type === "text");
+			expect(text && "text" in text ? text.text : "").toContain("Tool hang timed out after 25ms");
+		}
+		const messages = await stream.result();
+		const toolResult = messages.find((message) => message.role === "toolResult");
+		expect(toolResult?.role === "toolResult" ? toolResult.isError : false).toBe(true);
+	});
+
+	it("turns an invalid timeoutMs into a terminal tool error instead of an unhandled rejection", async () => {
+		const tool: AgentTool<typeof toolSchema, { value: string }> = {
+			name: "bad-deadline",
+			label: "Bad deadline",
+			description: "Declares an invalid timeoutMs",
+			parameters: toolSchema,
+			timeoutMs: Number.NaN,
+			async execute() {
+				return { content: [{ type: "text", text: "unreachable" }] };
+			},
+		};
+
+		const context: AgentContext = {
+			systemPrompt: "",
+			messages: [],
+			tools: [tool],
+		};
+
+		const config: AgentLoopConfig = {
+			model: createModel(),
+			convertToLlm: identityConverter,
+		};
+
+		let callIndex = 0;
+		const events: AgentEvent[] = [];
+		const stream = agentLoop([createUserMessage("run")], context, config, undefined, () => {
+			const mockStream = new MockAssistantStream();
+			queueMicrotask(() => {
+				if (callIndex === 0) {
+					const message = createAssistantMessage(
+						[{ type: "toolCall", id: "tool-1", name: "bad-deadline", arguments: {} }],
+						"toolUse",
+					);
+					mockStream.push({ type: "done", reason: "toolUse", message });
+				} else {
+					const message = createAssistantMessage([{ type: "text", text: "done" }]);
+					mockStream.push({ type: "done", reason: "stop", message });
+				}
+				callIndex++;
+			});
+			return mockStream;
+		});
+
+		// AbortSignal.timeout(NaN) throws synchronously; the loop must surface it
+		// as the tool's terminal error result and keep running to completion.
+		for await (const event of stream) {
+			events.push(event);
+		}
+
+		const toolEnd = events.find((e) => e.type === "tool_execution_end");
+		expect(toolEnd).toBeDefined();
+		if (toolEnd?.type === "tool_execution_end") {
+			expect(toolEnd.isError).toBe(true);
+			const text = toolEnd.result.content.find((c: { type: string }) => c.type === "text");
+			expect(text && "text" in text ? text.text : "").toMatch(/out of range/i);
+		}
+		const messages = await stream.result();
+		const toolResult = messages.find((message) => message.role === "toolResult");
+		expect(toolResult?.role === "toolResult" ? toolResult.isError : false).toBe(true);
+	});
+
+	it("lets a tool that settles within timeoutMs finish normally", async () => {
+		let receivedSignal: AbortSignal | undefined;
+		const tool: AgentTool<typeof toolSchema, { value: string }> = {
+			name: "slow",
+			label: "Slow",
+			description: "Settles within its deadline",
+			parameters: toolSchema,
+			timeoutMs: 5000,
+			async execute(_toolCallId, _params, signal) {
+				receivedSignal = signal;
+				await new Promise((resolve) => setTimeout(resolve, 10));
+				return {
+					content: [{ type: "text", text: "finished" }],
+					details: { value: "finished" },
+				};
+			},
+		};
+
+		const context: AgentContext = {
+			systemPrompt: "",
+			messages: [],
+			tools: [tool],
+		};
+
+		const config: AgentLoopConfig = {
+			model: createModel(),
+			convertToLlm: identityConverter,
+		};
+
+		let callIndex = 0;
+		const events: AgentEvent[] = [];
+		const stream = agentLoop([createUserMessage("run slow")], context, config, undefined, () => {
+			const mockStream = new MockAssistantStream();
+			queueMicrotask(() => {
+				if (callIndex === 0) {
+					const message = createAssistantMessage(
+						[{ type: "toolCall", id: "tool-1", name: "slow", arguments: {} }],
+						"toolUse",
+					);
+					mockStream.push({ type: "done", reason: "toolUse", message });
+				} else {
+					const message = createAssistantMessage([{ type: "text", text: "done" }]);
+					mockStream.push({ type: "done", reason: "stop", message });
+				}
+				callIndex++;
+			});
+			return mockStream;
+		});
+
+		for await (const event of stream) {
+			events.push(event);
+		}
+
+		expect(receivedSignal?.aborted).toBe(false);
+		const toolEnd = events.find((e) => e.type === "tool_execution_end");
+		expect(toolEnd).toBeDefined();
+		if (toolEnd?.type === "tool_execution_end") {
+			expect(toolEnd.isError).toBe(false);
+			const text = toolEnd.result.content.find((c: { type: string }) => c.type === "text");
+			expect(text && "text" in text ? text.text : "").toBe("finished");
+		}
+	});
+
+	it("passes the run signal through unchanged when no timeoutMs is set", async () => {
+		const parentController = new AbortController();
+		let receivedSignal: AbortSignal | undefined;
+		const tool: AgentTool<typeof toolSchema, { value: string }> = {
+			name: "echo",
+			label: "Echo",
+			description: "Echo tool",
+			parameters: toolSchema,
+			async execute(_toolCallId, _params, signal) {
+				receivedSignal = signal;
+				return {
+					content: [{ type: "text", text: "ok" }],
+					details: { value: "ok" },
+				};
+			},
+		};
+
+		const context: AgentContext = {
+			systemPrompt: "",
+			messages: [],
+			tools: [tool],
+		};
+
+		const config: AgentLoopConfig = {
+			model: createModel(),
+			convertToLlm: identityConverter,
+		};
+
+		let callIndex = 0;
+		const events: AgentEvent[] = [];
+		const stream = agentLoop([createUserMessage("echo something")], context, config, parentController.signal, () => {
+			const mockStream = new MockAssistantStream();
+			queueMicrotask(() => {
+				if (callIndex === 0) {
+					const message = createAssistantMessage(
+						[{ type: "toolCall", id: "tool-1", name: "echo", arguments: {} }],
+						"toolUse",
+					);
+					mockStream.push({ type: "done", reason: "toolUse", message });
+				} else {
+					const message = createAssistantMessage([{ type: "text", text: "done" }]);
+					mockStream.push({ type: "done", reason: "stop", message });
+				}
+				callIndex++;
+			});
+			return mockStream;
+		});
+
+		for await (const event of stream) {
+			events.push(event);
+		}
+
+		// No timeout configured: the tool sees the run signal itself, unwrapped.
+		expect(receivedSignal).toBe(parentController.signal);
+		const toolEnd = events.find((e) => e.type === "tool_execution_end");
+		if (toolEnd?.type === "tool_execution_end") {
+			expect(toolEnd.isError).toBe(false);
+		}
+	});
+
+	it("reports the tool's abort error, not the timeout, when the parent signal aborts first", async () => {
+		const parentController = new AbortController();
+		let receivedSignal: AbortSignal | undefined;
+		let signalDelivered: (() => void) | undefined;
+		const executionStarted = new Promise<void>((resolve) => {
+			signalDelivered = resolve;
+		});
+		const tool: AgentTool<typeof toolSchema, { value: string }> = {
+			name: "hang",
+			label: "Hang",
+			description: "Never settles on its own",
+			parameters: toolSchema,
+			timeoutMs: 10_000,
+			execute(_toolCallId, _params, signal) {
+				receivedSignal = signal;
+				signalDelivered?.();
+				return new Promise<never>((_resolve, reject) => {
+					signal?.addEventListener("abort", () => reject(new Error("hang tool aborted by parent")), {
+						once: true,
+					});
+				});
+			},
+		};
+
+		const context: AgentContext = {
+			systemPrompt: "",
+			messages: [],
+			tools: [tool],
+		};
+
+		const config: AgentLoopConfig = {
+			model: createModel(),
+			convertToLlm: identityConverter,
+		};
+
+		let callIndex = 0;
+		const events: AgentEvent[] = [];
+		const stream = agentLoop(
+			[createUserMessage("hang")],
+			context,
+			config,
+			parentController.signal,
+			(_model, _ctx, options) => {
+				const mockStream = new MockAssistantStream();
+				queueMicrotask(() => {
+					if (callIndex === 0) {
+						const message = createAssistantMessage(
+							[{ type: "toolCall", id: "tool-1", name: "hang", arguments: {} }],
+							"toolUse",
+						);
+						mockStream.push({ type: "done", reason: "toolUse", message });
+					} else if (options?.signal?.aborted) {
+						const message = createAssistantMessage([{ type: "text", text: "Aborted" }], "aborted");
+						mockStream.push({ type: "error", reason: "aborted", error: message });
+					} else {
+						const message = createAssistantMessage([{ type: "text", text: "done" }]);
+						mockStream.push({ type: "done", reason: "stop", message });
+					}
+					callIndex++;
+				});
+				return mockStream;
+			},
+		);
+
+		const consumed = (async () => {
+			for await (const event of stream) {
+				events.push(event);
+			}
+		})();
+		await executionStarted;
+		parentController.abort();
+		await consumed;
+
+		expect(receivedSignal?.aborted).toBe(true);
+		const toolEnd = events.find((e) => e.type === "tool_execution_end");
+		expect(toolEnd).toBeDefined();
+		if (toolEnd?.type === "tool_execution_end") {
+			expect(toolEnd.isError).toBe(true);
+			const text = toolEnd.result.content.find((c: { type: string }) => c.type === "text");
+			const message = text && "text" in text ? text.text : "";
+			expect(message).toContain("hang tool aborted by parent");
+			expect(message).not.toContain("timed out");
+		}
+	});
+
+	it("keeps no ref'd timer alive while a tool deadline is pending", async () => {
+		const tool: AgentTool<typeof toolSchema, { value: string }> = {
+			name: "echo",
+			label: "Echo",
+			description: "Echo tool",
+			parameters: toolSchema,
+			timeoutMs: 5000,
+			async execute() {
+				return {
+					content: [{ type: "text", text: "ok" }],
+					details: { value: "ok" },
+				};
+			},
+		};
+
+		const context: AgentContext = {
+			systemPrompt: "",
+			messages: [],
+			tools: [tool],
+		};
+
+		const config: AgentLoopConfig = {
+			model: createModel(),
+			convertToLlm: identityConverter,
+		};
+
+		let callIndex = 0;
+		const refdTimers = () => process.getActiveResourcesInfo().filter((r) => r === "Timeout").length;
+		const before = refdTimers();
+		const stream = agentLoop([createUserMessage("echo something")], context, config, undefined, () => {
+			const mockStream = new MockAssistantStream();
+			queueMicrotask(() => {
+				if (callIndex === 0) {
+					const message = createAssistantMessage(
+						[{ type: "toolCall", id: "tool-1", name: "echo", arguments: {} }],
+						"toolUse",
+					);
+					mockStream.push({ type: "done", reason: "toolUse", message });
+				} else {
+					const message = createAssistantMessage([{ type: "text", text: "done" }]);
+					mockStream.push({ type: "done", reason: "stop", message });
+				}
+				callIndex++;
+			});
+			return mockStream;
+		});
+
+		for await (const _event of stream) {
+			// consume; the 5s deadline is still pending here
+		}
+
+		// AbortSignal.timeout timers are unref'd: a pending deadline must not
+		// register a ref'd Timeout handle.
+		expect(refdTimers()).toBeLessThanOrEqual(before);
+	});
+});
+
 describe("agentLoopContinue with AgentMessage", () => {
 	it("should throw when context has no messages", () => {
 		const context: AgentContext = {
