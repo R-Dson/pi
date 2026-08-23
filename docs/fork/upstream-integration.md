@@ -20,11 +20,11 @@ Pre-made architectural decisions, with one-line rationales. Do not revisit witho
 
 ## Changed Upstream Files
 
-Every upstream file the fork modifies, and the assumptions each change rests on. Later tickets fill this in; it is empty at the fork baseline.
+Every upstream file the fork modifies, and the assumptions each change rests on.
 
 | File | Why | Fork module called | Assumptions | Tests |
 | --- | --- | --- | --- | --- |
-| — | — | — | — | — |
+| `packages/coding-agent/src/core/session-manager.ts` | Extraction of pure projection into `core/sessions/projector.ts` | `core/sessions/projector.ts` | Re-export surface keeps external imports stable: all previously-exported entry types, `CURRENT_SESSION_VERSION`, and projection functions are re-exported from session-manager.ts, so no other file changes | `packages/coding-agent/test/session-fixtures-golden.test.ts`, `packages/coding-agent/test/session-projector.test.ts` |
 
 ## Upstream Sync Procedure
 
