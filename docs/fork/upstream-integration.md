@@ -19,12 +19,15 @@ Pre-made architectural decisions, with one-line rationales. Do not revisit witho
 | Incremental-index/projection-cache work folded into session validation | No serialized format changes; file order is the sequence, so correctness is validated before any indexing is added. |
 | Full `ExecutionScope` (defer/dispose cleanup registry) skipped | Tools already receive an abort signal and clean up on it; a deferred-cleanup registry has no consumer today. Per-tool `timeoutMs` covers the deadline case. |
 | Tool output bounding via coding-agent `afterToolCall` hook (not an agent-loop change) | `AfterToolCallResult.content` fully replaces the finalized result content in `finalizeExecutedToolCall` (packages/agent/src/agent-loop.ts), so bounding needs zero `packages/agent` diff. |
+| Golden prompt tests are the phase-7 equivalence baseline (issue #12) | `packages/coding-agent/test/system-prompt.test.ts` (golden describe) and `packages/coding-agent/test/suite/prompt-stable-prefix.test.ts` pin today's system-prompt bytes and per-turn request-prefix stability (systemPrompt, tool order, extend-only messages) with zero src changes. No upstream src files changed. |
+| Prompt-section framework and tool-order/schema normalization descoped (issue #12) | The baseline tests prove current assembly is already deterministic and prefix-stable within a session, across turns, and across sessions with identical state — the plan's goal (cache-stable deterministic construction) holds without restructuring. A section framework would add abstraction with no observable benefit. Revisit only if a provider-conversion instability surfaces; the tests are the equivalence gate for any such change. |
 | Permission `ask` blocks with an actionable reason (no approval UI yet); interactive approval when a consumer needs it | Opt-in policy mode must be deterministic in non-interactive modes (print/RPC); a blocked call with instructions for adjusting `tools.permissions.rules` lets the model relay the fix instead of hanging on a prompt nobody can answer. |
 | Policy mode uses default effect `allow` (rules opt calls out, not default-deny) | Flipping the mode with no rules otherwise breaks every session; unmatched calls keep legacy behavior. |
 | Profiles apply only in policy mode; legacy mode ignores them entirely | Legacy mode must stay byte-identical to upstream; both visibility filtering and profile resolution gate on the one mode read in `getPermissionSettings()`, so no mode checks scatter elsewhere. |
 | User rules override profile presets via layered evaluation, not plain rule prepending | Part 1 precedence is deny > ask > allow regardless of list order, so a prepended profile deny could never be beaten by a user `allow`; layers keep within-list precedence unchanged while making any matching user rule win. |
 | Hidden tools stay registered; a stale model call to one returns a terminal "Tool not found" error result | The agent loop resolves tools from `context.tools`, so the call fails before `beforeToolCall` runs — an acceptable terminal error; the tool is never executed. |
 | Visibility filtering lives solely in `AgentSession.setActiveToolsByName` | Every path that changes the active tool set (construction, registry refresh, reload, extension `setActiveTools`) funnels through it, so hiding needs exactly one enforcement point. |
+| Interrupted-turn recovery appends ordinary toolResult message entries at resume | Plan 2.1 forbids new serialized entry types; appending one terminal error toolResult per dangling final-turn call repairs the turn for strict providers (Anthropic rejects tool_use without tool_result) without rewriting history. |
 
 ## Changed Upstream Files
 
@@ -49,6 +52,23 @@ Every upstream source file and shared test utility the fork modifies, and the as
 | `packages/coding-agent/src/core/settings-manager.ts` | New nested `tools.permissions` setting (`mode`, `rules`) + `getPermissionSettings()` following the `maxToolOutputBytes` pattern | `core/tools/permissions.ts` | Additive optional nested setting; deep-merge/in-memory semantics unchanged; unknown `mode` values fall back to `"legacy"` and non-array `rules` to `[]` | `packages/coding-agent/test/settings-manager.test.ts` |
 | `packages/coding-agent/src/core/agent-session.ts` | Policy-mode permission check appended in the existing `beforeToolCall` hook, after extension `tool_call` handlers (an extension block wins) | `core/tools/permissions.ts` | Legacy mode (default) returns exactly what the extension hook returned — byte-identical behavior; policy mode evaluates with default effect `allow` and blocks deny/ask via `{block, reason}` so the model receives an error tool result; capability looked up from the session's `_toolDefinitions` registry (undefined for `baseToolsOverride` AgentTools, which match only rules without `capability`) | `packages/coding-agent/test/suite/tool-permissions.test.ts` |
 | `packages/coding-agent/src/modes/interactive/interactive-mode.ts` | `/session` panel Tools line renders tool output volume and, when truncation happened, removed bytes and artifact count | none (display-only; formats via upstream `formatSize` from `core/tools/truncate.ts`) | Reads additive `SessionStats` fields only; truncation detail line appears only when `truncatedToolOutputBytes > 0`; no other panel behavior changes | `packages/coding-agent/test/suite/tool-output-bounds.test.ts`, `packages/coding-agent/test/agent-session-stats.test.ts` (fields the panel renders) |
+| `packages/coding-agent/src/core/sdk.ts` | Interrupted-turn recovery wiring in `createAgentSession`: after the existing session context is built and before agent state adopts the messages, dangling final-turn tool calls get terminal error toolResults appended; the context is re-derived only when something was appended | `core/sessions/recovery.ts` | Runs only when the loaded session has messages (brand-new sessions untouched); repair is append-only through `SessionManager.appendMessage`, so persisted history is never rewritten and in-memory sessions resume repaired too | `packages/coding-agent/test/session-recovery.test.ts` |
+
+## Phase 8 Compatibility Audit (issue #13)
+
+Plan phase 8 says: after at least one stable release, remove temporary compatibility paths. Audit of everything the fork added, and each item's disposition:
+
+| Path / flag | Disposition |
+| --- | --- |
+| Dual projection execution | Never existed — the projector extraction replaced the inline code and the golden tests proved equivalence. Nothing to remove. |
+| `tools.permissions.mode` (legacy \| policy, default legacy) | Keep. Policy mode is new; the removal path is flipping the default once policy proves out across at least one stable release. |
+| `tools.maxToolOutputBytes`, `tools.permissions.profile`, `tools.permissions.rules` | Keep. Configuration, not temporary flags. |
+| Session readers (v1/v2/v3 migrations) | Keep — upstream-owned, retained indefinitely per the plan. |
+| Legacy tool adapters | None were added (`AgentTool` gained only optional `timeoutMs`; `ToolDefinition` only optional `capability`). |
+| Golden/equivalence tests | Keep — permanent regression baselines, not scaffolding. |
+| `recoverSessionEntries`, `--validate-session` | Keep — the recovery read API and its diagnostic surface. |
+
+Removal set today: empty. The one future removal candidate (permissions legacy default) is gated on a stable fork release; revisit this table at that point.
 
 ## Upstream Sync Procedure
 
