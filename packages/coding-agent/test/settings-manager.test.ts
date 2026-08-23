@@ -602,4 +602,22 @@ describe("SettingsManager", () => {
 			expect(manager.getShellPath()).toBe(homedir());
 		});
 	});
+
+	describe("tools.maxToolOutputBytes", () => {
+		it("should default to 200KB", () => {
+			expect(SettingsManager.inMemory().getMaxToolOutputBytes()).toBe(200 * 1024);
+		});
+
+		it("should return the configured value", () => {
+			const manager = SettingsManager.inMemory({ tools: { maxToolOutputBytes: 4096 } });
+			expect(manager.getMaxToolOutputBytes()).toBe(4096);
+		});
+
+		it("should fall back to the default when the value is not a finite number", () => {
+			const manager = SettingsManager.inMemory({
+				tools: { maxToolOutputBytes: "lots" as unknown as number },
+			});
+			expect(manager.getMaxToolOutputBytes()).toBe(200 * 1024);
+		});
+	});
 });

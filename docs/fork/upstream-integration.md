@@ -18,10 +18,11 @@ Pre-made architectural decisions, with one-line rationales. Do not revisit witho
 | Neutral directory naming: new session modules live in `core/sessions/` | Upstream-contribution friendly; does not advertise fork ownership in the path. |
 | Incremental-index/projection-cache work folded into session validation | No serialized format changes; file order is the sequence, so correctness is validated before any indexing is added. |
 | Full `ExecutionScope` (defer/dispose cleanup registry) skipped | Tools already receive an abort signal and clean up on it; a deferred-cleanup registry has no consumer today. Per-tool `timeoutMs` covers the deadline case. |
+| Tool output bounding via coding-agent `afterToolCall` hook (not an agent-loop change) | `AfterToolCallResult.content` fully replaces the finalized result content in `finalizeExecutedToolCall` (packages/agent/src/agent-loop.ts), so bounding needs zero `packages/agent` diff. |
 
 ## Changed Upstream Files
 
-Every upstream file the fork modifies, and the assumptions each change rests on.
+Every upstream source file and shared test utility the fork modifies, and the assumptions each change rests on. Plain per-feature test files are covered by their feature's row instead.
 
 | File | Why | Fork module called | Assumptions | Tests |
 | --- | --- | --- | --- | --- |
@@ -31,6 +32,9 @@ Every upstream file the fork modifies, and the assumptions each change rests on.
 | `packages/coding-agent/src/main.ts` | Early one-shot branch (like `--export`) that prints the validation report and exits | `core/sessions/validator.ts` | Runs before session creation and stdout takeover; exit 0 when clean or warnings-only, exit 1 on error-severity issues or unreadable file | `packages/coding-agent/test/session-validator.test.ts` |
 | `packages/agent/src/types.ts` | Additive optional `timeoutMs` field on `AgentTool` | none (type-only) | Optional field: all existing tool definitions compile unchanged and behave as before; no default timeouts | `packages/agent/test/agent-loop.test.ts` |
 | `packages/agent/src/agent-loop.ts` | Timeout enforcement in `executePreparedToolCall`: tool signal aborts on parent signal or deadline; deadline expiry yields the standard error tool result | none (loop-local) | Uses stdlib `AbortSignal.any`/`AbortSignal.timeout` (Node engines floor >=22.19.0); `AbortSignal.timeout` timers are unref'd so pending deadlines never keep the event loop alive; tools without `timeoutMs` receive the run signal unchanged | `packages/agent/test/agent-loop.test.ts` |
+| `packages/coding-agent/src/core/agent-session.ts` | Output bounding appended to the existing `afterToolCall` hook, after extension interception and image normalization | `core/tools/output-bounds.ts` | Hook returns an override only when a bound triggered or an extension/image hook already did; under-threshold results keep the exact executed result object. Artifact spill only when `sessionManager.isPersisted()`, under `<sessionDir>/artifacts/<sessionId>/` | `packages/coding-agent/test/suite/tool-output-bounds.test.ts`, `packages/coding-agent/test/output-bounds.test.ts` |
+| `packages/coding-agent/src/core/settings-manager.ts` | New `tools.maxToolOutputBytes` setting: interface field + `getMaxToolOutputBytes()`; default imported from the fork module | `core/tools/output-bounds.ts` | Additive optional nested setting; existing deep-merge/in-memory semantics unchanged; values <= 0 disable bounding (interpreted in the fork module, not the getter) | `packages/coding-agent/test/settings-manager.test.ts` |
+| `packages/coding-agent/test/suite/harness.ts` | Optional `sessionManager` harness option for persisted-session tests | none (test utility) | Defaults to `SessionManager.inMemory()`; all existing harness callers unchanged | `packages/coding-agent/test/suite/tool-output-bounds.test.ts` |
 
 ## Upstream Sync Procedure
 

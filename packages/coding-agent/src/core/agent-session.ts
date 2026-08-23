@@ -14,7 +14,7 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { basename, dirname } from "node:path";
+import { basename, dirname, join } from "node:path";
 import type {
 	Agent,
 	AgentEvent,
@@ -109,6 +109,7 @@ import { createSyntheticSourceInfo, type SourceInfo } from "./source-info.ts";
 import { type BuildSystemPromptOptions, buildSystemPrompt } from "./system-prompt.ts";
 import { type BashOperations, createLocalBashOperations } from "./tools/bash.ts";
 import { createAllToolDefinitions } from "./tools/index.ts";
+import { boundToolResultText } from "./tools/output-bounds.ts";
 import { createToolDefinitionFromAgentTool } from "./tools/tool-definition-wrapper.ts";
 import { addUsageToTotals, createUsageTotals } from "./usage-totals.ts";
 
@@ -524,12 +525,22 @@ export class AgentSession {
 				autoResizeImages: this.settingsManager.getImageAutoResize(),
 			});
 
-			if (!hookResult && normalizedContent === content) {
+			// Runs last so bounding applies to the final model-visible text.
+			const bounded = await boundToolResultText(normalizedContent, {
+				maxBytes: this.settingsManager.getMaxToolOutputBytes(),
+				toolName: toolCall.name,
+				toolCallId: toolCall.id,
+				artifactsDir: this.sessionManager.isPersisted()
+					? join(this.sessionManager.getSessionDir(), "artifacts", this.sessionManager.getSessionId())
+					: undefined,
+			});
+
+			if (!hookResult && normalizedContent === content && !bounded.bounded) {
 				return undefined;
 			}
 
 			return {
-				content: normalizedContent,
+				content: bounded.content,
 				details: hookResult?.details,
 				isError: hookResult?.isError ?? isError,
 				usage: hookResult?.usage,
