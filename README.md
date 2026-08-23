@@ -8,6 +8,8 @@
   <a href="https://www.npmjs.com/package/@earendil-works/pi-coding-agent"><img alt="npm" src="https://img.shields.io/npm/v/@earendil-works/pi-coding-agent?style=flat-square" /></a>
 </p>
 
+> **Fork notice** — this is R-Dson's fork of [earendil-works/pi](https://github.com/earendil-works/pi). It extends Pi's session and tool runtime while keeping the upstream patch surface small; see [Fork additions](#fork-additions) below and the fork ledger at [docs/fork/upstream-integration.md](docs/fork/upstream-integration.md).
+
 > New issues and PRs from new contributors are auto-closed by default. Maintainers review auto-closed issues daily. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 # Pi Agent Harness
@@ -34,6 +36,31 @@ To learn more about Pi:
 | **[@earendil-works/pi-tui](packages/tui)** | Terminal UI library with differential rendering |
 
 For Slack/chat automation and workflows see [earendil-works/pi-chat](https://github.com/earendil-works/pi-chat).
+
+## Installing the fork
+
+Releases are published from this repo only (GitHub Releases and GitHub Packages) — nothing is pushed to npmjs.org.
+
+Zero-configuration install from the latest release (needs Node.js >= 22.19 with npm; no PAT, no `.npmrc`):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/R-Dson/pi/main/scripts/install-fork.sh | sh
+```
+
+Alternatives:
+
+- Direct tarball: `npm install -g --allow-remote=all https://github.com/R-Dson/pi/releases/latest/download/pi-fork.tgz` (the flag is required on npm >= 12, which blocks remote-tarball installs by default)
+- Individual `@r-dson/*` packages from GitHub Packages, for library use (requires a `read:packages` PAT): [docs/fork/install-from-github.md](docs/fork/install-from-github.md)
+- New releases are cut manually: Actions → **Fork Release** → Run workflow
+
+## Fork additions
+
+All additions default to upstream behavior; the fork ledger records every decision and changed upstream file ([docs/fork/upstream-integration.md](docs/fork/upstream-integration.md)).
+
+- **Session reliability** (`packages/coding-agent/src/core/sessions/`): pure, golden-tested context projector; session validator with `pi --validate-session <path>`; torn-tail recovery read; interrupted-turn repair at resume (dangling tool calls get terminal results, so strict providers accept the next request).
+- **Tool runtime**: optional per-tool `timeoutMs` enforced in the agent loop (`packages/agent`); tool result text bounded (default 200 KB, `tools.maxToolOutputBytes`) with head+tail excerpt and full-output artifact spill under `<sessionDir>/artifacts/<sessionId>/`.
+- **Permissions (opt-in)**: tool capability metadata, allow/ask/deny rules with deny > ask > allow precedence, model-visible tool hiding, and `code` / `review` / `minimal` profiles — legacy behavior stays the default (`tools.permissions` in settings).
+- **Diagnostics**: session stats report tool output volume, truncated bytes, and artifact counts alongside the existing token/cache stats.
 
 ## Permissions & Containerization
 
