@@ -28,13 +28,15 @@ npm install -g @r-dson/pi-coding-agent
 
 The binary is `pi`, same as upstream.
 
-### Authentication
+### Authentication (required)
 
-GitHub Packages requires authentication even for public-package installs. If `npm install` prompts for credentials or fails with `E401`, create a [classic PAT](https://github.com/settings/tokens) with the `read:packages` scope and add it to the same `.npmrc`:
+GitHub Packages always authenticates npm requests, even for public packages — anonymous installs fail with `E401`. Create a [classic PAT](https://github.com/settings/tokens) with the `read:packages` scope (no expiration or a long one is fine; it is only read) and add it to the same `.npmrc`:
 
 ```
 //npm.pkg.github.com/:_authToken=<PAT>
 ```
+
+Note: OAuth tokens from `gh auth login` are rejected by the npm registry; it must be a PAT.
 
 ## What gets published
 
