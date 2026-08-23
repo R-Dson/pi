@@ -232,6 +232,36 @@ describe("AgentSession.getSessionStats", () => {
 		}
 	});
 
+	it("sums UTF-8 bytes of tool result text in toolOutputBytes", async () => {
+		const { session, sessionManager } = await createSession();
+		const zeroUsage = createUsage(0);
+
+		try {
+			sessionManager.appendMessage(createUserMessage("hello", 1));
+			sessionManager.appendMessage(createAssistantMessage("not counted", 0, 2));
+			sessionManager.appendMessage({
+				...createToolResultMessage(zeroUsage),
+				content: [{ type: "text", text: "abc" }],
+			});
+			sessionManager.appendMessage({
+				...createToolResultMessage(zeroUsage),
+				toolCallId: "tool-call-2",
+				content: [{ type: "text", text: "héllo" }],
+			});
+			syncAgentMessages(session, sessionManager);
+
+			const stats = session.getSessionStats();
+			// "abc" is 3 bytes; "héllo" is 6 UTF-8 bytes (é encodes as 2 bytes).
+			// Assistant/user text is not tool output.
+			expect(stats.toolOutputBytes).toBe(9);
+			// No bounding ran in this session.
+			expect(stats.truncatedToolOutputBytes).toBe(0);
+			expect(stats.toolOutputArtifacts).toBe(0);
+		} finally {
+			session.dispose();
+		}
+	});
+
 	it("groups tool and summary usage separately from model-attributed usage", () => {
 		const sessionManager = SessionManager.inMemory();
 		const rootId = sessionManager.appendMessage(createUserMessage("hello", 1));

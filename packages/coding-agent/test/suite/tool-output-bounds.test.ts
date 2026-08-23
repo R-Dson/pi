@@ -117,6 +117,41 @@ describe("AgentSession tool output bounding", () => {
 		expect(text).toContain("big_output output truncated");
 		expect(text).toContain("in-memory session");
 		expect(text.endsWith("TAIL-END")).toBe(true);
+
+		// No artifact was written, so the artifact count stays at zero.
+		const stats = harness.session.getSessionStats();
+		expect(stats.truncatedToolOutputBytes).toBeGreaterThan(0);
+		expect(stats.toolOutputArtifacts).toBe(0);
+	});
+
+	it("reports tool output volume, truncation, and artifacts in session stats", async () => {
+		const baseDir = mkdtempSync(join(tmpdir(), "pi-tool-output-bounds-"));
+		extraDirs.push(baseDir);
+		const sessionManager = SessionManager.create(baseDir, join(baseDir, "sessions"));
+		const harness = await createHarness({
+			tools: [bigOutputTool],
+			settings: { tools: { maxToolOutputBytes: 8 * 1024 } },
+			sessionManager,
+		});
+		harnesses.push(harness);
+
+		harness.setResponses([
+			fauxAssistantMessage([fauxToolCall("big_output", {}, { id: "call_big_3" })], { stopReason: "toolUse" }),
+			fauxAssistantMessage("done"),
+		]);
+
+		await harness.session.prompt("run the big tool");
+
+		const stats = harness.session.getSessionStats();
+		const totalBytes = Buffer.byteLength(bigOutput, "utf-8");
+		// The stored tool result is the bounded text: within the 8 KiB bound plus marker overhead.
+		expect(stats.toolOutputBytes).toBeGreaterThan(0);
+		expect(stats.toolOutputBytes).toBeLessThan(8 * 1024 + 1024);
+		// The excerpt never exceeds the 8 KiB budget, so at least totalBytes - 8 KiB was removed.
+		expect(stats.truncatedToolOutputBytes).toBeGreaterThanOrEqual(totalBytes - 8 * 1024);
+		expect(stats.truncatedToolOutputBytes).toBeLessThan(totalBytes);
+		// The bound result was spilled to exactly one artifact file.
+		expect(stats.toolOutputArtifacts).toBe(1);
 	});
 
 	it("leaves small tool results byte-identical with the default threshold", async () => {
