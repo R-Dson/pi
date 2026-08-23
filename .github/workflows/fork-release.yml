@@ -104,7 +104,7 @@ jobs:
           VERSION="$FORK_VERSION"
           TAG="v${VERSION}"
 
-          jq -r '.packages[] | "- \\(.name)@\\(.version) (\\(.outcome))"' .fork-publish/summary.json > release-packages.md
+          jq -r '.packages[] | "- \(.name)@\(.version) (\(.outcome))"' .fork-publish/summary.json > release-packages.md
           {
             echo "Fork release ${TAG}."
             echo
