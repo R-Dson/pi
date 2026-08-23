@@ -14,22 +14,24 @@ The workflow builds the workspace, stages every public package with its manifest
 
 ## Install (recommended: standalone, no configuration)
 
-The standalone tarball carries the coding-agent release bundle — all workspace packages are already inlined into it — plus only the dependencies that resolve from the public npm registry. No `.npmrc` mapping, no PAT:
+The standalone tarball carries the coding-agent release bundle — all workspace packages are already inlined into it — plus only the dependencies that resolve from the public npm registry. No `.npmrc` mapping, no PAT.
 
-```sh
-npm install -g https://github.com/R-Dson/pi/releases/latest/download/pi-fork.tgz
-```
-
-Or via the install script, which verifies `npm` and `curl`, downloads the tarball to a temp file, and installs it with `npm install -g --ignore-scripts`:
+The install script is the zero-friction path — it verifies `npm` and `curl`, downloads the tarball to a temp file with `curl`, and installs it with `npm install -g --ignore-scripts` (works on every npm version):
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/R-Dson/pi/main/scripts/install-fork.sh | sh
 ```
 
-Pass a release version (without the leading `v`) to pin instead of tracking the latest:
+Pass a release version (with or without the leading `v`) to pin instead of tracking the latest:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/R-Dson/pi/main/scripts/install-fork.sh | sh -s 0.84.2-fork.42
+```
+
+The direct npm URL form also works, but npm >= 12 blocks remote-tarball installs by default (`EALLOWREMOTE`), so it needs one opt-in flag:
+
+```sh
+npm install -g --allow-remote=all https://github.com/R-Dson/pi/releases/latest/download/pi-fork.tgz
 ```
 
 The binary is `pi`, same as upstream; the installed package is `@r-dson/pi-standalone`. Re-running either command upgrades in place.
