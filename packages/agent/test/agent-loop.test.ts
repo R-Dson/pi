@@ -1561,7 +1561,7 @@ describe("agentLoop tool timeouts", () => {
 			parameters: toolSchema,
 			timeoutMs: Number.NaN,
 			async execute() {
-				return { content: [{ type: "text", text: "unreachable" }] };
+				return { content: [{ type: "text", text: "unreachable" }], details: { value: "unreachable" } };
 			},
 		};
 
