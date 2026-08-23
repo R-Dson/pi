@@ -43,6 +43,12 @@ export {
 	type LsToolOptions,
 } from "./ls.ts";
 export {
+	evaluatePermission,
+	type PermissionDecision,
+	type PermissionRule,
+	type ToolCapability,
+} from "./permissions.ts";
+export {
 	createReadTool,
 	createReadToolDefinition,
 	type ReadOperations,
