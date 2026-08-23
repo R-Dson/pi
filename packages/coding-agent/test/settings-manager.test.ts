@@ -4,6 +4,7 @@ import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DEFAULT_HTTP_IDLE_TIMEOUT_MS } from "../src/core/http-dispatcher.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
+import { resolveProfileConfig } from "../src/core/tools/permissions.ts";
 
 describe("SettingsManager", () => {
 	const testDir = join(process.cwd(), "test-settings-tmp");
@@ -633,7 +634,7 @@ describe("SettingsManager", () => {
 			const manager = SettingsManager.inMemory({
 				tools: { permissions: { mode: "policy", rules } },
 			});
-			expect(manager.getPermissionSettings()).toEqual({ mode: "policy", rules });
+			expect(manager.getPermissionSettings()).toEqual({ mode: "policy", rules, baseRules: [] });
 		});
 
 		it("should fall back to legacy mode when mode is not a known value", () => {
@@ -645,7 +646,7 @@ describe("SettingsManager", () => {
 
 		it("should default rules to an empty list when unset", () => {
 			const manager = SettingsManager.inMemory({ tools: { permissions: { mode: "policy" } } });
-			expect(manager.getPermissionSettings()).toEqual({ mode: "policy", rules: [] });
+			expect(manager.getPermissionSettings()).toEqual({ mode: "policy", rules: [], baseRules: [] });
 		});
 
 		it("should treat a non-array rules value as empty", () => {
@@ -659,6 +660,32 @@ describe("SettingsManager", () => {
 			const manager = SettingsManager.inMemory();
 			manager.applyOverrides({ tools: { permissions: { mode: "policy" } } });
 			expect(manager.getPermissionSettings().mode).toBe("policy");
+		});
+
+		it("should resolve a profile to base rules in policy mode", () => {
+			const manager = SettingsManager.inMemory({
+				tools: { permissions: { mode: "policy", profile: "review" } },
+			});
+			expect(manager.getPermissionSettings().baseRules).toEqual(resolveProfileConfig("review").permissionRules);
+		});
+
+		it("should default the profile to code (no base rules)", () => {
+			const manager = SettingsManager.inMemory({ tools: { permissions: { mode: "policy" } } });
+			expect(manager.getPermissionSettings().baseRules).toEqual([]);
+		});
+
+		it("should treat an unknown profile as code", () => {
+			const manager = SettingsManager.inMemory({
+				tools: { permissions: { mode: "policy", profile: "lite" as unknown as "review" } },
+			});
+			expect(manager.getPermissionSettings().baseRules).toEqual([]);
+		});
+
+		it("should ignore profiles in legacy mode", () => {
+			const manager = SettingsManager.inMemory({
+				tools: { permissions: { mode: "legacy", profile: "review" } },
+			});
+			expect(manager.getPermissionSettings().baseRules).toEqual([]);
 		});
 	});
 });

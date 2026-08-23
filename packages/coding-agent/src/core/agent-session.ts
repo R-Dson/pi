@@ -112,7 +112,7 @@ import { type BuildSystemPromptOptions, buildSystemPrompt } from "./system-promp
 import { type BashOperations, createLocalBashOperations } from "./tools/bash.ts";
 import { createAllToolDefinitions } from "./tools/index.ts";
 import { boundToolResultText } from "./tools/output-bounds.ts";
-import { evaluatePermission } from "./tools/permissions.ts";
+import { evaluatePermissionLayered } from "./tools/permissions.ts";
 import { createToolDefinitionFromAgentTool } from "./tools/tool-definition-wrapper.ts";
 import { addUsageToTotals, createUsageTotals } from "./usage-totals.ts";
 
@@ -377,6 +377,13 @@ export class AgentSession {
 	private _toolDefinitions: Map<string, ToolDefinitionEntry> = new Map();
 	private _toolPromptSnippets: Map<string, string> = new Map();
 	private _toolPromptGuidelines: Map<string, string[]> = new Map();
+	/**
+	 * Active tools removed by policy-mode visibility filtering at the last
+	 * setActiveToolsByName call. Kept so registry refreshes and reloads still
+	 * treat them as candidates (they return when their hide rules disappear);
+	 * the filter re-hides them otherwise.
+	 */
+	private _hiddenToolNames: Set<string> = new Set();
 
 	// Base system prompt (without extension appends) - used to apply fresh appends each turn
 	private _baseSystemPrompt = "";
@@ -567,6 +574,8 @@ export class AgentSession {
 
 	/**
 	 * Evaluate the permission policy for a tool call. Runs only in policy mode.
+	 * User rules decide when one matches; otherwise the resolved profile preset
+	 * rules apply (see evaluatePermissionLayered).
 	 *
 	 * Interim "ask" semantics: there is no interactive approval UI yet, so ask
 	 * blocks with an actionable reason explaining how to adjust the rules.
@@ -574,16 +583,17 @@ export class AgentSession {
 	 * @returns A blocking BeforeToolCallResult for deny/ask, or undefined to proceed.
 	 */
 	private _evaluateToolPermission(toolName: string, args: unknown): BeforeToolCallResult | undefined {
-		const { mode, rules } = this.settingsManager.getPermissionSettings();
+		const { mode, rules, baseRules } = this.settingsManager.getPermissionSettings();
 		if (mode !== "policy") {
 			return undefined;
 		}
 
-		const decision = evaluatePermission({
+		const decision = evaluatePermissionLayered({
 			toolName,
 			capability: this.getToolDefinition(toolName)?.capability,
 			args: typeof args === "object" && args !== null ? (args as Record<string, unknown>) : {},
 			rules,
+			baseRules,
 			// Unmatched calls proceed: rules opt calls out, policy mode is not default-deny.
 			defaultEffect: "allow",
 		});
@@ -1002,24 +1012,64 @@ export class AgentSession {
 	/**
 	 * Set active tools by name.
 	 * Only tools in the registry can be enabled. Unknown tool names are ignored.
+	 * In policy mode, tools hidden by a permission rule (`hide: true` deny) are
+	 * removed from the model-visible list here — this is the single visibility
+	 * choke point every active-tool change funnels through. Hidden tools stay in
+	 * the internal registry; a stale model call to one fails in the agent loop
+	 * with a terminal "Tool <name> not found" error result.
 	 * Also rebuilds the system prompt to reflect the new tool set.
 	 * Changes take effect on the next agent turn.
 	 */
 	setActiveToolsByName(toolNames: string[]): void {
+		// Hidden tools stay candidates: an extension saving the (filtered) active
+		// list and restoring it later must not strand a hidden tool. Candidates
+		// are the incoming names plus previously hidden ones, re-evaluated against
+		// the current rules — so removing a hide rule restores the tool on the
+		// next active-tool change.
+		const candidates = [...new Set([...toolNames, ...this._hiddenToolNames])];
 		const tools: AgentTool[] = [];
 		const validToolNames: string[] = [];
-		for (const name of toolNames) {
+		const hiddenToolNames = new Set<string>();
+		for (const name of candidates) {
 			const tool = this._toolRegistry.get(name);
-			if (tool) {
-				tools.push(tool);
-				validToolNames.push(name);
+			if (!tool) {
+				continue;
 			}
+			if (this._isToolHidden(name)) {
+				hiddenToolNames.add(name);
+				continue;
+			}
+			tools.push(tool);
+			validToolNames.push(name);
 		}
+		this._hiddenToolNames = hiddenToolNames;
 		this.agent.state.tools = tools;
 
 		// Rebuild base system prompt with new tool set
 		this._baseSystemPrompt = this._rebuildSystemPrompt(validToolNames);
 		this.agent.state.systemPrompt = this._systemPromptOverride ?? this._baseSystemPrompt;
+	}
+
+	/**
+	 * Whether a permission rule hides `toolName` from the model-visible tool
+	 * list. Policy mode only; legacy mode never hides. Evaluated with no call
+	 * args, so rules whose matchers need a `path`/`command` value never hide a
+	 * tool — they still apply at call time in `_evaluateToolPermission`.
+	 */
+	private _isToolHidden(toolName: string): boolean {
+		const { mode, rules, baseRules } = this.settingsManager.getPermissionSettings();
+		if (mode !== "policy") {
+			return false;
+		}
+		const decision = evaluatePermissionLayered({
+			toolName,
+			capability: this.getToolDefinition(toolName)?.capability,
+			args: {},
+			rules,
+			baseRules,
+			defaultEffect: "allow",
+		});
+		return decision.kind === "deny" && decision.hidden;
 	}
 
 	/** Whether compaction or branch summarization is currently running */
@@ -2656,7 +2706,9 @@ export class AgentSession {
 
 	private _refreshToolRegistry(options?: { activeToolNames?: string[]; includeAllExtensionTools?: boolean }): void {
 		const previousRegistryNames = new Set(this._toolRegistry.keys());
-		const previousActiveToolNames = this.getActiveToolNames();
+		// Hidden tools stay candidates so refreshes can restore them once their
+		// hide rules are gone; setActiveToolsByName re-filters as needed.
+		const previousActiveToolNames = [...new Set([...this.getActiveToolNames(), ...this._hiddenToolNames])];
 		const allowedToolNames = this._allowedToolNames;
 		const excludedToolNames = this._excludedToolNames;
 		const isAllowedTool = (name: string): boolean =>
@@ -2811,7 +2863,8 @@ export class AgentSession {
 		resetApiProviders();
 		await this._resourceLoader.reload();
 		this._buildRuntime({
-			activeToolNames: this.getActiveToolNames(),
+			// Include currently hidden tools so reloads pick up removed hide rules.
+			activeToolNames: [...new Set([...this.getActiveToolNames(), ...this._hiddenToolNames])],
 			flagValues: previousFlagValues,
 			includeAllExtensionTools: true,
 		});

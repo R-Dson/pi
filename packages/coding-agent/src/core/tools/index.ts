@@ -44,9 +44,13 @@ export {
 } from "./ls.ts";
 export {
 	evaluatePermission,
+	evaluatePermissionLayered,
 	type PermissionDecision,
 	type PermissionRule,
+	type ProfileConfig,
+	resolveProfileConfig,
 	type ToolCapability,
+	type ToolProfile,
 } from "./permissions.ts";
 export {
 	createReadTool,
