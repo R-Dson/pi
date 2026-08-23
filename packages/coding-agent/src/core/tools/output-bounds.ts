@@ -37,6 +37,10 @@ export interface BoundToolResult {
 	content: (TextContent | ImageContent)[];
 	/** Whether the content was over the threshold and got replaced. */
 	bounded: boolean;
+	/** Total UTF-8 bytes of text content before bounding. */
+	totalBytes: number;
+	/** UTF-8 bytes of the excerpt kept after bounding. Equals totalBytes when not bounded. */
+	shownBytes: number;
 	/** Path of the written artifact file, when a spill succeeded. */
 	artifactPath?: string;
 }
@@ -115,7 +119,7 @@ export async function boundToolResultText(
 	options: BoundToolResultOptions,
 ): Promise<BoundToolResult> {
 	if (options.maxBytes <= 0) {
-		return { content, bounded: false };
+		return { content, bounded: false, totalBytes: 0, shownBytes: 0 };
 	}
 
 	let totalBytes = 0;
@@ -124,8 +128,9 @@ export async function boundToolResultText(
 			totalBytes += Buffer.byteLength(block.text, "utf-8");
 		}
 	}
+
 	if (totalBytes <= options.maxBytes) {
-		return { content, bounded: false };
+		return { content, bounded: false, totalBytes, shownBytes: totalBytes };
 	}
 
 	const fullText = content
@@ -166,5 +171,5 @@ export async function boundToolResultText(
 		// Text blocks after the first are folded into the excerpt above.
 	}
 
-	return { content: newContent, bounded: true, ...(artifactPath ? { artifactPath } : {}) };
+	return { content: newContent, bounded: true, totalBytes, shownBytes, ...(artifactPath ? { artifactPath } : {}) };
 }

@@ -100,7 +100,7 @@ import type { FullscreenExitOutput, TuiMode } from "../../core/settings-manager.
 import { BUILTIN_SLASH_COMMANDS } from "../../core/slash-commands.ts";
 import type { SourceInfo } from "../../core/source-info.ts";
 import { isInstallTelemetryEnabled } from "../../core/telemetry.ts";
-import type { TruncationResult } from "../../core/tools/truncate.ts";
+import { formatSize, type TruncationResult } from "../../core/tools/truncate.ts";
 import { hasTrustRequiringProjectResources, ProjectTrustStore } from "../../core/trust-manager.ts";
 import { getUsageCostBreakdown } from "../../core/usage-totals.ts";
 import { getChangelogPath, getNewEntries, normalizeChangelogLinks, parseChangelog } from "../../utils/changelog.ts";
@@ -6332,7 +6332,16 @@ export class InteractiveMode {
 		info += `${theme.fg("dim", "Total:")} ${stats.totalMessages}\n`;
 		info += `${theme.fg("dim", "User:")} ${stats.userMessages}\n`;
 		info += `${theme.fg("dim", "Assistant:")} ${stats.assistantMessages}\n`;
-		info += `${theme.fg("dim", "Tools:")} ${stats.toolCalls} calls, ${stats.toolResults} results\n\n`;
+		info += `${theme.fg("dim", "Tools:")} ${stats.toolCalls} calls, ${stats.toolResults} results, ${formatSize(stats.toolOutputBytes)} output\n`;
+		if (stats.truncatedToolOutputBytes > 0) {
+			// Truncation/artifact counts cover the current session run only.
+			const artifacts =
+				stats.toolOutputArtifacts > 0
+					? `, ${stats.toolOutputArtifacts} artifact${stats.toolOutputArtifacts === 1 ? "" : "s"}`
+					: "";
+			info += `  ${theme.fg("dim", `(${formatSize(stats.truncatedToolOutputBytes)} truncated${artifacts})`)}\n`;
+		}
+		info += `\n`;
 		info += `${theme.bold("Tokens")}\n`;
 		// "Input" is the full prompt volume. With cache activity, split it into
 		// cached (served from cache) vs uncached (everything else) - the only
