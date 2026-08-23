@@ -294,3 +294,68 @@ export function buildSessionContext(
 	const messages = buildContextEntries(entries, leafId, byId).flatMap(sessionEntryToContextMessages);
 	return { messages, thinkingLevel, model };
 }
+
+/** A tool call of the final assistant tool-call turn with no matching result later on the path. */
+export interface UnansweredToolCall {
+	/** Entry id of the assistant message containing the call. */
+	entryId: string;
+	callId: string;
+	toolName: string;
+}
+
+/**
+ * Dangling tool calls of the last assistant message (on the given entry
+ * sequence) that contains tool calls: calls with no matching toolResult later
+ * on the sequence. These are what strict providers reject (tool_use without
+ * tool_result) when a session resumes after a crash — including the
+ * partial-flush case where some sibling results were persisted before the
+ * crash. Pass compaction-aware context entries when summarized calls must not
+ * count.
+ */
+export function unansweredFinalToolCalls(entries: SessionEntry[]): UnansweredToolCall[] {
+	let assistantIndex = -1;
+	let calls: { id: string; name: string }[] = [];
+	for (let i = 0; i < entries.length; i++) {
+		const entry = entries[i];
+		if (entry.type !== "message") continue;
+		const message = entry.message as { role?: unknown; content?: unknown } | null | undefined;
+		if (!message || typeof message !== "object" || message.role !== "assistant") continue;
+		if (!Array.isArray(message.content)) continue;
+		const entryCalls: { id: string; name: string }[] = [];
+		for (const block of message.content) {
+			if (
+				typeof block === "object" &&
+				block !== null &&
+				(block as { type?: unknown }).type === "toolCall" &&
+				typeof (block as { id?: unknown }).id === "string" &&
+				typeof (block as { name?: unknown }).name === "string"
+			) {
+				entryCalls.push({ id: (block as { id: string }).id, name: (block as { name: string }).name });
+			}
+		}
+		if (entryCalls.length > 0) {
+			assistantIndex = i;
+			calls = entryCalls;
+		}
+	}
+	if (assistantIndex < 0) return [];
+
+	const answered = new Set<string>();
+	for (const entry of entries.slice(assistantIndex + 1)) {
+		if (entry.type !== "message") continue;
+		const message = entry.message as { role?: unknown; toolCallId?: unknown } | null | undefined;
+		if (
+			message &&
+			typeof message === "object" &&
+			message.role === "toolResult" &&
+			typeof message.toolCallId === "string"
+		) {
+			answered.add(message.toolCallId);
+		}
+	}
+
+	const assistantEntryId = entries[assistantIndex]?.id ?? "";
+	return calls
+		.filter((call) => !answered.has(call.id))
+		.map((call) => ({ entryId: assistantEntryId, callId: call.id, toolName: call.name }));
+}

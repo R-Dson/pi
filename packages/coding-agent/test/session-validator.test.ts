@@ -127,6 +127,48 @@ describe("validateEntries synthetic corruption", () => {
 		expect(duplicates.every((issue) => issue.severity === "error" && issue.entryId === duplicated)).toBe(true);
 	});
 
+	it("reports a toolResult whose tool call is not earlier on its path (orphan)", () => {
+		// tool-success.jsonl: [header, u, a(call_1), tr(call_1), a2]. Reparent the
+		// result onto the user message: the leaf path (a2 -> tr -> u) reaches the
+		// result without ever passing the assistant carrying call_1.
+		const entries = structuredClone(loadEntriesFromFile(join(FIXTURES_DIR, "tool-success.jsonl")));
+		const user = entries[1] as SessionEntry;
+		const result = entries[3] as SessionEntry;
+		result.parentId = user.id;
+
+		const report = validateEntries(entries);
+		expect(report.issues).toEqual([
+			{
+				severity: "error",
+				code: "orphan-tool-result",
+				message: `entry ${result.id} references toolCallId call_1 with no earlier tool call on the path`,
+				entryId: result.id,
+			},
+		]);
+	});
+
+	it("reports a second toolResult for an already-answered tool call (duplicate)", () => {
+		const entries = structuredClone(loadEntriesFromFile(join(FIXTURES_DIR, "tool-success.jsonl")));
+		const result = entries[3] as SessionEntry;
+		const closing = entries[4] as SessionEntry;
+		// Splice a second result for call_1 between the original result and the
+		// closing assistant, chained onto the original result.
+		const duplicate = { ...structuredClone(result), id: "dupresult" } as SessionEntry;
+		duplicate.parentId = result.id;
+		closing.parentId = duplicate.id;
+		entries.splice(4, 0, duplicate);
+
+		const report = validateEntries(entries);
+		expect(report.issues).toEqual([
+			{
+				severity: "error",
+				code: "duplicate-tool-result",
+				message: "entry dupresult duplicates a toolResult for toolCallId call_1",
+				entryId: "dupresult",
+			},
+		]);
+	});
+
 	it("reports a broken parent reference", () => {
 		const entries = cloneNormalFileEntries();
 		(entries[2] as SessionEntry).parentId = "deadbeef";

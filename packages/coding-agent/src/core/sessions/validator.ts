@@ -13,7 +13,14 @@
 
 import { existsSync, readFileSync } from "fs";
 import { normalizePath } from "../../utils/paths.ts";
-import { buildSessionPath, type CompactionEntry, type FileEntry, type SessionEntry } from "./projector.ts";
+import {
+	buildContextEntries,
+	buildSessionPath,
+	type CompactionEntry,
+	type FileEntry,
+	type SessionEntry,
+	unansweredFinalToolCalls,
+} from "./projector.ts";
 
 export interface SessionValidationIssue {
 	severity: "error" | "warning";
@@ -161,7 +168,8 @@ function assistantToolCallIds(content: unknown): string[] {
  * Checks: header validity, duplicate ids, broken parent references, cyclic
  * ancestry (iterative, terminates on cycles), extra roots / orphaned subtrees
  * (warning), compaction firstKeptEntryId on the compaction's ancestor path,
- * and an interrupted final turn on the current leaf path (warning).
+ * tool call/result pairing on the current leaf path (orphan or duplicate
+ * results), and an interrupted final turn on the current leaf path (warning).
  */
 export function validateEntries(fileEntries: FileEntry[]): SessionValidationReport {
 	const issues: SessionValidationIssue[] = [];
@@ -327,22 +335,58 @@ export function validateEntries(fileEntries: FileEntry[]): SessionValidationRepo
 	// hence the guard.
 	if (!structureUnsafe) {
 		const path = buildSessionPath(sessionEntries);
-		for (let i = path.length - 1; i >= 0; i--) {
-			const entry = path[i];
+
+		// Tool call/result pairing on the leaf path: every toolResult must
+		// reference a toolCall in an earlier assistant message on the path, and
+		// no toolCall may receive more than one result. Results on abandoned
+		// branches are off the path and not checked; calls without results are
+		// only warned about when they end the final turn (see below), because
+		// compaction legitimately summarizes mid-path pairs away.
+		const calledToolCallIds = new Set<string>();
+		const answeredToolCallIds = new Set<string>();
+		for (const entry of path) {
 			if (entry.type !== "message") continue;
-			const message = entry.message as { role?: unknown; content?: unknown } | null | undefined;
-			if (message && typeof message === "object" && message.role === "assistant") {
-				const toolCallIds = assistantToolCallIds(message.content);
-				if (toolCallIds.length > 0) {
+			const message = entry.message as
+				| { role?: unknown; content?: unknown; toolCallId?: unknown }
+				| null
+				| undefined;
+			if (!message || typeof message !== "object") continue;
+			if (message.role === "assistant") {
+				for (const id of assistantToolCallIds(message.content)) {
+					calledToolCallIds.add(id);
+				}
+			} else if (message.role === "toolResult" && typeof message.toolCallId === "string") {
+				if (!calledToolCallIds.has(message.toolCallId)) {
 					issues.push({
-						severity: "warning",
-						code: "incomplete-final-turn",
-						message: `final assistant message has tool calls without results (${toolCallIds.join(", ")}); the turn was likely interrupted`,
+						severity: "error",
+						code: "orphan-tool-result",
+						message: `entry ${entry.id} references toolCallId ${message.toolCallId} with no earlier tool call on the path`,
 						entryId: entry.id,
 					});
+				} else if (answeredToolCallIds.has(message.toolCallId)) {
+					issues.push({
+						severity: "error",
+						code: "duplicate-tool-result",
+						message: `entry ${entry.id} duplicates a toolResult for toolCallId ${message.toolCallId}`,
+						entryId: entry.id,
+					});
+				} else {
+					answeredToolCallIds.add(message.toolCallId);
 				}
 			}
-			break;
+		}
+
+		// Runs on the compaction-aware context entries so calls summarized away
+		// by an earlier compaction do not warn. Covers the partial-flush crash:
+		// the last assistant tool-call turn with only some siblings' results.
+		const unanswered = unansweredFinalToolCalls(buildContextEntries(sessionEntries));
+		if (unanswered.length > 0) {
+			issues.push({
+				severity: "warning",
+				code: "incomplete-final-turn",
+				message: `final assistant tool-call turn has calls without results (${unanswered.map((call) => call.callId).join(", ")}); the turn was likely interrupted`,
+				entryId: unanswered[0]?.entryId,
+			});
 		}
 	}
 
