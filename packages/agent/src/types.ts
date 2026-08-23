@@ -406,6 +406,8 @@ export interface AgentTool<TParameters extends TSchema = TSchema, TDetails = any
 	 * If omitted, the default execution mode applies.
 	 */
 	executionMode?: ToolExecutionMode;
+	/** Deadline for a single `execute()` call in ms; when exceeded, the loop aborts the tool signal and records an error tool result. */
+	timeoutMs?: number;
 }
 
 /** Context snapshot passed into the low-level agent loop. */
