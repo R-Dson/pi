@@ -132,8 +132,8 @@ export interface ProfileConfig {
  *   (matching by capability, so custom tools carrying the metadata follow),
  *   allow reads for self-documentation.
  * - minimal: reduced core toolset (read/grep/find/ls remain). A static deny+hide
- *   list for the non-core builtins (bash/edit/write); capability rules cannot
- *   express "everything except" under deny > ask > allow, and custom/extension
+ *   list for the non-core builtins (bash/powershell/edit/write); capability rules
+ *   cannot express "everything except" under deny > ask > allow, and custom/extension
  *   tools have no static name list, so they stay visible.
  */
 const PROFILE_PRESETS: Record<ToolProfile, ProfileConfig> = {
@@ -148,6 +148,7 @@ const PROFILE_PRESETS: Record<ToolProfile, ProfileConfig> = {
 	minimal: {
 		permissionRules: [
 			{ tool: "bash", effect: "deny", hide: true },
+			{ tool: "powershell", effect: "deny", hide: true },
 			{ tool: "edit", effect: "deny", hide: true },
 			{ tool: "write", effect: "deny", hide: true },
 		],
