@@ -7,11 +7,11 @@
   <a href="https://discord.com/invite/3cU7Bz4UPx"><img alt="Discord" src="https://img.shields.io/badge/discord-community-5865F2?style=flat-square&logo=discord&logoColor=white" /></a>
 </p>
 
-# Pi — fork with a hardened session and tool runtime
+# Pi
 
 Pi is an interactive, self-extensible coding agent, plus the agent runtime and unified multi-provider LLM API underneath it.
 
-This is R-Dson's fork of [earendil-works/pi](https://github.com/earendil-works/pi). The fork tracks upstream and adds a focused runtime layer on top: crash-safe sessions with validation and recovery, time-limited and output-bounded tool execution, opt-in permission policies, and runtime diagnostics. **Everything defaults to upstream behavior** — every fork decision and changed upstream file is recorded in the [fork ledger](docs/fork/upstream-integration.md).
+This fork of [earendil-works/pi](https://github.com/earendil-works/pi) merges upstream regularly and changes as little as possible on top of it: sessions that survive crashes, tools with timeouts and output caps, opt-in permission policies. **Out of the box it behaves like upstream**, apart from two safety nets: a 200 KB cap on tool output and automatic repair of crashed sessions. Fork decisions and changed files live in the [fork ledger](docs/fork/upstream-integration.md).
 
 ## Install
 
@@ -38,13 +38,15 @@ pi            # interactive mode; authenticate a provider on first run
 pi -p "..."   # one-shot prompt
 ```
 
-Usage, providers, extensions, skills, and themes work exactly as upstream — see [pi.dev/docs](https://pi.dev/docs/latest). The rest of this README covers what the fork adds on top.
+Usage, providers, extensions, and everything else match upstream pi ([docs](https://pi.dev/docs/latest)). What follows is what the fork changes.
 
 ## What the fork adds
 
 ### Session reliability
 
-Session files are validated and repaired instead of silently mis-loading:
+A session is an append-only JSONL file. If pi dies mid-turn, the file can end with a torn tail or a tool call that never got its result, and resuming then fails because Anthropic rejects a tool call without its result. The fork handles both: a torn tail is skipped on load, and resume appends a final error result to each dangling tool call so the next request is accepted. History is only ever appended to, never rewritten.
+
+`pi --validate-session <file>` reports what is wrong with any session file, with line numbers:
 
 ```sh
 $ pi --validate-session ~/.pi/agent/sessions/--.../2026-08-23T..._....jsonl
@@ -52,47 +54,44 @@ error torn-tail: final line is incomplete JSON (412 bytes); likely torn by an in
 1 error, 0 warnings
 ```
 
-- Structural validation: torn tails, malformed lines, duplicate ids, broken/cyclic ancestry, orphan and duplicate tool results, off-path compactions, interrupted turns — reported with entry/line locations; loading itself stays tolerant.
-- Interrupted-turn repair: resuming a session that crashed mid-tool-call appends terminal tool results for the dangling calls (append-only — history is never rewritten), so strict providers like Anthropic accept the next request.
-- The context projector is a pure, golden-tested module (`core/sessions/`), pinning current behavior as the equivalence baseline for future work.
+It detects torn tails, malformed lines, duplicate ids, broken or cyclic ancestry, orphaned and duplicate tool results, compactions that summarize from the wrong point in history, and interrupted turns. Loading tolerates all of these; the flag is for diagnosing a session that resumes oddly.
 
 ### Tool runtime
 
-- Optional per-tool `timeoutMs` on `AgentTool`, enforced in the agent loop (stdlib `AbortSignal.any`/`AbortSignal.timeout`); a tool that exceeds its deadline gets a terminal timeout error result, and tools that never settle still terminate.
-- Tool result text sent to the model is bounded (default 200 KB, `tools.maxToolOutputBytes` in settings; `<= 0` disables). Oversized output keeps a head+tail excerpt with an omitted-bytes marker; the full output spills to `<sessionDir>/artifacts/<sessionId>/` for persisted sessions.
+- A tool that never settles used to hang the whole run. Tools can now declare `timeoutMs`; past its deadline the call ends in a timeout error and the run continues.
+- An extension or MCP tool returning megabytes used to pass all of it to the model. Tool output sent to the model is now capped at 200 KB by default (`tools.maxToolOutputBytes`; 0 or less disables the cap). The model receives a head-and-tail excerpt with an omitted-bytes marker, and the full output spills to a file under `<sessionDir>/artifacts/<sessionId>/` (persisted sessions). Builtin tools already truncate their own output, so in practice this caps tools that don't.
+- To see what the caps did to a run, the `/session` panel reports tool output volume, truncated bytes, and artifact file counts.
 
 ### Permissions (opt-in)
 
-Legacy behavior is the default. Opt in with `tools.permissions` in settings:
+For runs where the agent should not do everything it can: a read-only review pass, an untrusted repo, a shared machine. Opt in with `tools.permissions` in settings:
 
 ```json
 {
   "tools": {
     "permissions": {
       "mode": "policy",
-      "profile": "review",
-      "rules": [{ "tool": "bash", "command": "git", "effect": "allow" }]
+      "rules": [{ "tool": "bash", "command": "git push", "effect": "deny" }]
     }
   }
 }
 ```
 
-- Tools carry capability metadata (`filesystem.read`, `filesystem.write`, `process.execute`, `network.access`, `session.modify`).
-- Rules match on tool, capability, path prefix, or command prefix; precedence is deny > ask > allow > default, with user rules overriding profile presets.
-- `deny` rules with `hide: true` remove a tool from the model-visible tool list entirely.
-- Profiles: `code` (default, everything), `review` (read-only), `minimal` (core editing tools only) — plain rule presets, no mode checks scattered through the runtime.
+Policy mode keeps upstream's allow-by-default: rules opt calls out. This one blocks `git push` and changes nothing else.
 
-### Diagnostics
-
-Session stats (`/session` panel) report tool output volume, truncated bytes, and artifact counts alongside the existing token/cache/cost stats.
+- Rules match on tool name, capability (`process.execute`, `filesystem.write`, `filesystem.read`, ...), path prefix, or command prefix. Deny beats ask beats allow, and your rules beat the profile's presets. `ask` blocks the call with a reason explaining how to allow it; there is no approval prompt yet.
+- Profiles are plain rule presets: `code` (default, everything), `review` (read-only: writes and process execution hidden), `minimal` (read/search tools only; bash, edit, and write are hidden).
+- A `deny` rule with `hide: true` removes the tool from the model's tool list entirely, so the model cannot even try to call it.
 
 ## Relationship to upstream
 
-Pi is built by [Mario Zechner (badlogic)](https://github.com/badlogic) and [earendil works](https://github.com/earendil-works) — this fork builds on their work and merges upstream regularly rather than diverging:
+Pi is developed by [Mario Zechner (badlogic)](https://github.com/badlogic) and [earendil works](https://github.com/earendil-works). This fork builds on their work rather than diverging from it:
 
 - Upstream's README is preserved verbatim at [docs/fork/upstream-README.md](docs/fork/upstream-README.md); upstream README changes get ported into this one during syncs.
 - The [fork ledger](docs/fork/upstream-integration.md) records every decision, every changed upstream file, and the sync procedure.
 - Contributions and bug reports for core Pi belong upstream ([CONTRIBUTING.md](CONTRIBUTING.md), [Discord](https://discord.com/invite/3cU7Bz4UPx), [pi.dev](https://pi.dev)).
+
+The fork's runtime layer was inspired by [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness).
 
 For stronger isolation than permission policies, containerization patterns (Gondolin micro-VM, Docker, OpenShell) are documented in [packages/coding-agent/docs/containerization.md](packages/coding-agent/docs/containerization.md).
 
