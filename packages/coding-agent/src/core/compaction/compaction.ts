@@ -5,7 +5,7 @@
  * and after compaction the session is reloaded.
  */
 
-import type { AgentMessage, StreamFn, ThinkingLevel } from "@earendil-works/pi-agent-core";
+import type { AgentMessage, AgentTool, StreamFn, ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { contentText, type RetryCallbacks, type RetryPolicy, retryAssistantCall, uuidv7 } from "@earendil-works/pi-ai";
 import type { AssistantMessage, Context, Model, SimpleStreamOptions, Usage } from "@earendil-works/pi-ai/compat";
 import { completeSimple } from "@earendil-works/pi-ai/compat";
@@ -23,6 +23,7 @@ import {
 	type FileOperations,
 	formatFileOperations,
 	SUMMARIZATION_SYSTEM_PROMPT,
+	SUMMARIZER_PERSONA,
 	serializeConversation,
 } from "./utils.ts";
 
@@ -464,7 +465,25 @@ export function findCutPoint(
 // Summarization
 // ============================================================================
 
-const SUMMARIZATION_PROMPT = `The messages above are a conversation to summarize. Create a structured context checkpoint summary that another LLM will use to continue the work.
+/**
+ * The agent's live request prefix (system prompt + tool list) replayed by
+ * summarization calls (cache plan phase A). Must carry the same content the
+ * last regular request used so the provider's prompt cache covers the replayed
+ * conversation history.
+ */
+/**
+ * The request prefix a replaying summarizer call must reproduce byte for byte:
+ * the system prompt (with ALL tool definitions) and tool list the model saw on
+ * its last regular request. Precondition: a `transformContext` extension that
+ * rewrites history breaks this equivalence, and the cache win with it; the
+ * prefix-stability monitor (cache plan phase B) surfaces such rewrites.
+ */
+export interface SummarizationPrefix {
+	systemPrompt: string;
+	tools: AgentTool[];
+}
+
+const SUMMARIZATION_PROMPT = `Summarize the conversation above. Create a structured context checkpoint summary that another LLM will use to continue the work.
 
 Use this EXACT format:
 
@@ -534,9 +553,23 @@ Use this EXACT format:
 
 Keep each section concise. Preserve exact file paths, function names, and error messages.`;
 
-const UPDATE_SUMMARIZATION_PROMPT = `The messages above are NEW conversation messages to incorporate into the existing summary provided in <previous-summary> tags.
+const UPDATE_SUMMARIZATION_PROMPT = `The conversation above contains NEW messages to incorporate into the existing checkpoint summary (the first message of the conversation).
 
 ${UPDATE_SUMMARIZATION_INSTRUCTIONS}`;
+
+/**
+ * Build the appended user instruction turn for prefix-replaying summarization.
+ * Combines the summarizer persona, the checkpoint format instructions (format
+ * body byte-identical to the standalone prompts), the previous summary, and
+ * optional custom focus.
+ */
+function buildSummaryInstruction(previousSummary?: string, customInstructions?: string): string {
+	let text = `${SUMMARIZER_PERSONA}\n\n${previousSummary ? UPDATE_SUMMARIZATION_PROMPT : SUMMARIZATION_PROMPT}`;
+	if (customInstructions) {
+		text += `\n\nAdditional focus: ${customInstructions}`;
+	}
+	return text;
+}
 
 function createSummarizationOptions(
 	model: Model<any>,
@@ -569,15 +602,15 @@ export async function completeSummarization(
 	streamFn?: StreamFn,
 	retry?: RetryPolicy,
 	callbacks?: RetryCallbacks,
+	/** Standalone (non-replaying) requests opt out of prompt caching; prefix-replaying requests inherit it. */
+	cacheOptOut = true,
 ): Promise<AssistantMessage> {
-	// Avoid cache writes for one-off summaries. Reuse caller-supplied routing when available;
-	// callers without a session ID, including branch summaries, receive a fresh routing ID.
-	const requestOptions: SimpleStreamOptions = {
-		...options,
-		cacheRetention: "none",
-		sessionId: options.sessionId ?? uuidv7(),
-		toolChoice: "none",
-	};
+	// Cache plan phase A: replaying requests must keep the provider's default
+	// cache retention and routing so a byte-identical prefix hits like a regular
+	// request. Standalone requests still opt out to avoid pointless cache writes.
+	const requestOptions: SimpleStreamOptions = cacheOptOut
+		? { ...options, cacheRetention: "none", sessionId: options.sessionId ?? uuidv7(), toolChoice: "none" }
+		: { ...options, toolChoice: "none" };
 	const produce = async (): Promise<AssistantMessage> =>
 		streamFn
 			? (await streamFn(model, context, requestOptions)).result()
@@ -592,6 +625,7 @@ export async function completeSummarization(
 export async function generateSummary(
 	currentMessages: AgentMessage[],
 	model: Model<any>,
+	prefix: SummarizationPrefix,
 	reserveTokens: number,
 	apiKey: string | undefined,
 	headers?: Record<string, string>,
@@ -609,6 +643,7 @@ export async function generateSummary(
 		await generateSummaryWithUsage(
 			currentMessages,
 			model,
+			prefix,
 			reserveTokens,
 			apiKey,
 			headers,
@@ -639,10 +674,35 @@ function buildSummarizationContext(promptText: string): Context {
 	};
 }
 
+/**
+ * Build the provider context for a prefix-replaying summary request: the agent's
+ * real system prompt and tool list, the converted conversation exactly as a
+ * regular request sends it, and one appended user instruction turn.
+ */
+function buildReplaySummarizationContext(
+	currentMessages: AgentMessage[],
+	instruction: string,
+	prefix: SummarizationPrefix,
+): Context {
+	return {
+		systemPrompt: prefix.systemPrompt,
+		tools: prefix.tools,
+		messages: [
+			...convertToLlm(currentMessages),
+			{
+				role: "user",
+				content: [{ type: "text", text: instruction }],
+				timestamp: Date.now(),
+			},
+		],
+	};
+}
+
 /** Generate or update a conversation summary and return its provider usage. */
 export async function generateSummaryWithUsage(
 	currentMessages: AgentMessage[],
 	model: Model<any>,
+	prefix: SummarizationPrefix,
 	reserveTokens: number,
 	apiKey: string | undefined,
 	headers?: Record<string, string>,
@@ -661,23 +721,7 @@ export async function generateSummaryWithUsage(
 		model.maxTokens > 0 ? model.maxTokens : Number.POSITIVE_INFINITY,
 	);
 
-	// Use update prompt if we have a previous summary, otherwise initial prompt
-	let basePrompt = previousSummary ? UPDATE_SUMMARIZATION_PROMPT : SUMMARIZATION_PROMPT;
-	if (customInstructions) {
-		basePrompt = `${basePrompt}\n\nAdditional focus: ${customInstructions}`;
-	}
-
-	// Serialize conversation to text so model doesn't try to continue it
-	// Convert to LLM messages first (handles custom types like bashExecution, custom, etc.)
-	const llmMessages = convertToLlm(currentMessages);
-	const conversationText = serializeConversation(llmMessages);
-
-	// Build the prompt with conversation wrapped in tags
-	let promptText = `<conversation>\n${conversationText}\n</conversation>\n\n`;
-	if (previousSummary) {
-		promptText += `<previous-summary>\n${previousSummary}\n</previous-summary>\n\n`;
-	}
-	promptText += basePrompt;
+	const instruction = buildSummaryInstruction(previousSummary, customInstructions);
 
 	const completionOptions = createSummarizationOptions(
 		model,
@@ -692,11 +736,12 @@ export async function generateSummaryWithUsage(
 
 	const response = await completeSummarization(
 		model,
-		buildSummarizationContext(promptText),
+		buildReplaySummarizationContext(currentMessages, instruction, prefix),
 		completionOptions,
 		streamFn,
 		retry,
 		callbacks,
+		false,
 	);
 
 	if (response.stopReason === "error") {
@@ -720,6 +765,8 @@ export interface CompactionPreparation {
 	firstKeptEntryId: string;
 	/** Messages that will be summarized and discarded */
 	messagesToSummarize: AgentMessage[];
+	/** messagesToSummarize headed by the previous checkpoint message when updating: the exact prefix the model saw */
+	replayMessages: AgentMessage[];
 	/** Messages that will be turned into turn prefix summary (if splitting) */
 	turnPrefixMessages: AgentMessage[];
 	/** Whether this is a split turn (cut point in middle of turn) */
@@ -772,12 +819,24 @@ export function prepareCompaction(
 
 	const historyEnd = cutPoint.isSplitTurn ? cutPoint.turnStartIndex : cutPoint.firstKeptEntryIndex;
 
-	// Messages to summarize (will be discarded after summary)
+	// Messages to summarize (will be discarded after summary): only NEW messages
+	// since the previous checkpoint; summary semantics stay unchanged.
 	const messagesToSummarize: AgentMessage[] = [];
 	for (let i = boundaryStart; i < historyEnd; i++) {
 		const msg = getMessageFromEntryForCompaction(pathEntries[i]);
 		if (msg) messagesToSummarize.push(msg);
 	}
+
+	// Replay messages: what the model actually saw. Since the previous
+	// compaction, every regular request's context began with the checkpoint
+	// message, so the replay list is headed by it (byte-identical projection)
+	// followed by the new messages; this keeps the summarizer request's prefix
+	// equal to the prior request's from message 0 (cache plan phase A).
+	const replayMessages: AgentMessage[] = [];
+	if (prevCompactionIndex >= 0) {
+		replayMessages.push(...sessionEntryToContextMessages(pathEntries[prevCompactionIndex] as CompactionEntry));
+	}
+	replayMessages.push(...messagesToSummarize);
 
 	// Messages for turn prefix summary (if splitting a turn)
 	const turnPrefixMessages: AgentMessage[] = [];
@@ -805,6 +864,7 @@ export function prepareCompaction(
 	return {
 		firstKeptEntryId,
 		messagesToSummarize,
+		replayMessages,
 		turnPrefixMessages,
 		isSplitTurn: cutPoint.isSplitTurn,
 		tokensBefore,
@@ -840,10 +900,12 @@ Be concise. Focus on what's needed to understand the kept suffix.`;
  * @param preparation - Pre-calculated preparation from prepareCompaction()
  * @param customInstructions - Optional custom focus for the summary
  * @param sessionId - Optional routing session ID forwarded without enabling prompt caching
+ * @param prefix - Agent request prefix (system prompt + tools) replayed by the summarizer
  */
 export async function compact(
 	preparation: CompactionPreparation,
 	model: Model<any>,
+	prefix: SummarizationPrefix,
 	apiKey: string | undefined,
 	headers?: Record<string, string>,
 	customInstructions?: string,
@@ -858,6 +920,7 @@ export async function compact(
 	const {
 		firstKeptEntryId,
 		messagesToSummarize,
+		replayMessages,
 		turnPrefixMessages,
 		isSplitTurn,
 		tokensBefore,
@@ -875,8 +938,9 @@ export async function compact(
 		let historyUsage: Usage | undefined;
 		if (messagesToSummarize.length > 0) {
 			const historyResult = await generateSummaryWithUsage(
-				messagesToSummarize,
+				replayMessages,
 				model,
+				prefix,
 				settings.reserveTokens,
 				apiKey,
 				headers,
@@ -913,8 +977,9 @@ export async function compact(
 	} else {
 		// Just generate history summary
 		const result = await generateSummaryWithUsage(
-			messagesToSummarize,
+			replayMessages,
 			model,
+			prefix,
 			settings.reserveTokens,
 			apiKey,
 			headers,

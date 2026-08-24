@@ -8,7 +8,7 @@
 import type { AgentMessage, StreamFn } from "@earendil-works/pi-agent-core";
 import type { RetryCallbacks, RetryPolicy } from "@earendil-works/pi-ai";
 import { contentText } from "@earendil-works/pi-ai";
-import type { Model, SimpleStreamOptions, Usage } from "@earendil-works/pi-ai/compat";
+import type { Context, Model, SimpleStreamOptions, Usage } from "@earendil-works/pi-ai/compat";
 import {
 	convertToLlm,
 	createBranchSummaryMessage,
@@ -16,15 +16,14 @@ import {
 	createCustomMessage,
 } from "../messages.ts";
 import type { ReadonlySessionManager, SessionEntry } from "../session-manager.ts";
-import { completeSummarization, estimateTokens } from "./compaction.ts";
+import { completeSummarization, estimateTokens, type SummarizationPrefix } from "./compaction.ts";
 import {
 	computeFileLists,
 	createFileOps,
 	extractFileOpsFromMessage,
 	type FileOperations,
 	formatFileOperations,
-	SUMMARIZATION_SYSTEM_PROMPT,
-	serializeConversation,
+	SUMMARIZER_PERSONA,
 } from "./utils.ts";
 
 // ============================================================================
@@ -87,6 +86,12 @@ export interface GenerateBranchSummaryOptions {
 	retry?: RetryPolicy;
 	/** Optional callbacks for retry reporting (e.g. TUI retry indicators). */
 	callbacks?: RetryCallbacks;
+	/**
+	 * Agent request prefix (system prompt + tool list) replayed as the summarizer
+	 * request prefix (cache plan phase A). Must be the same content the last
+	 * regular request used.
+	 */
+	prefix: SummarizationPrefix;
 }
 
 // ============================================================================
@@ -306,6 +311,7 @@ export async function generateBranchSummary(
 		streamFn,
 		retry,
 		callbacks,
+		prefix,
 	} = options;
 
 	// Token budget = context window minus reserved space for prompt + response
@@ -318,12 +324,8 @@ export async function generateBranchSummary(
 		return { summary: "No content to summarize" };
 	}
 
-	// Transform to LLM-compatible messages, then serialize to text
-	// Serialization prevents the model from treating it as a conversation to continue
-	const llmMessages = convertToLlm(messages);
-	const conversationText = serializeConversation(llmMessages);
-
-	// Build prompt
+	// Build the appended instruction: the summarizer persona plus the branch
+	// summary instructions (or the replacing custom instructions).
 	let instructions: string;
 	if (replaceInstructions && customInstructions) {
 		instructions = customInstructions;
@@ -332,23 +334,29 @@ export async function generateBranchSummary(
 	} else {
 		instructions = BRANCH_SUMMARY_PROMPT;
 	}
-	const promptText = `<conversation>\n${conversationText}\n</conversation>\n\n${instructions}`;
+	const promptText = `${SUMMARIZER_PERSONA}\n\n${instructions}`;
 
-	const summarizationMessages = [
-		{
-			role: "user" as const,
-			content: [{ type: "text" as const, text: promptText }],
-			timestamp: Date.now(),
-		},
-	];
-
-	// Call LLM for summarization. Prefer the session stream function so SDK
-	// request behavior (timeouts, retries, attribution headers) stays consistent
-	// without running through agent state/events. Retried via completeSummarization
-	// so transient stream drops reuse the configured retry policy.
-	const context = { systemPrompt: SUMMARIZATION_SYSTEM_PROMPT, messages: summarizationMessages };
+	// Prefix-replaying request (cache plan phase A): the agent's real system
+	// prompt and tools, the converted branch messages, and one appended user
+	// instruction turn. Call LLM through completeSummarization; prefer the
+	// session stream function so SDK request behavior (timeouts, retries,
+	// attribution headers) stays consistent without running through agent
+	// state/events. Retried via completeSummarization so transient stream drops
+	// reuse the configured retry policy.
+	const context: Context = {
+		systemPrompt: prefix.systemPrompt,
+		tools: prefix.tools,
+		messages: [
+			...convertToLlm(messages),
+			{
+				role: "user",
+				content: [{ type: "text", text: promptText }],
+				timestamp: Date.now(),
+			},
+		],
+	};
 	const requestOptions: SimpleStreamOptions = { apiKey, headers, env, signal, maxTokens: 2048 };
-	const response = await completeSummarization(model, context, requestOptions, streamFn, retry, callbacks);
+	const response = await completeSummarization(model, context, requestOptions, streamFn, retry, callbacks, false);
 
 	// Check if aborted or errored
 	if (response.stopReason === "aborted") {

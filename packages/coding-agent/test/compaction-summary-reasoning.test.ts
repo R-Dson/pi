@@ -1,5 +1,6 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage, Context, Model } from "@earendil-works/pi-ai";
+import { Type } from "typebox";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	type CompactionPreparation,
@@ -67,6 +68,26 @@ const mockToolCallResponse: AssistantMessage = {
 
 const messages: AgentMessage[] = [{ role: "user", content: "Summarize this.", timestamp: Date.now() }];
 
+const prefix = {
+	systemPrompt: "You are the agent's real system prompt.",
+	tools: [
+		{
+			name: "bash",
+			label: "Bash",
+			description: "Echo a command back",
+			parameters: Type.Object({ command: Type.String() }),
+			execute: async (_toolCallId: string, params: unknown) => {
+				const command =
+					typeof params === "object" && params !== null && "command" in params ? String(params.command) : "";
+				return {
+					content: [{ type: "text" as const, text: `ran:${command}` }],
+					details: { command },
+				};
+			},
+		},
+	],
+};
+
 describe("generateSummary reasoning options", () => {
 	beforeEach(() => {
 		completeSimpleMock.mockReset();
@@ -77,6 +98,7 @@ describe("generateSummary reasoning options", () => {
 		const result = await generateSummaryWithUsage(
 			messages,
 			createModel(true),
+			prefix,
 			2000,
 			"test-key",
 			undefined,
@@ -97,42 +119,63 @@ describe("generateSummary reasoning options", () => {
 	});
 
 	it("preserves the string result from generateSummary", async () => {
-		await expect(generateSummary(messages, createModel(false), 2000, "test-key")).resolves.toBe(
+		await expect(generateSummary(messages, createModel(false), prefix, 2000, "test-key")).resolves.toBe(
 			"## Goal\nTest summary",
 		);
 	});
 
-	it("uses fresh routing sessions without prompt caching", async () => {
-		await generateSummary(messages, createModel(false), 2000, "test-key");
-		await generateSummary(messages, createModel(false), 2000, "test-key");
+	it("inherits provider caching like a regular request (cache plan phase A)", async () => {
+		await generateSummary(messages, createModel(false), prefix, 2000, "test-key");
+		await generateSummary(messages, createModel(false), prefix, 2000, "test-key");
 
 		const requestOptions = completeSimpleMock.mock.calls.map((call) => call[2]);
 		expect(requestOptions).toHaveLength(2);
-		expect(requestOptions.every((options) => options?.cacheRetention === "none")).toBe(true);
+		// Replaying summary calls must NOT opt out of caching or mint fresh
+		// routing ids: both would break prefix affinity with the prior request.
+		expect(requestOptions.every((options) => options?.cacheRetention === undefined)).toBe(true);
 		expect(requestOptions.every((options) => options?.toolChoice === "none")).toBe(true);
-
-		const sessionIds = requestOptions.map((options) => options?.sessionId);
-		expect(sessionIds[0]).not.toBe(sessionIds[1]);
+		expect(requestOptions.every((options) => options?.sessionId === undefined)).toBe(true);
 	});
 
-	it("honors a caller-supplied routing session without prompt caching", async () => {
+	it("standalone requests opt out of caching; replaying requests inherit it", async () => {
 		await completeSummarization(
 			createModel(false),
 			{ systemPrompt: "Summarize", messages: [] },
-			{ sessionId: "current-routing-session", cacheRetention: "long", toolChoice: "auto" },
+			{
+				sessionId: "current-routing-session",
+				cacheRetention: "long",
+				toolChoice: "auto",
+			},
+		);
+		await completeSummarization(
+			createModel(false),
+			{ systemPrompt: "Summarize", messages: [] },
+			{
+				sessionId: "current-routing-session",
+				toolChoice: "auto",
+			},
+			undefined,
+			undefined,
+			undefined,
+			false,
 		);
 
-		expect(completeSimpleMock.mock.calls[0][2]).toMatchObject({
+		const standalone = completeSimpleMock.mock.calls[0][2];
+		expect(standalone).toMatchObject({
 			sessionId: "current-routing-session",
 			cacheRetention: "none",
 			toolChoice: "none",
 		});
+		const replay = completeSimpleMock.mock.calls[1][2];
+		expect(replay).toMatchObject({ sessionId: "current-routing-session", toolChoice: "none" });
+		expect(replay).not.toHaveProperty("cacheRetention");
 	});
 
 	it("preserves the standalone split-turn summary prompt", async () => {
 		const preparation: CompactionPreparation = {
 			firstKeptEntryId: "entry-keep",
 			messagesToSummarize: [],
+			replayMessages: [],
 			turnPrefixMessages: messages,
 			isSplitTurn: true,
 			tokensBefore: 100,
@@ -140,7 +183,7 @@ describe("generateSummary reasoning options", () => {
 			settings: { enabled: true, reserveTokens: 2000, keepRecentTokens: 20 },
 		};
 
-		await compact(preparation, createModel(false), "test-key");
+		await compact(preparation, createModel(false), prefix, "test-key");
 
 		const requestContext = completeSimpleMock.mock.calls[0][1] as Context;
 		const prompt = JSON.stringify(requestContext.messages);
@@ -151,7 +194,7 @@ describe("generateSummary reasoning options", () => {
 	it("rejects tool calls from conversation summaries", async () => {
 		completeSimpleMock.mockResolvedValueOnce(mockToolCallResponse);
 
-		await expect(generateSummaryWithUsage(messages, createModel(false), 2000, "test-key")).rejects.toThrow(
+		await expect(generateSummaryWithUsage(messages, createModel(false), prefix, 2000, "test-key")).rejects.toThrow(
 			"Summarization attempted to call a tool",
 		);
 	});
@@ -161,6 +204,7 @@ describe("generateSummary reasoning options", () => {
 		const preparation: CompactionPreparation = {
 			firstKeptEntryId: "entry-keep",
 			messagesToSummarize: [],
+			replayMessages: [],
 			turnPrefixMessages: messages,
 			isSplitTurn: true,
 			tokensBefore: 100,
@@ -168,7 +212,7 @@ describe("generateSummary reasoning options", () => {
 			settings: { enabled: true, reserveTokens: 2000, keepRecentTokens: 20 },
 		};
 
-		await expect(compact(preparation, createModel(false), "test-key")).rejects.toThrow(
+		await expect(compact(preparation, createModel(false), prefix, "test-key")).rejects.toThrow(
 			"Turn prefix summarization attempted to call a tool",
 		);
 	});
@@ -177,6 +221,7 @@ describe("generateSummary reasoning options", () => {
 		await generateSummary(
 			messages,
 			createModel(true),
+			prefix,
 			2000,
 			"test-key",
 			undefined,
@@ -197,6 +242,7 @@ describe("generateSummary reasoning options", () => {
 		await generateSummary(
 			messages,
 			createModel(false),
+			prefix,
 			2000,
 			"test-key",
 			undefined,
@@ -225,6 +271,7 @@ describe("generateSummary reasoning options", () => {
 					},
 				],
 			}),
+			prefix,
 			2000,
 			"test-key",
 		);
@@ -234,7 +281,7 @@ describe("generateSummary reasoning options", () => {
 	});
 
 	it("does not set Anthropic refusal fallback for models without allowed fallback targets", async () => {
-		await generateSummary(messages, createModel(true), 2000, "test-key");
+		await generateSummary(messages, createModel(true), prefix, 2000, "test-key");
 
 		expect(completeSimpleMock).toHaveBeenCalledTimes(1);
 		expect(completeSimpleMock.mock.calls[0][2]).not.toHaveProperty("refusalFallbacks");
@@ -244,6 +291,7 @@ describe("generateSummary reasoning options", () => {
 		const preparation: CompactionPreparation = {
 			firstKeptEntryId: "entry-keep",
 			messagesToSummarize: messages,
+			replayMessages: messages,
 			turnPrefixMessages: messages,
 			isSplitTurn: true,
 			tokensBefore: 600000,
@@ -251,7 +299,7 @@ describe("generateSummary reasoning options", () => {
 			settings: { enabled: true, reserveTokens: 500000, keepRecentTokens: 20000 },
 		};
 
-		const result = await compact(preparation, createModel(false, 128000), "test-key");
+		const result = await compact(preparation, createModel(false, 128000), prefix, "test-key");
 
 		expect(result.usage).toEqual({
 			...mockSummaryResponse.usage,
