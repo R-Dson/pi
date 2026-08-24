@@ -19,6 +19,12 @@ import { ModelRuntime } from "./core/model-runtime.ts";
 import { DefaultPackageManager } from "./core/package-manager.ts";
 import { type AppMode, resolveProjectTrusted } from "./core/project-trust.ts";
 import { DefaultResourceLoader } from "./core/resource-loader.ts";
+import {
+	classifySelfUpdateInstall,
+	FORK_INSTALL_COMMAND,
+	FORK_STANDALONE_TARBALL_URL,
+	resolveRunningPackageName,
+} from "./core/self-update-source.ts";
 import { SettingsManager } from "./core/settings-manager.ts";
 import { hasTrustRequiringProjectResources, ProjectTrustStore } from "./core/trust-manager.ts";
 import { spawnProcess } from "./utils/child-process.ts";
@@ -412,6 +418,10 @@ function printPnpmSelfUpdateMetadataHint(): void {
 	console.error(chalk.yellow(`Run \`pnpm store prune\` and retry \`${APP_NAME} update --self\`.`));
 }
 
+function printForkReinstallHint(): void {
+	console.error(chalk.yellow(`Or reinstall the latest fork release directly: ${FORK_INSTALL_COMMAND}`));
+}
+
 async function runSelfUpdate(command: SelfUpdateCommand): Promise<void> {
 	console.log(chalk.dim(`Updating ${APP_NAME} with ${command.display}...`));
 	for (const step of command.steps ?? [command]) {
@@ -744,9 +754,9 @@ export async function handlePackageCommand(
 					}
 				}
 				if (updateTargetIncludesSelf(target)) {
-					// No pi.dev version check in this fork (issue #32): self-update
-					// installs PACKAGE_NAME@latest and lets the package manager
-					// resolve it when the user runs the command explicitly.
+					// No pi.dev version check in this fork (issues #29/#32): the
+					// self-update target is derived from the running install, never
+					// from a version lookup.
 					const installMethod = detectInstallMethod();
 					if (process.platform === "win32" && installMethod !== "npm" && installMethod !== "pnpm") {
 						console.error(
@@ -756,13 +766,42 @@ export async function handlePackageCommand(
 						process.exitCode = 1;
 						return true;
 					}
+					// Issue #29: a fork standalone install updates from the fork's
+					// GitHub release tarball, never from npmjs (which would replace
+					// the fork with the upstream package).
+					const runningPackageName = resolveRunningPackageName();
+					if (runningPackageName === "" && installMethod !== "unknown") {
+						// The running install's manifest could not be read. Never fall
+						// back to the upstream npm package here: that can replace a
+						// fork install with upstream pi. Refuse and point at the
+						// reinstall path instead.
+						console.error(
+							chalk.red(`Could not determine how this ${APP_NAME} was installed; refusing to self-update.`),
+						);
+						printForkReinstallHint();
+						process.exitCode = 1;
+						return true;
+					}
+					const installKind = classifySelfUpdateInstall(runningPackageName);
+					if (installKind === "upstream-package" && installMethod !== "unknown") {
+						console.error(
+							chalk.yellow(
+								`This ${APP_NAME} install is the upstream package; update --self tracks upstream npm releases.`,
+							),
+						);
+						console.error(chalk.yellow(`To switch to the fork instead: ${FORK_INSTALL_COMMAND}`));
+					}
 					const selfUpdateTarget = {
 						packageName: PACKAGE_NAME,
-						installSpec: `${PACKAGE_NAME}@latest`,
+						installSpec:
+							installKind === "fork-standalone" ? FORK_STANDALONE_TARBALL_URL : `${PACKAGE_NAME}@latest`,
 					};
 					const selfUpdateCommand = getSelfUpdateCommand(PACKAGE_NAME, selfUpdateNpmCommand, selfUpdateTarget);
 					if (!selfUpdateCommand) {
 						printSelfUpdateUnavailable(selfUpdateNpmCommand, selfUpdateTarget);
+						if (installKind === "fork-standalone") {
+							printForkReinstallHint();
+						}
 						process.exitCode = 1;
 						return true;
 					}
@@ -778,10 +817,19 @@ export async function handlePackageCommand(
 							printPnpmSelfUpdateMetadataHint();
 						}
 						printSelfUpdateFallback(selfUpdateCommand);
+						if (installKind === "fork-standalone") {
+							printForkReinstallHint();
+						}
 						process.exitCode = 1;
 						return true;
 					}
-					console.log(chalk.green(`Updated ${APP_NAME} to the latest version`));
+					console.log(
+						chalk.green(
+							installKind === "fork-standalone"
+								? `Updated ${APP_NAME} to the latest fork release`
+								: `Updated ${APP_NAME} to the latest version`,
+						),
+					);
 				}
 				return true;
 			}

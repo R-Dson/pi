@@ -475,6 +475,10 @@ describe("package commands", () => {
 		const recordPath = join(tempDir, "self-update.json");
 		mkdirSync(selfPackageDir, { recursive: true });
 		writeFileSync(
+			join(selfPackageDir, "package.json"),
+			JSON.stringify({ name: "@earendil-works/pi-coding-agent", version: "0.84.2" }),
+		);
+		writeFileSync(
 			fakeNpmPath,
 			`const fs=require("node:fs"),path=require("node:path"),args=process.argv.slice(2),prefix=args[args.indexOf("--prefix")+1];
 if(args.includes("root")) console.log(path.join(prefix,"lib","node_modules"));
@@ -500,13 +504,188 @@ else fs.writeFileSync(${JSON.stringify(recordPath)},JSON.stringify(args));
 			await expect(runPackageCommandDirectly(["update", "--self"])).resolves.toBeUndefined();
 
 			expect(process.exitCode).toBeUndefined();
-			expect(errorSpy).not.toHaveBeenCalled();
+			// The upstream-package notice is expected; no other errors are.
+			const notices = errorSpy.mock.calls.map(([m]) => String(m)).join("\n");
+			expect(notices).toContain("upstream package");
 			// Issue #32: the self-update plan must not consult pi.dev.
 			expect(fetchMock).not.toHaveBeenCalled();
 			const stdout = logSpy.mock.calls.map(([message]) => String(message)).join("\n");
 			const recordedArgs = JSON.parse(readFileSync(recordPath, "utf-8")) as string[];
 			expect(recordedArgs).toContain(`${PACKAGE_NAME}@latest`);
 			expect(stdout).toContain("Updated pi");
+		} finally {
+			logSpy.mockRestore();
+			errorSpy.mockRestore();
+		}
+	});
+
+	it("refuses to self-update when the running install cannot be identified", async () => {
+		// A managed install whose manifest cannot be read must not fall back
+		// to the upstream npm package: that would replace a fork install.
+		const globalPrefix = join(tempDir, "missing-manifest-prefix");
+		const selfPackageDir = join(globalPrefix, "lib", "node_modules", "@r-dson", "pi-standalone");
+		const fakeNpmPath = join(tempDir, "fake-missing-manifest-npm.cjs");
+		mkdirSync(selfPackageDir, { recursive: true });
+		// No package.json written on purpose: resolution fails.
+		writeFileSync(
+			fakeNpmPath,
+			`const path=require("node:path"),args=process.argv.slice(2),prefix=args[args.indexOf("--prefix")+1];
+if(args.includes("root")) console.log(path.join(prefix,"lib","node_modules"));
+`,
+		);
+		writeFileSync(
+			join(agentDir, "settings.json"),
+			JSON.stringify({ npmCommand: [originalExecPath, fakeNpmPath, "--prefix", globalPrefix] }, null, 2),
+		);
+		process.env.PI_PACKAGE_DIR = selfPackageDir;
+		Object.defineProperty(process, "execPath", {
+			value: join(selfPackageDir, "dist", "cli.js"),
+			configurable: true,
+		});
+
+		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+		try {
+			await expect(runPackageCommandDirectly(["update", "--self"])).resolves.toBeUndefined();
+			expect(process.exitCode).toBe(1);
+			const stderr = errorSpy.mock.calls.map(([m]) => String(m)).join("\n");
+			expect(stderr).toContain("refusing to self-update");
+			expect(stderr).toContain("install-fork.sh");
+		} finally {
+			errorSpy.mockRestore();
+		}
+	});
+
+	it("self-updates fork standalone installs from the fork release tarball", async () => {
+		const globalPrefix = join(tempDir, "fork-global-prefix");
+		const selfPackageDir = join(globalPrefix, "lib", "node_modules", "@r-dson", "pi-standalone");
+		const fakeNpmPath = join(tempDir, "fake-fork-npm.cjs");
+		const recordPath = join(tempDir, "fork-self-update.json");
+		mkdirSync(selfPackageDir, { recursive: true });
+		writeFileSync(
+			join(selfPackageDir, "package.json"),
+			JSON.stringify({ name: "@r-dson/pi-standalone", version: "0.84.2-fork.2" }),
+		);
+		writeFileSync(
+			fakeNpmPath,
+			`const fs=require("node:fs"),path=require("node:path"),args=process.argv.slice(2),prefix=args[args.indexOf("--prefix")+1];
+	if(args.includes("root")) console.log(path.join(prefix,"lib","node_modules"));
+	else fs.writeFileSync(${JSON.stringify(recordPath)},JSON.stringify(args));
+`,
+		);
+		writeFileSync(
+			join(agentDir, "settings.json"),
+			JSON.stringify({ npmCommand: [originalExecPath, fakeNpmPath, "--prefix", globalPrefix] }, null, 2),
+		);
+		process.env.PI_PACKAGE_DIR = selfPackageDir;
+		Object.defineProperty(process, "execPath", {
+			value: join(selfPackageDir, "dist", "cli.js"),
+			configurable: true,
+		});
+		const fetchMock = vi.fn();
+		vi.stubGlobal("fetch", fetchMock);
+
+		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+		try {
+			await expect(runPackageCommandDirectly(["update", "--self"])).resolves.toBeUndefined();
+
+			expect(process.exitCode).toBeUndefined();
+			expect(errorSpy).not.toHaveBeenCalled();
+			// Issue #29: fork installs update from the fork release, never upstream npm.
+			expect(fetchMock).not.toHaveBeenCalled();
+			const stdout = logSpy.mock.calls.map(([message]) => String(message)).join("\n");
+			const recordedArgs = JSON.parse(readFileSync(recordPath, "utf-8")) as string[];
+			expect(recordedArgs).toContain("https://github.com/R-Dson/pi/releases/latest/download/pi-fork.tgz");
+			expect(recordedArgs).not.toContain(`${PACKAGE_NAME}@latest`);
+			expect(recordedArgs).not.toContain("@earendil-works/pi-coding-agent@latest");
+			expect(stdout).toContain("Updated pi to the latest fork release");
+		} finally {
+			logSpy.mockRestore();
+			errorSpy.mockRestore();
+		}
+	});
+
+	it("prints an upstream notice for upstream npm installs and still updates", async () => {
+		const globalPrefix = join(tempDir, "upstream-global-prefix");
+		const selfPackageDir = join(globalPrefix, "lib", "node_modules", "@earendil-works", "pi-coding-agent");
+		const fakeNpmPath = join(tempDir, "fake-upstream-npm.cjs");
+		const recordPath = join(tempDir, "upstream-self-update.json");
+		mkdirSync(selfPackageDir, { recursive: true });
+		writeFileSync(
+			join(selfPackageDir, "package.json"),
+			JSON.stringify({ name: "@earendil-works/pi-coding-agent", version: VERSION }),
+		);
+		writeFileSync(
+			fakeNpmPath,
+			`const fs=require("node:fs"),path=require("node:path"),args=process.argv.slice(2),prefix=args[args.indexOf("--prefix")+1];
+	if(args.includes("root")) console.log(path.join(prefix,"lib","node_modules"));
+	else fs.writeFileSync(${JSON.stringify(recordPath)},JSON.stringify(args));
+`,
+		);
+		writeFileSync(
+			join(agentDir, "settings.json"),
+			JSON.stringify({ npmCommand: [originalExecPath, fakeNpmPath, "--prefix", globalPrefix] }, null, 2),
+		);
+		process.env.PI_PACKAGE_DIR = selfPackageDir;
+		Object.defineProperty(process, "execPath", {
+			value: join(selfPackageDir, "dist", "cli.js"),
+			configurable: true,
+		});
+		const fetchMock = vi.fn();
+		vi.stubGlobal("fetch", fetchMock);
+
+		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+		try {
+			await expect(runPackageCommandDirectly(["update", "--self"])).resolves.toBeUndefined();
+
+			expect(process.exitCode).toBeUndefined();
+			expect(fetchMock).not.toHaveBeenCalled();
+			const stderr = errorSpy.mock.calls.map(([message]) => String(message)).join("\n");
+			expect(stderr).toContain("upstream package");
+			expect(stderr).toContain("install-fork.sh");
+			const stdout = logSpy.mock.calls.map(([message]) => String(message)).join("\n");
+			const recordedArgs = JSON.parse(readFileSync(recordPath, "utf-8")) as string[];
+			expect(recordedArgs).toContain(`${PACKAGE_NAME}@latest`);
+			expect(stdout).toContain("Updated pi");
+		} finally {
+			logSpy.mockRestore();
+			errorSpy.mockRestore();
+		}
+	});
+
+	it("refuses self-update from source checkouts without the upstream notice", async () => {
+		const checkoutDir = join(tempDir, "pi-checkout");
+		mkdirSync(join(checkoutDir, "src"), { recursive: true });
+		writeFileSync(
+			join(checkoutDir, "package.json"),
+			JSON.stringify({ name: "@earendil-works/pi-coding-agent", version: VERSION }),
+		);
+		process.env.PI_PACKAGE_DIR = checkoutDir;
+		Object.defineProperty(process, "execPath", {
+			value: join(tempDir, "node", "bin", "node"),
+			configurable: true,
+		});
+		const fetchMock = vi.fn();
+		vi.stubGlobal("fetch", fetchMock);
+
+		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+		try {
+			await expect(runPackageCommandDirectly(["update", "--self"])).resolves.toBeUndefined();
+
+			expect(process.exitCode).toBe(1);
+			expect(fetchMock).not.toHaveBeenCalled();
+			const stdout = logSpy.mock.calls.map(([message]) => String(message)).join("\n");
+			const stderr = errorSpy.mock.calls.map(([message]) => String(message)).join("\n");
+			expect(stdout).not.toContain("Updated pi");
+			expect(stderr).toContain("cannot self-update this installation");
+			// From-source checkouts are not upstream npm installs: no channel notice.
+			expect(stderr).not.toContain("upstream package");
 		} finally {
 			logSpy.mockRestore();
 			errorSpy.mockRestore();
