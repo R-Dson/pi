@@ -1,5 +1,7 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
-import { describe, expect, test } from "vitest";
+import { setKeybindings } from "@earendil-works/pi-tui";
+import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
+import { KeybindingsManager } from "../src/core/keybindings.ts";
 import { AssistantMessageComponent } from "../src/modes/interactive/components/assistant-message.ts";
 import { UserMessageComponent } from "../src/modes/interactive/components/user-message.ts";
 import { initTheme } from "../src/modes/interactive/theme/theme.ts";
@@ -237,5 +239,150 @@ describe("AssistantMessageComponent", () => {
 		const unpaddedComponent = new UserMessageComponent("hello", undefined, 0);
 		const unpaddedLines = unpaddedComponent.render(40).map((line) => stripAnsi(line));
 		expect(unpaddedLines.some((line) => line.startsWith("hello"))).toBe(true);
+	});
+
+	describe("hidden thinking preview", () => {
+		beforeAll(() => {
+			// The marker's expand hint resolves keys through the global manager.
+			setKeybindings(new KeybindingsManager());
+		});
+		afterAll(() => {
+			// Restore a fresh manager so later suites do not inherit this one.
+			setKeybindings(new KeybindingsManager());
+		});
+
+		test("shows a live preview of the newest thinking run while streaming", () => {
+			initTheme("dark");
+
+			const component = new AssistantMessageComponent(undefined, true);
+			component.updateContent(
+				createAssistantMessage([{ type: "thinking", thinking: "\n\nConsidering the first approach" }]),
+				true,
+			);
+			const rendered = stripAnsi(component.render(100).join("\n"));
+
+			expect(rendered).toContain("Thinking...");
+			expect(rendered).toContain("Considering the first approach");
+		});
+
+		test("replaces the preview when a newer thinking run arrives", () => {
+			initTheme("dark");
+
+			const component = new AssistantMessageComponent(undefined, true);
+			component.updateContent(
+				createAssistantMessage([
+					{ type: "thinking", thinking: "first thought about parsing" },
+					{ type: "text", text: "partial answer" },
+				]),
+				true,
+			);
+			expect(stripAnsi(component.render(100).join("\n"))).toContain("first thought about parsing");
+
+			component.updateContent(
+				createAssistantMessage([
+					{ type: "thinking", thinking: "first thought about parsing" },
+					{ type: "text", text: "partial answer" },
+					{ type: "thinking", thinking: "now verifying the result" },
+				]),
+				true,
+			);
+			const rendered = stripAnsi(component.render(100).join("\n"));
+
+			expect(rendered).toContain("now verifying the result");
+			expect(rendered).not.toContain("first thought about parsing");
+			expect(rendered).toContain("partial answer");
+		});
+
+		test("renders nothing for hidden thinking when the message has none", () => {
+			initTheme("dark");
+
+			const component = new AssistantMessageComponent(undefined, true);
+			component.updateContent(createAssistantMessage([{ type: "text", text: "hello" }]), true);
+			const rendered = stripAnsi(component.render(100).join("\n"));
+
+			expect(rendered).toContain("hello");
+			expect(rendered).not.toContain("Thinking...");
+			expect(rendered).not.toContain("Thought for");
+		});
+
+		test("folds to a one-line duration marker when the message finishes", () => {
+			initTheme("dark");
+			vi.useFakeTimers();
+			vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+			try {
+				const component = new AssistantMessageComponent(undefined, true);
+				component.updateContent(
+					createAssistantMessage([
+						{ type: "thinking", thinking: "first thought about parsing" },
+						{ type: "text", text: "partial answer" },
+					]),
+					true,
+				);
+				vi.advanceTimersByTime(3200);
+				component.updateContent(
+					createAssistantMessage([
+						{ type: "thinking", thinking: "first thought about parsing" },
+						{ type: "text", text: "partial answer" },
+						{ type: "thinking", thinking: "now verifying the result" },
+					]),
+					false,
+				);
+				const rendered = stripAnsi(component.render(100).join("\n"));
+
+				expect(rendered).toContain("Thought for 3s");
+				expect(rendered).toContain("ctrl+t to expand");
+				expect(rendered).not.toContain("first thought about parsing");
+				expect(rendered).not.toContain("now verifying the result");
+				expect(rendered.match(/Thought for/g)).toHaveLength(1);
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+
+		test("falls back to the static label for finished messages that were never streamed", () => {
+			initTheme("dark");
+
+			const component = new AssistantMessageComponent(
+				createAssistantMessage([
+					{ type: "thinking", thinking: "reloaded reasoning" },
+					{ type: "text", text: "answer" },
+				]),
+				true,
+			);
+			const rendered = stripAnsi(component.render(100).join("\n"));
+
+			expect(rendered).toContain("Thinking...");
+			expect(rendered).not.toContain("reloaded reasoning");
+		});
+
+		test("ellipsizes the live preview after 120 characters", () => {
+			initTheme("dark");
+
+			const words = Array.from({ length: 60 }, (_, i) => `w${String(i).padStart(2, "0")}`);
+			const component = new AssistantMessageComponent(undefined, true);
+			component.updateContent(createAssistantMessage([{ type: "thinking", thinking: words.join(" ") }]), true);
+			const rendered = stripAnsi(component.render(200).join("\n"));
+
+			expect(rendered).toContain("w00");
+			expect(rendered).not.toContain("w40");
+			expect(rendered).toContain("…");
+		});
+
+		test("updates the preview in place as the newest run grows", () => {
+			initTheme("dark");
+
+			const component = new AssistantMessageComponent(undefined, true);
+			component.updateContent(createAssistantMessage([{ type: "thinking", thinking: "start" }]), true);
+			expect(stripAnsi(component.render(100).join("\n"))).toContain("start");
+
+			component.updateContent(
+				createAssistantMessage([{ type: "thinking", thinking: "start and then continued reasoning" }]),
+				true,
+			);
+			const rendered = stripAnsi(component.render(100).join("\n"));
+
+			expect(rendered).toContain("start and then continued reasoning");
+			expect(rendered.match(/Thinking\.\.\./g)).toHaveLength(1);
+		});
 	});
 });
