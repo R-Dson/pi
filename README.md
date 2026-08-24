@@ -80,7 +80,7 @@ For runs where the agent should not do everything it can: a read-only review pas
 Policy mode keeps upstream's allow-by-default: rules opt calls out. This one blocks `git push` and changes nothing else.
 
 - Rules match on tool name, capability (`process.execute`, `filesystem.write`, `filesystem.read`, ...), path prefix, or command prefix. Deny beats ask beats allow, and your rules beat the profile's presets. `ask` blocks the call with a reason explaining how to allow it; there is no approval prompt yet.
-- Profiles are plain rule presets: `code` (default, everything), `review` (read-only: writes and process execution hidden), `minimal` (read/search tools only; bash, edit, and write are hidden).
+- Profiles are plain rule presets: `code` (default, everything), `review` (read-only: writes and process execution hidden), `minimal` (read/search tools only; bash, powershell, edit, and write are hidden).
 - A `deny` rule with `hide: true` removes the tool from the model's tool list entirely, so the model cannot even try to call it.
 
 ## Relationship to upstream
