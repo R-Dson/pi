@@ -154,7 +154,9 @@ describe("google-vertex api key resolution", () => {
 		await stream.result();
 
 		expect(googleGenAiMock.constructorCalls).toHaveLength(1);
-		const headers = googleGenAiMock.constructorCalls[0]?.httpOptions?.headers;
+		const headers = (
+			googleGenAiMock.constructorCalls[0]?.httpOptions as { headers?: Record<string, string> } | undefined
+		)?.headers;
 		expect(headers?.["User-Agent"]).toBeUndefined();
 	});
 
