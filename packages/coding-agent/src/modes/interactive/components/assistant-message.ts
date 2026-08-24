@@ -1,12 +1,28 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
-import { Container, Markdown, type MarkdownTheme, Spacer, Text } from "@earendil-works/pi-tui";
+import { Container, Markdown, type MarkdownTheme, Spacer, Text, truncateToWidth } from "@earendil-works/pi-tui";
 import type { MarkdownTransformer } from "../../../core/extensions/types.ts";
 import { getMarkdownTheme, theme } from "../theme/theme.ts";
+import { keyHint } from "./keybinding-hints.ts";
 import { createMarkdownTransform } from "./markdown-transform.ts";
 
 const OSC133_ZONE_START = "\x1b]133;A\x07";
 const OSC133_ZONE_END = "\x1b]133;B\x07";
 const OSC133_ZONE_FINAL = "\x1b]133;C\x07";
+
+const THINKING_PREVIEW_MAX_CHARS = 120;
+
+function hasVisibleThinking(content: AssistantMessage["content"][number]): boolean {
+	return content.type === "thinking" && content.thinking.trim().length > 0;
+}
+
+/**
+ * Collapse a thinking run into a single-line preview (whitespace flattened,
+ * width-aware ellipsis after THINKING_PREVIEW_MAX_CHARS display columns).
+ */
+function thinkingPreviewText(text: string): string {
+	const collapsed = text.replace(/\s+/g, " ").trim();
+	return truncateToWidth(collapsed, THINKING_PREVIEW_MAX_CHARS, "…");
+}
 
 /**
  * Component that renders a complete assistant message
@@ -21,6 +37,10 @@ export class AssistantMessageComponent extends Container {
 	private lastMessage?: AssistantMessage;
 	private hasToolCalls = false;
 	private isStreaming = false;
+	/** When hidden thinking was first seen while streaming; used for the finished duration marker. */
+	private thinkingStartedAt: number | undefined;
+	/** Frozen thinking duration once the message finishes; undefined when it was never streamed live. */
+	private thinkingDurationMs: number | undefined;
 
 	constructor(
 		message?: AssistantMessage,
@@ -90,11 +110,23 @@ export class AssistantMessageComponent extends Container {
 		this.lastMessage = message;
 		this.isStreaming = isStreaming;
 
+		// Track hidden-thinking timing for the finished "Thought for Ns" marker.
+		// Duration is only known for messages streamed through this component;
+		// history reloads fall back to the static label.
+		const hasThinking = message.content.some((c) => c.type === "thinking" && c.thinking.trim());
+		if (hasThinking) {
+			if (isStreaming) {
+				this.thinkingStartedAt ??= Date.now();
+			} else if (this.thinkingStartedAt !== undefined && this.thinkingDurationMs === undefined) {
+				this.thinkingDurationMs = Math.max(0, Date.now() - this.thinkingStartedAt);
+			}
+		}
+
 		// Clear content container
 		this.contentContainer.clear();
 
 		const hasVisibleContent = message.content.some(
-			(c) => (c.type === "text" && c.text.trim()) || (c.type === "thinking" && c.thinking.trim()),
+			(c) => (c.type === "text" && c.text.trim()) || hasVisibleThinking(c),
 		);
 
 		if (hasVisibleContent) {
@@ -137,9 +169,26 @@ export class AssistantMessageComponent extends Container {
 					.some((c) => (c.type === "text" && c.text.trim()) || (c.type === "thinking" && c.thinking.trim()));
 
 				if (this.hideThinkingBlock) {
-					// Show one static label for each run of thinking blocks when hidden.
+					// Older runs never render when hidden; only the newest run becomes the preview.
+					const hasThinkingAfter = message.content.slice(i + 1).some(hasVisibleThinking);
+					if (hasThinkingAfter) {
+						continue;
+					}
+
+					// While streaming, show a live single-line preview of the newest
+					// thinking run; once finished, collapse to a one-line marker.
+					let line: string;
+					if (this.isStreaming) {
+						line = `${this.hiddenThinkingLabel} ${thinkingPreviewText(thinkingBlocks.join("\n\n"))}`;
+					} else {
+						line =
+							this.thinkingDurationMs !== undefined
+								? `Thought for ${Math.max(1, Math.round(this.thinkingDurationMs / 1000))}s`
+								: this.hiddenThinkingLabel;
+					}
+					const expandHint = `${theme.fg("muted", "(")}${keyHint("app.thinking.toggle", "to expand thinking")}${theme.fg("muted", ")")}`;
 					this.contentContainer.addChild(
-						new Text(theme.italic(theme.fg("thinkingText", this.hiddenThinkingLabel)), this.outputPad, 0),
+						new Text(`${theme.italic(theme.fg("thinkingText", line))} ${expandHint}`, this.outputPad, 0),
 					);
 				} else {
 					// Render each run of thinking blocks as one Markdown section.
