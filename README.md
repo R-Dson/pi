@@ -91,6 +91,8 @@ Pi is developed by [Mario Zechner (badlogic)](https://github.com/badlogic) and [
 - The [fork ledger](docs/fork/upstream-integration.md) records every decision, every changed upstream file, and the sync procedure.
 - Contributions and bug reports for core Pi belong upstream ([CONTRIBUTING.md](CONTRIBUTING.md), [Discord](https://discord.com/invite/3cU7Bz4UPx), [pi.dev](https://pi.dev)).
 
+The fork's runtime layer was inspired by [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness).
+
 For stronger isolation than permission policies, containerization patterns (Gondolin micro-VM, Docker, OpenShell) are documented in [packages/coding-agent/docs/containerization.md](packages/coding-agent/docs/containerization.md).
 
 ## Packages
