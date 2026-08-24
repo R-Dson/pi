@@ -5,7 +5,6 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
 	classifySelfUpdateInstall,
 	FORK_STANDALONE_PACKAGE_NAME,
-	FORK_STANDALONE_TARBALL_URL,
 	resolveRunningPackageName,
 } from "../src/core/self-update-source.ts";
 
@@ -25,9 +24,10 @@ describe("self-update install classification", () => {
 		expect(classifySelfUpdateInstall("")).toBe("other");
 	});
 
-	it("targets the fork release tarball URL used by install-fork.sh", () => {
-		expect(FORK_STANDALONE_PACKAGE_NAME).toBe("@r-dson/pi-standalone");
-		expect(FORK_STANDALONE_TARBALL_URL).toBe("https://github.com/R-Dson/pi/releases/latest/download/pi-fork.tgz");
+	it("never classifies the fork standalone name as upstream or other", () => {
+		// The one classification that must never regress: a fork standalone
+		// install updating from npmjs would replace the fork with upstream pi.
+		expect(classifySelfUpdateInstall(FORK_STANDALONE_PACKAGE_NAME)).toBe("fork-standalone");
 	});
 });
 

@@ -8,7 +8,7 @@ import { stripBom } from "../utils/text.ts";
 // would replace the fork with upstream pi.
 
 export const FORK_STANDALONE_PACKAGE_NAME = "@r-dson/pi-standalone";
-export const UPSTREAM_PACKAGE_NAME = "@earendil-works/pi-coding-agent";
+const UPSTREAM_PACKAGE_NAME = "@earendil-works/pi-coding-agent";
 // Same asset install-fork.sh downloads; npm fetches public GitHub release
 // assets and npmjs dependencies without authentication.
 export const FORK_STANDALONE_TARBALL_URL = "https://github.com/R-Dson/pi/releases/latest/download/pi-fork.tgz";

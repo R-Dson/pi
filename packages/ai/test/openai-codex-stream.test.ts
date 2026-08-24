@@ -1,5 +1,5 @@
 import { mkdtempSync } from "node:fs";
-import { release, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { zstdDecompressSync } from "node:zlib";
 import { Type } from "typebox";

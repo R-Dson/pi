@@ -769,7 +769,20 @@ export async function handlePackageCommand(
 					// Issue #29: a fork standalone install updates from the fork's
 					// GitHub release tarball, never from npmjs (which would replace
 					// the fork with the upstream package).
-					const installKind = classifySelfUpdateInstall(resolveRunningPackageName());
+					const runningPackageName = resolveRunningPackageName();
+					if (runningPackageName === "" && installMethod !== "unknown") {
+						// The running install's manifest could not be read. Never fall
+						// back to the upstream npm package here: that can replace a
+						// fork install with upstream pi. Refuse and point at the
+						// reinstall path instead.
+						console.error(
+							chalk.red(`Could not determine how this ${APP_NAME} was installed; refusing to self-update.`),
+						);
+						printForkReinstallHint();
+						process.exitCode = 1;
+						return true;
+					}
+					const installKind = classifySelfUpdateInstall(runningPackageName);
 					if (installKind === "upstream-package" && installMethod !== "unknown") {
 						console.error(
 							chalk.yellow(
