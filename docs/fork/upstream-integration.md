@@ -122,7 +122,8 @@ Every outbound endpoint found by grepping runtime source (`packages/*/src`) for 
 The Cloudflare live catalog dropped its last openai-completions gateway models between CI runs. Two consequences, both fixed on this branch:
 
 - `cloudflare-ai-gateway.ts` pins the `createProvider` generic instead of letting it infer from the generated catalog; an empty API subset no longer breaks the static api entry (propose upstream).
-- Tests pinning the gateway kimi model (`getModel("cloudflare-ai-gateway", "workers-ai/@cf/moonshotai/kimi-k2.6")`) are guarded with `it.skipIf(!getModel(...))` so they run exactly when the catalog offers the model again.
+- Tests pinning the gateway kimi model (`getModel("cloudflare-ai-gateway", "workers-ai/@cf/moonshotai/kimi-k2.6")`) are guarded with `it.skipIf(!getModel(...))` so they run exactly when the catalog offers the model again; the two `model-runtime-cloudflare-compat` tests guard on `getBuiltinModels` the same way.
+- The gateway's default model in `model-resolver.ts` moved to `claude-sonnet-4.5` (present in the current catalog); the resolver test iterates all defaults against the generated catalogs, so a vanished default breaks the build the same way.
 
 ## Phase 8 Compatibility Audit (issue #13)
 
