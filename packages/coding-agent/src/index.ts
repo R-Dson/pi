@@ -45,6 +45,7 @@ export {
 	generateSummaryWithUsage,
 	getLastAssistantUsage,
 	prepareBranchEntries,
+	type SummarizationPrefix,
 	serializeConversation,
 	shouldCompact,
 } from "./core/compaction/index.ts";
