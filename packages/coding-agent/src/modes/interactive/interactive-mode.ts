@@ -90,6 +90,12 @@ import { CredentialSynchronizationError } from "../../core/model-runtime.ts";
 import type { ResourceDiagnostic } from "../../core/resource-loader.ts";
 import { formatMissingSessionCwdPrompt, MissingSessionCwdError } from "../../core/session-cwd.ts";
 import { type SessionEntry, SessionManager, sessionEntryToContextMessages } from "../../core/session-manager.ts";
+import {
+	type CacheUsageTotals,
+	cacheHitRate,
+	NON_TURN_REQUEST_KINDS,
+	type RequestKind,
+} from "../../core/sessions/cache-usage.ts";
 import type { FullscreenExitOutput, TuiMode } from "../../core/settings-manager.ts";
 import { BUILTIN_SLASH_COMMANDS } from "../../core/slash-commands.ts";
 import type { SourceInfo } from "../../core/source-info.ts";
@@ -6072,6 +6078,38 @@ export class InteractiveMode {
 		}
 		info += `${theme.fg("dim", "Output:")} ${stats.tokens.output.toLocaleString()}\n`;
 		info += `${theme.fg("dim", "Total:")} ${stats.tokens.total.toLocaleString()}\n`;
+
+		// Cache economics (cache plan phase C, issue #42): run-scoped usage
+		// recorded per request kind at the streamFn boundary, plus the phase-B
+		// invalidation counts. Empty until this run's first provider request.
+		const cacheKinds = Object.entries(stats.cacheUsageByKind) as Array<[RequestKind, CacheUsageTotals]>;
+		if (cacheKinds.length > 0) {
+			const run = cacheKinds.reduce(
+				(acc, [, totals]) => ({
+					input: acc.input + totals.input,
+					cacheRead: acc.cacheRead + totals.cacheRead,
+					cacheWrite: acc.cacheWrite + totals.cacheWrite,
+				}),
+				{ input: 0, cacheRead: 0, cacheWrite: 0 },
+			);
+			const runHitRate = cacheHitRate(run);
+			const runHit = runHitRate === undefined ? "" : `${(runHitRate * 100).toFixed(1)}% hit `;
+			info += `\n${theme.bold("Cache")}\n`;
+			info += `${theme.fg("dim", "Run:")} ${runHit}(${formatTokens(run.cacheRead)} read, ${formatTokens(run.cacheWrite)} written, ${formatTokens(run.input)} uncached)\n`;
+			for (const kind of NON_TURN_REQUEST_KINDS) {
+				const kindTotals = stats.cacheUsageByKind[kind];
+				if (!kindTotals) continue;
+				const kindHitRate = cacheHitRate(kindTotals);
+				const kindHit = kindHitRate === undefined ? "" : `, ${(kindHitRate * 100).toFixed(1)}% hit`;
+				const requests = `${kindTotals.requests} request${kindTotals.requests === 1 ? "" : "s"}`;
+				info += `  ${theme.fg("dim", `${kind}:`)} ${requests}, ${formatTokens(kindTotals.cacheRead)} read, ${formatTokens(kindTotals.cacheWrite)} written${kindHit}\n`;
+			}
+			const invalidations = Object.entries(stats.prefixInvalidationsByCause);
+			if (invalidations.length > 0) {
+				const listed = invalidations.map(([cause, count]) => `${cause} ${count}`).join(", ");
+				info += `  ${theme.fg("dim", "Invalidations:")} ${listed}\n`;
+			}
+		}
 
 		if (stats.cost > 0 || cacheWaste.missedTokens > 0) {
 			info += `\n${theme.bold("Cost")}\n`;
