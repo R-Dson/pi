@@ -253,6 +253,7 @@ export {
 	sessionEntryToContextMessages,
 	type ThinkingLevelChangeEntry,
 } from "./core/session-manager.ts";
+export type { CacheUsageTotals, RequestKind } from "./core/sessions/cache-usage.ts";
 export {
 	type CompactionSettings,
 	type DefaultProjectTrust,

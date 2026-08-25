@@ -26,7 +26,7 @@ import type {
 	StreamFn,
 	ThinkingLevel,
 } from "@earendil-works/pi-agent-core";
-import { type Context, contentText } from "@earendil-works/pi-ai";
+import { type AssistantMessageEventStream, type Context, contentText } from "@earendil-works/pi-ai";
 import type {
 	AssistantMessage,
 	AuthResult,
@@ -106,6 +106,7 @@ import type { ResourceExtensionPaths, ResourceLoader } from "./resource-loader.t
 import { exportSessionToJsonl } from "./session-export.ts";
 import type { BranchSummaryEntry, CompactionEntry, SessionEntry, SessionManager } from "./session-manager.ts";
 import { getLatestCompactionEntry } from "./session-manager.ts";
+import { type CacheUsageTotals, CacheUsageTracker, type RequestKind } from "./sessions/cache-usage.ts";
 import {
 	attributeUnannouncedInvalidation,
 	diffRequestPrefix,
@@ -318,6 +319,14 @@ export interface SessionStats {
 	 * subsystem or to the unexpected change. Current session run only; not resumed.
 	 */
 	prefixInvalidationsByCause: Partial<Record<PrefixInvalidationCause, number>>;
+	/**
+	 * Cache usage split by request kind (issue #42): regular turns, the
+	 * compaction and branch-summary summarizer calls, and retried requests,
+	 * each with the request count and its final message's usage. Current
+	 * session run only; not resumed (the session log carries no
+	 * high-frequency per-request telemetry).
+	 */
+	cacheUsageByKind: Partial<Record<RequestKind, CacheUsageTotals>>;
 	totalMessages: number;
 	tokens: {
 		input: number;
@@ -401,6 +410,15 @@ export class AgentSession {
 	private _lastRequestSnapshot: { serializedPrefix: string; modelKey: string } | undefined;
 	private _prefixInvalidationsByCause: Partial<Record<PrefixInvalidationCause, number>> = {};
 
+	// Cache-economics attribution (issue #42), observed at the same streamFn
+	// boundary. In-memory only: a resumed session restarts these counters
+	// from zero.
+	private readonly _cacheUsage = new CacheUsageTracker();
+	/** Request-kind window: set while a summarizer flow owns the stream. */
+	private _summarizerRequestKind: RequestKind | undefined;
+	/** One-shot marker: the next provider request re-issues a failed one. */
+	private _nextRequestIsRetry = false;
+
 	// Extension system
 	private _extensionRunner!: ExtensionRunner;
 	private _turnIndex = 0;
@@ -464,7 +482,7 @@ export class AgentSession {
 		this._unsubscribeAgent = this.agent.subscribe(this._handleAgentEvent);
 		this._installAgentToolHooks();
 		this._installAgentNextTurnRefresh();
-		this._installPrefixMonitor();
+		this._installStreamObservers();
 
 		this._buildRuntime({
 			activeToolNames: this._initialActiveToolNames,
@@ -701,24 +719,77 @@ export class AgentSession {
 	}
 
 	// =========================================================================
-	// Prefix-Stability Monitor (issue #41, cache plan phase B)
+	// Stream Observers (issue #41 prefix monitor, issue #42 cache attribution)
 	// =========================================================================
 
 	/**
 	 * Wrap the agent's stream function once so every provider request — regular
 	 * turns, retries, and the phase-A replaying compaction/branch-summary calls
-	 * that share the stream function — is observed by the prefix monitor. The
-	 * wrapper is transparent: it delegates to the wrapped function unchanged and
-	 * carries it on `unwrapped` so default-stream detection still works.
+	 * that share the stream function — is observed by the prefix monitor and
+	 * the cache-usage attribution. The wrapper is transparent: it delegates to
+	 * the wrapped function unchanged and carries it on `unwrapped` so
+	 * default-stream detection still works.
 	 */
-	private _installPrefixMonitor(): void {
+	private _installStreamObservers(): void {
 		const inner = this.agent.streamFunction;
 		const monitored = (async (model: Model<any>, context: Context, options?: Parameters<StreamFn>[2]) => {
+			const kind = this._claimRequestKind();
 			this._observeProviderRequest(model, context);
-			return inner(model, context, options);
+			const stream = await inner(model, context, options);
+			this._observeRequestUsage(kind, stream);
+			return stream;
 		}) as StreamFn;
 		(monitored as StreamFn & { unwrapped?: StreamFn }).unwrapped = inner;
 		this.agent.streamFunction = monitored;
+	}
+
+	/**
+	 * Request kind for the provider call being observed: the one-shot retry
+	 * marker wins (this request re-issues a failed one), then an active
+	 * summarizer-flow window (compaction, branch-summary), else a regular
+	 * turn. The agent is idle while summarizer flows run, so a window cannot
+	 * capture unrelated turns.
+	 */
+	private _claimRequestKind(): RequestKind {
+		if (this._nextRequestIsRetry) {
+			this._nextRequestIsRetry = false;
+			return "retry";
+		}
+		return this._summarizerRequestKind ?? "turn";
+	}
+
+	/**
+	 * Record the request's final-message usage under its kind. The stream's
+	 * `result()` promise resolves when the provider request finishes, for
+	 * agent turns and summarizer calls alike; failed and aborted requests
+	 * record too (usually with zero usage) so request counts stay honest.
+	 * Diagnostic only: never blocks or fails the request path.
+	 */
+	private _observeRequestUsage(kind: RequestKind, stream: AssistantMessageEventStream): void {
+		// result() resolves for done and error completions alike and never
+		// rejects, so a then-only attachment cannot leak an unhandled rejection.
+		void stream.result().then((message) => {
+			try {
+				this._cacheUsage.record(kind, message.usage);
+			} catch {
+				// Diagnostic only; never surface as an unhandled rejection.
+			}
+		});
+	}
+
+	/**
+	 * Run `flow` with every provider request it issues attributed to `kind`.
+	 * Used around the compaction and branch-summary summarizer calls, which
+	 * share the agent's stream function.
+	 */
+	private async _withRequestKind<T>(kind: RequestKind, flow: () => Promise<T>): Promise<T> {
+		const previous = this._summarizerRequestKind;
+		this._summarizerRequestKind = kind;
+		try {
+			return await flow();
+		} finally {
+			this._summarizerRequestKind = previous;
+		}
 	}
 
 	/**
@@ -2150,25 +2221,27 @@ export class AgentSession {
 		// summary is a standalone context), so the replay calls must attribute
 		// to "compaction" rather than surface as unexpected.
 		this._prefixTracker.expectInvalidation("compaction");
-		return compact(
-			preparation,
-			requestModel,
-			{
-				// Replay the agent's live request prefix so the summarizer call hits
-				// the provider prompt cache instead of a full uncached context.
-				systemPrompt: this.agent.state.systemPrompt,
-				tools: this.agent.state.tools,
-			},
-			apiKey,
-			headers,
-			customInstructions,
-			signal,
-			this.thinkingLevel,
-			this.agent.streamFunction,
-			env,
-			this.settingsManager.getRetrySettings(),
-			this._summarizationRetryCallbacks({ source: "compaction", reason }),
-			undefined, // sessionId
+		return this._withRequestKind("compaction", () =>
+			compact(
+				preparation,
+				requestModel,
+				{
+					// Replay the agent's live request prefix so the summarizer call hits
+					// the provider prompt cache instead of a full uncached context.
+					systemPrompt: this.agent.state.systemPrompt,
+					tools: this.agent.state.tools,
+				},
+				apiKey,
+				headers,
+				customInstructions,
+				signal,
+				this.thinkingLevel,
+				this.agent.streamFunction,
+				env,
+				this.settingsManager.getRetrySettings(),
+				this._summarizationRetryCallbacks({ source: "compaction", reason }),
+				undefined, // sessionId
+			),
 		);
 	}
 
@@ -2644,6 +2717,9 @@ export class AgentSession {
 				if (lastMsg?.role === "assistant" && (lastMsg.stopReason === "error" || lastMsg.stopReason === "length")) {
 					this.agent.state.messages = messages.slice(0, -1);
 				}
+				// The continuation re-issues the interrupted turn: mark it for
+				// cache-usage attribution (issue #42).
+				this._nextRequestIsRetry = true;
 				return true;
 			}
 
@@ -3132,6 +3208,9 @@ export class AgentSession {
 				});
 			},
 			onRetryAttemptStart: () => {
+				// Fires immediately before the retried summarizer call re-issues
+				// the failed request: mark it for cache-usage attribution (issue #42).
+				this._nextRequestIsRetry = true;
 				this._emit({
 					type: "summarization_retry_attempt_start",
 					...source,
@@ -3196,6 +3275,9 @@ export class AgentSession {
 			this._retryAbortController = undefined;
 		}
 
+		// The caller continues the agent, whose next provider request re-issues
+		// the failed one: mark it for cache-usage attribution (issue #42).
+		this._nextRequestIsRetry = true;
 		return true;
 	}
 
@@ -3461,25 +3543,28 @@ export class AgentSession {
 				// abandoned branch; it is an expected invalidation of the prefix.
 				this._prefixTracker.expectInvalidation("session-reset");
 				const branchSummarySettings = this.settingsManager.getBranchSummarySettings();
-				const result = await generateBranchSummary(entriesToSummarize, {
-					model: requestModel,
-					apiKey,
-					headers,
-					env,
-					signal: this._branchSummaryAbortController.signal,
-					customInstructions,
-					replaceInstructions,
-					reserveTokens: branchSummarySettings.reserveTokens,
-					streamFn: this.agent.streamFunction,
-					retry: this.settingsManager.getRetrySettings(),
-					callbacks: this._summarizationRetryCallbacks({ source: "branchSummary" }),
-					// Replay the agent's live request prefix so the branch-summary call
-					// hits the provider prompt cache instead of a full uncached context.
-					prefix: {
-						systemPrompt: this.agent.state.systemPrompt,
-						tools: this.agent.state.tools,
-					},
-				});
+				const branchSummarySignal = this._branchSummaryAbortController.signal;
+				const result = await this._withRequestKind("branch-summary", () =>
+					generateBranchSummary(entriesToSummarize, {
+						model: requestModel,
+						apiKey,
+						headers,
+						env,
+						signal: branchSummarySignal,
+						customInstructions,
+						replaceInstructions,
+						reserveTokens: branchSummarySettings.reserveTokens,
+						streamFn: this.agent.streamFunction,
+						retry: this.settingsManager.getRetrySettings(),
+						callbacks: this._summarizationRetryCallbacks({ source: "branchSummary" }),
+						// Replay the agent's live request prefix so the branch-summary call
+						// hits the provider prompt cache instead of a full uncached context.
+						prefix: {
+							systemPrompt: this.agent.state.systemPrompt,
+							tools: this.agent.state.tools,
+						},
+					}),
+				);
 				if (result.aborted) {
 					return { cancelled: true, aborted: true };
 				}
@@ -3644,6 +3729,7 @@ export class AgentSession {
 			truncatedToolOutputBytes: this._truncatedToolOutputBytes,
 			toolOutputArtifacts: this._toolOutputArtifacts,
 			prefixInvalidationsByCause: { ...this._prefixInvalidationsByCause },
+			cacheUsageByKind: this._cacheUsage.snapshot(),
 			totalMessages,
 			tokens: {
 				input: usageTotals.input,
