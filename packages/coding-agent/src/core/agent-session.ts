@@ -1973,6 +1973,12 @@ export class AgentSession {
 		return compact(
 			preparation,
 			requestModel,
+			{
+				// Replay the agent's live request prefix so the summarizer call hits
+				// the provider prompt cache instead of a full uncached context.
+				systemPrompt: this.agent.state.systemPrompt,
+				tools: this.agent.state.tools,
+			},
 			apiKey,
 			headers,
 			customInstructions,
@@ -3274,6 +3280,12 @@ export class AgentSession {
 					streamFn: this.agent.streamFunction,
 					retry: this.settingsManager.getRetrySettings(),
 					callbacks: this._summarizationRetryCallbacks({ source: "branchSummary" }),
+					// Replay the agent's live request prefix so the branch-summary call
+					// hits the provider prompt cache instead of a full uncached context.
+					prefix: {
+						systemPrompt: this.agent.state.systemPrompt,
+						tools: this.agent.state.tools,
+					},
 				});
 				if (result.aborted) {
 					return { cancelled: true, aborted: true };
