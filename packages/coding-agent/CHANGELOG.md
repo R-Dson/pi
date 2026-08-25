@@ -5,6 +5,11 @@
 ### Breaking Changes
 
 - `compact()`, `generateSummary()`, and `generateSummaryWithUsage()` now require a `SummarizationPrefix` (the agent's real system prompt and tool list) and `GenerateBranchSummaryOptions.prefix` is required: compaction and branch-summary requests replay the prior request prefix with one appended instruction turn so they hit the provider prompt cache. SDK callers must pass the prefix ([#40](https://github.com/R-Dson/pi/issues/40)).
+
+### Added
+
+- Added a runtime prefix-stability monitor: every provider-bound request (regular turns, retries, and the replaying compaction/branch-summary calls) is compared against the previous one; invalidations are attributed to the subsystem that announced them (compaction, model change, tool-set change, extension override, session reset) or reported as unexpected, counted in the new `SessionStats.prefixInvalidationsByCause` field, and unannounced changes emit a `prefix_invalidated` session event with the first diverging message index ([#41](https://github.com/R-Dson/pi/issues/41)).
+
 ## [0.84.3] - 2026-08-24
 
 ### New Features
