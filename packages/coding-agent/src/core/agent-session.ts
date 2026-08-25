@@ -26,7 +26,7 @@ import type {
 	StreamFn,
 	ThinkingLevel,
 } from "@earendil-works/pi-agent-core";
-import { type AssistantMessageEventStream, type Context, contentText } from "@earendil-works/pi-ai";
+import { type Context, contentText } from "@earendil-works/pi-ai";
 import type {
 	AssistantMessage,
 	AuthResult,
@@ -106,7 +106,6 @@ import type { ResourceExtensionPaths, ResourceLoader } from "./resource-loader.t
 import { exportSessionToJsonl } from "./session-export.ts";
 import type { BranchSummaryEntry, CompactionEntry, SessionEntry, SessionManager } from "./session-manager.ts";
 import { getLatestCompactionEntry } from "./session-manager.ts";
-import { type CacheUsageTotals, CacheUsageTracker, type RequestKind } from "./sessions/cache-usage.ts";
 import {
 	attributeUnannouncedInvalidation,
 	diffRequestPrefix,
@@ -319,14 +318,6 @@ export interface SessionStats {
 	 * subsystem or to the unexpected change. Current session run only; not resumed.
 	 */
 	prefixInvalidationsByCause: Partial<Record<PrefixInvalidationCause, number>>;
-	/**
-	 * Cache usage split by request kind (issue #42): regular turns, the
-	 * compaction and branch-summary summarizer calls, and retried requests,
-	 * each with the request count and its final message's usage. Current
-	 * session run only; not resumed (the session log carries no
-	 * high-frequency per-request telemetry).
-	 */
-	cacheUsageByKind: Partial<Record<RequestKind, CacheUsageTotals>>;
 	totalMessages: number;
 	tokens: {
 		input: number;
@@ -380,6 +371,8 @@ export class AgentSession {
 	private _followUpMessages: string[] = [];
 	/** Messages queued to be included with the next user prompt as context ("asides"). */
 	private _pendingNextTurnMessages: CustomMessage[] = [];
+	/** Context-only custom messages queued during a run, flushed once the current turn's tool results are in. */
+	private _pendingCustomMessages: CustomMessage[] = [];
 
 	// Compaction state
 	private _compactionAbortController: AbortController | undefined = undefined;
@@ -407,15 +400,6 @@ export class AgentSession {
 	private readonly _prefixTracker = new PrefixInvalidationTracker();
 	private _lastRequestSnapshot: { serializedPrefix: string; modelKey: string } | undefined;
 	private _prefixInvalidationsByCause: Partial<Record<PrefixInvalidationCause, number>> = {};
-
-	// Cache-economics attribution (issue #42), observed at the same streamFn
-	// boundary. In-memory only: a resumed session restarts these counters
-	// from zero.
-	private readonly _cacheUsage = new CacheUsageTracker();
-	/** Request-kind window: set while a summarizer flow owns the stream. */
-	private _summarizerRequestKind: RequestKind | undefined;
-	/** One-shot marker: the next provider request re-issues a failed one. */
-	private _nextRequestIsRetry = false;
 
 	// Extension system
 	private _extensionRunner!: ExtensionRunner;
@@ -480,7 +464,7 @@ export class AgentSession {
 		this._unsubscribeAgent = this.agent.subscribe(this._handleAgentEvent);
 		this._installAgentToolHooks();
 		this._installAgentNextTurnRefresh();
-		this._installStreamObservers();
+		this._installPrefixMonitor();
 
 		this._buildRuntime({
 			activeToolNames: this._initialActiveToolNames,
@@ -717,77 +701,24 @@ export class AgentSession {
 	}
 
 	// =========================================================================
-	// Stream Observers (issue #41 prefix monitor, issue #42 cache attribution)
+	// Prefix-Stability Monitor (issue #41, cache plan phase B)
 	// =========================================================================
 
 	/**
 	 * Wrap the agent's stream function once so every provider request — regular
 	 * turns, retries, and the phase-A replaying compaction/branch-summary calls
-	 * that share the stream function — is observed by the prefix monitor and
-	 * the cache-usage attribution. The wrapper is transparent: it delegates to
-	 * the wrapped function unchanged and carries it on `unwrapped` so
-	 * default-stream detection still works.
+	 * that share the stream function — is observed by the prefix monitor. The
+	 * wrapper is transparent: it delegates to the wrapped function unchanged and
+	 * carries it on `unwrapped` so default-stream detection still works.
 	 */
-	private _installStreamObservers(): void {
+	private _installPrefixMonitor(): void {
 		const inner = this.agent.streamFunction;
 		const monitored = (async (model: Model<any>, context: Context, options?: Parameters<StreamFn>[2]) => {
-			const kind = this._claimRequestKind();
 			this._observeProviderRequest(model, context);
-			const stream = await inner(model, context, options);
-			this._observeRequestUsage(kind, stream);
-			return stream;
+			return inner(model, context, options);
 		}) as StreamFn;
 		(monitored as StreamFn & { unwrapped?: StreamFn }).unwrapped = inner;
 		this.agent.streamFunction = monitored;
-	}
-
-	/**
-	 * Request kind for the provider call being observed: the one-shot retry
-	 * marker wins (this request re-issues a failed one), then an active
-	 * summarizer-flow window (compaction, branch-summary), else a regular
-	 * turn. The agent is idle while summarizer flows run, so a window cannot
-	 * capture unrelated turns.
-	 */
-	private _claimRequestKind(): RequestKind {
-		if (this._nextRequestIsRetry) {
-			this._nextRequestIsRetry = false;
-			return "retry";
-		}
-		return this._summarizerRequestKind ?? "turn";
-	}
-
-	/**
-	 * Record the request's final-message usage under its kind. The stream's
-	 * `result()` promise resolves when the provider request finishes, for
-	 * agent turns and summarizer calls alike; failed and aborted requests
-	 * record too (usually with zero usage) so request counts stay honest.
-	 * Diagnostic only: never blocks or fails the request path.
-	 */
-	private _observeRequestUsage(kind: RequestKind, stream: AssistantMessageEventStream): void {
-		// result() resolves for done and error completions alike and never
-		// rejects, so a then-only attachment cannot leak an unhandled rejection.
-		void stream.result().then((message) => {
-			try {
-				this._cacheUsage.record(kind, message.usage);
-			} catch {
-				// Diagnostic only; never surface as an unhandled rejection.
-			}
-		});
-	}
-
-	/**
-	 * Run `flow` with every provider request it issues attributed to `kind`.
-	 * Used around the compaction and branch-summary summarizer calls, which
-	 * share the agent's stream function.
-	 */
-	private async _withRequestKind<T>(kind: RequestKind, flow: () => Promise<T>): Promise<T> {
-		const previous = this._summarizerRequestKind;
-		this._summarizerRequestKind = kind;
-		try {
-			return await flow();
-		} finally {
-			this._summarizerRequestKind = previous;
-		}
 	}
 
 	/**
@@ -960,6 +891,15 @@ export class AgentSession {
 					this._retryAttempt = 0;
 				}
 			}
+		}
+
+		// A turn ends after its assistant message and every tool result has been appended,
+		// so this is the first point in the run where a context-only custom message can be
+		// inserted without landing between a tool call and its result. Flushing after the
+		// extension and listener dispatch above also picks up messages that turn_end
+		// handlers queued.
+		if (event.type === "turn_end") {
+			this._flushPendingCustomMessages();
 		}
 	};
 
@@ -1400,6 +1340,7 @@ export class AgentSession {
 		} finally {
 			this._systemPromptOverride = undefined;
 			this._flushPendingBashMessages();
+			this._flushPendingCustomMessages();
 			await this._emitAgentSettled();
 		}
 	}
@@ -1509,8 +1450,9 @@ export class AgentSession {
 				return;
 			}
 
-			// Flush any pending bash messages before the new prompt
+			// Flush any pending bash and custom messages before the new prompt
 			this._flushPendingBashMessages();
+			this._flushPendingCustomMessages();
 
 			// Validate model
 			if (!this.model) {
@@ -1761,8 +1703,9 @@ export class AgentSession {
 	/**
 	 * Send a custom message to the session. Creates a CustomMessageEntry.
 	 *
-	 * Handles three cases:
+	 * Handles four cases:
 	 * - Streaming: queues message, processed when loop pulls from queue
+	 * - Streaming + triggerTurn false: appended to state/session once the current turn ends
 	 * - Not streaming + triggerTurn: appends to state/session, starts new turn
 	 * - Not streaming + no trigger: appends to state/session, no turn
 	 *
@@ -1793,16 +1736,40 @@ export class AgentSession {
 			}
 		} else if (options?.triggerTurn) {
 			await this._runAgentPrompt(appMessage);
+		} else if (this.isStreaming) {
+			// Appending now would put the message between an assistant tool call and its
+			// result, which providers that validate message order reject on replay. Defer
+			// to the end of the turn. Nothing is emitted yet: message events must not
+			// describe messages the session tree does not contain.
+			this._pendingCustomMessages.push(appMessage);
 		} else {
-			this.agent.state.messages.push(appMessage);
-			this.sessionManager.appendCustomMessageEntry(
-				message.customType,
-				message.content,
-				message.display,
-				message.details,
-			);
-			this._emit({ type: "message_start", message: appMessage });
-			this._emit({ type: "message_end", message: appMessage });
+			this._appendCustomMessage(appMessage);
+		}
+	}
+
+	private _appendCustomMessage(appMessage: CustomMessage): void {
+		this.agent.state.messages.push(appMessage);
+		this.sessionManager.appendCustomMessageEntry(
+			appMessage.customType,
+			appMessage.content,
+			appMessage.display,
+			appMessage.details,
+		);
+		this._emit({ type: "message_start", message: appMessage });
+		this._emit({ type: "message_end", message: appMessage });
+	}
+
+	/**
+	 * Append custom messages queued while the agent was running.
+	 * Called once the current turn's tool results are in agent state and session history.
+	 */
+	private _flushPendingCustomMessages(): void {
+		if (this._pendingCustomMessages.length === 0) return;
+
+		const pending = this._pendingCustomMessages;
+		this._pendingCustomMessages = [];
+		for (const appMessage of pending) {
+			this._appendCustomMessage(appMessage);
 		}
 	}
 
@@ -1934,6 +1901,7 @@ export class AgentSession {
 		this.sessionManager.appendModelChange(model.provider, model.id);
 		if (options.persist) {
 			this.settingsManager.setDefaultModelAndProvider(model.provider, model.id);
+			this._addPersistedDefaultToNonEmptyScope(model);
 		}
 
 		// Apply thinking level for the new model.
@@ -1942,6 +1910,20 @@ export class AgentSession {
 		this.setThinkingLevel(thinkingLevel);
 
 		await this._emitModelSelect(model, previousModel, "set");
+	}
+
+	private _addPersistedDefaultToNonEmptyScope(model: Model<any>): void {
+		if (this._scopedModels.length === 0) return;
+		if (this._scopedModels.some((scoped) => modelsAreEqual(scoped.model, model))) return;
+
+		this._scopedModels = [...this._scopedModels, { model }];
+
+		const enabledModels = this.settingsManager.getEnabledModels();
+		if (!enabledModels?.length) return;
+
+		const modelReference = `${model.provider}/${model.id}`;
+		if (enabledModels.some((pattern) => pattern.toLowerCase() === modelReference.toLowerCase())) return;
+		this.settingsManager.setEnabledModels([...enabledModels, modelReference]);
 	}
 
 	/**
@@ -1987,6 +1969,7 @@ export class AgentSession {
 		this.sessionManager.appendModelChange(next.model.provider, next.model.id);
 		if (options.persist) {
 			this.settingsManager.setDefaultModelAndProvider(next.model.provider, next.model.id);
+			this._addPersistedDefaultToNonEmptyScope(next.model);
 		}
 
 		// Apply thinking level for the new model.
@@ -2022,6 +2005,7 @@ export class AgentSession {
 		this.sessionManager.appendModelChange(nextModel.provider, nextModel.id);
 		if (options.persist) {
 			this.settingsManager.setDefaultModelAndProvider(nextModel.provider, nextModel.id);
+			this._addPersistedDefaultToNonEmptyScope(nextModel);
 		}
 
 		// Apply thinking level for the new model.
@@ -2166,27 +2150,25 @@ export class AgentSession {
 		// summary is a standalone context), so the replay calls must attribute
 		// to "compaction" rather than surface as unexpected.
 		this._prefixTracker.expectInvalidation("compaction");
-		return this._withRequestKind("compaction", () =>
-			compact(
-				preparation,
-				requestModel,
-				{
-					// Replay the agent's live request prefix so the summarizer call hits
-					// the provider prompt cache instead of a full uncached context.
-					systemPrompt: this.agent.state.systemPrompt,
-					tools: this.agent.state.tools,
-				},
-				apiKey,
-				headers,
-				customInstructions,
-				signal,
-				this.thinkingLevel,
-				this.agent.streamFunction,
-				env,
-				this.settingsManager.getRetrySettings(),
-				this._summarizationRetryCallbacks({ source: "compaction", reason }),
-				undefined, // sessionId
-			),
+		return compact(
+			preparation,
+			requestModel,
+			{
+				// Replay the agent's live request prefix so the summarizer call hits
+				// the provider prompt cache instead of a full uncached context.
+				systemPrompt: this.agent.state.systemPrompt,
+				tools: this.agent.state.tools,
+			},
+			apiKey,
+			headers,
+			customInstructions,
+			signal,
+			this.thinkingLevel,
+			this.agent.streamFunction,
+			env,
+			this.settingsManager.getRetrySettings(),
+			this._summarizationRetryCallbacks({ source: "compaction", reason }),
+			undefined, // sessionId
 		);
 	}
 
@@ -2662,9 +2644,6 @@ export class AgentSession {
 				if (lastMsg?.role === "assistant" && (lastMsg.stopReason === "error" || lastMsg.stopReason === "length")) {
 					this.agent.state.messages = messages.slice(0, -1);
 				}
-				// The continuation re-issues the interrupted turn: mark it for
-				// cache-usage attribution (issue #42).
-				this._nextRequestIsRetry = true;
 				return true;
 			}
 
@@ -3153,9 +3132,6 @@ export class AgentSession {
 				});
 			},
 			onRetryAttemptStart: () => {
-				// Fires immediately before the retried summarizer call re-issues
-				// the failed request: mark it for cache-usage attribution (issue #42).
-				this._nextRequestIsRetry = true;
 				this._emit({
 					type: "summarization_retry_attempt_start",
 					...source,
@@ -3220,9 +3196,6 @@ export class AgentSession {
 			this._retryAbortController = undefined;
 		}
 
-		// The caller continues the agent, whose next provider request re-issues
-		// the failed one: mark it for cache-usage attribution (issue #42).
-		this._nextRequestIsRetry = true;
 		return true;
 	}
 
@@ -3488,28 +3461,25 @@ export class AgentSession {
 				// abandoned branch; it is an expected invalidation of the prefix.
 				this._prefixTracker.expectInvalidation("session-reset");
 				const branchSummarySettings = this.settingsManager.getBranchSummarySettings();
-				const branchSummarySignal = this._branchSummaryAbortController.signal;
-				const result = await this._withRequestKind("branch-summary", () =>
-					generateBranchSummary(entriesToSummarize, {
-						model: requestModel,
-						apiKey,
-						headers,
-						env,
-						signal: branchSummarySignal,
-						customInstructions,
-						replaceInstructions,
-						reserveTokens: branchSummarySettings.reserveTokens,
-						streamFn: this.agent.streamFunction,
-						retry: this.settingsManager.getRetrySettings(),
-						callbacks: this._summarizationRetryCallbacks({ source: "branchSummary" }),
-						// Replay the agent's live request prefix so the branch-summary call
-						// hits the provider prompt cache instead of a full uncached context.
-						prefix: {
-							systemPrompt: this.agent.state.systemPrompt,
-							tools: this.agent.state.tools,
-						},
-					}),
-				);
+				const result = await generateBranchSummary(entriesToSummarize, {
+					model: requestModel,
+					apiKey,
+					headers,
+					env,
+					signal: this._branchSummaryAbortController.signal,
+					customInstructions,
+					replaceInstructions,
+					reserveTokens: branchSummarySettings.reserveTokens,
+					streamFn: this.agent.streamFunction,
+					retry: this.settingsManager.getRetrySettings(),
+					callbacks: this._summarizationRetryCallbacks({ source: "branchSummary" }),
+					// Replay the agent's live request prefix so the branch-summary call
+					// hits the provider prompt cache instead of a full uncached context.
+					prefix: {
+						systemPrompt: this.agent.state.systemPrompt,
+						tools: this.agent.state.tools,
+					},
+				});
 				if (result.aborted) {
 					return { cancelled: true, aborted: true };
 				}
@@ -3674,7 +3644,6 @@ export class AgentSession {
 			truncatedToolOutputBytes: this._truncatedToolOutputBytes,
 			toolOutputArtifacts: this._toolOutputArtifacts,
 			prefixInvalidationsByCause: { ...this._prefixInvalidationsByCause },
-			cacheUsageByKind: this._cacheUsage.snapshot(),
 			totalMessages,
 			tokens: {
 				input: usageTotals.input,

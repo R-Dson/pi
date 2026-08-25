@@ -262,24 +262,6 @@ describe("AgentSession.getSessionStats", () => {
 		}
 	});
 
-	it("keeps cache-usage attribution run-scoped and empty for entry-built sessions", async () => {
-		const { session, sessionManager } = await createSession();
-
-		try {
-			sessionManager.appendMessage(createUserMessage("hello", 1));
-			sessionManager.appendMessage(createAssistantMessage("hi", 200, 2));
-			syncAgentMessages(session, sessionManager);
-
-			const stats = session.getSessionStats();
-			// cacheUsageByKind counts provider requests observed by this run's
-			// streamFn wrapper (issue #42); session entries carry no per-request
-			// telemetry, so a resumed session starts the attribution from zero.
-			expect(stats.cacheUsageByKind).toEqual({});
-		} finally {
-			session.dispose();
-		}
-	});
-
 	it("groups tool and summary usage separately from model-attributed usage", () => {
 		const sessionManager = SessionManager.inMemory();
 		const rootId = sessionManager.appendMessage(createUserMessage("hello", 1));

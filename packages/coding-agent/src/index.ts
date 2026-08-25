@@ -253,7 +253,6 @@ export {
 	sessionEntryToContextMessages,
 	type ThinkingLevelChangeEntry,
 } from "./core/session-manager.ts";
-export type { CacheUsageTotals, RequestKind } from "./core/sessions/cache-usage.ts";
 export {
 	type CompactionSettings,
 	type DefaultProjectTrust,
@@ -417,5 +416,6 @@ export { copyToClipboard } from "./utils/clipboard.ts";
 export { parseFrontmatter, stripFrontmatter } from "./utils/frontmatter.ts";
 export { convertToPng } from "./utils/image-convert.ts";
 export { formatDimensionNote, type ResizedImage, resizeImage } from "./utils/image-resize.ts";
+export { detectSupportedImageMimeTypeFromFile } from "./utils/mime.ts";
 // Shell utilities
 export { getPowerShellConfig, getShellConfig } from "./utils/shell.ts";
