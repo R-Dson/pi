@@ -117,6 +117,13 @@ Every outbound endpoint found by grepping runtime source (`packages/*/src`) for 
 | `radius.pi.dev` default gateway | provider traffic with user OAuth token | radius provider (user-configured) | Kept: a provider gateway that happens to live on the pi.dev domain, not telemetry |
 | `packages/telemetry` (noop/memory span contracts) | none — in-process spans | `pi` runtime wires no remote sink | Kept: contracts/adapters only; nothing transmits |
 
+### Catalog-drift hardening (issue #40 CI fix)
+
+The Cloudflare live catalog dropped its last openai-completions gateway models between CI runs. Two consequences, both fixed on this branch:
+
+- `cloudflare-ai-gateway.ts` pins the `createProvider` generic instead of letting it infer from the generated catalog; an empty API subset no longer breaks the static api entry (propose upstream).
+- Tests pinning the gateway kimi model (`getModel("cloudflare-ai-gateway", "workers-ai/@cf/moonshotai/kimi-k2.6")`) are guarded with `it.skipIf(!getModel(...))` so they run exactly when the catalog offers the model again.
+
 ## Phase 8 Compatibility Audit (issue #13)
 
 Plan phase 8 says: after at least one stable release, remove temporary compatibility paths. Audit of everything the fork added, and each item's disposition:
