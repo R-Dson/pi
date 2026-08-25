@@ -151,4 +151,29 @@ describe("branch summarization", () => {
 
 		expect(result.error).toBe("Branch summarization attempted to call a tool");
 	});
+
+	it("rejects length-limited branch summaries", async () => {
+		const streamFn: StreamFn = () => {
+			const stream = createAssistantMessageEventStream();
+			queueMicrotask(() =>
+				stream.push({
+					type: "done",
+					reason: "length",
+					message: { ...response([{ type: "text", text: "partial" }]), stopReason: "length" },
+				}),
+			);
+			return stream;
+		};
+
+		const result = await generateBranchSummary(entries, {
+			model,
+			prefix,
+			signal: new AbortController().signal,
+			streamFn,
+		});
+
+		expect(result.error).toBe(
+			"Branch summarization failed: generation hit the token cap and the summary is incomplete",
+		);
+	});
 });

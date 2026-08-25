@@ -52,6 +52,7 @@ describe("resolveProfileConfig", () => {
 		expect(resolveProfileConfig("minimal")).toEqual({
 			permissionRules: [
 				{ tool: "bash", effect: "deny", hide: true },
+				{ tool: "powershell", effect: "deny", hide: true },
 				{ tool: "edit", effect: "deny", hide: true },
 				{ tool: "write", effect: "deny", hide: true },
 			],
