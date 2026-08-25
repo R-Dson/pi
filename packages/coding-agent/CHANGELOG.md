@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- `compact()`, `generateSummary()`, and `generateSummaryWithUsage()` now require a `SummarizationPrefix` (the agent's real system prompt and tool list) and `GenerateBranchSummaryOptions.prefix` is required: compaction and branch-summary requests replay the prior request prefix with one appended instruction turn so they hit the provider prompt cache. SDK callers must pass the prefix ([#40](https://github.com/R-Dson/pi/issues/40)).
+
+### Added
+
+- Added a runtime prefix-stability monitor: every provider-bound request (regular turns, retries, and the replaying compaction/branch-summary calls) is compared against the previous one; invalidations are attributed to the subsystem that announced them (compaction, model change, tool-set change, extension override, session reset) or reported as unexpected, counted in the new `SessionStats.prefixInvalidationsByCause` field, and unannounced changes emit a `prefix_invalidated` session event with the first diverging message index ([#41](https://github.com/R-Dson/pi/issues/41)).
+- Added cache-economics attribution to session stats: each provider request is attributed to a request kind (regular turn, compaction or branch-summary summarizer call, retry) and its usage aggregated in the new run-scoped `SessionStats.cacheUsageByKind` field; the `/session` panel renders a compact cache block with the run hit rate, per-kind usage, and prefix-invalidation counts ([#42](https://github.com/R-Dson/pi/issues/42)).
+
 ## [0.84.3] - 2026-08-24
 
 ### New Features
@@ -184,6 +193,7 @@
 
 ### Breaking Changes
 
+- `compact()`, `generateSummary()`, and `generateSummaryWithUsage()` now require a `SummarizationPrefix` (the agent's real system prompt and tool list) and `GenerateBranchSummaryOptions.prefix` is required: compaction and branch-summary requests replay the prior request prefix with one appended instruction turn so they hit the provider prompt cache. SDK callers must pass the prefix ([#40](https://github.com/R-Dson/pi/issues/40)).
 - Renamed the inherited pi-ai `ModelsStreamTransforms` interface to `ModelsRequestTransforms` because its header transformation now applies to all authenticated provider requests.
 - Changed JSON and RPC `message_update` events to emit only `assistantMessageEvent` deltas, removing the cumulative `message` and `assistantMessageEvent.partial` fields that caused quadratic output growth. Clients that need partial messages must assemble deltas between `message_start` and `message_end`; the latter remains authoritative ([#7290](https://github.com/earendil-works/pi/issues/7290)).
 - `ModelRegistry.getApiKeyAndHeaders()` now returns `ProviderHeaders` with `string | null` values and preserves `null` header-deletion markers. Extensions that inspect returned headers must handle `null`; extensions forwarding them to pi-ai streams should pass them through unchanged. This prevents placeholder OpenAI credentials from being sent through Cloudflare AI Gateway ([#7030](https://github.com/earendil-works/pi/issues/7030)).

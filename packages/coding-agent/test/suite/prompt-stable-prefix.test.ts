@@ -24,6 +24,7 @@ import type { FauxResponseStep } from "@earendil-works/pi-ai/compat";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai/compat";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
+import { serializeTools } from "../../src/core/sessions/prefix-stability.ts";
 import { createHarness, type Harness } from "./harness.ts";
 
 interface CapturedRequest {
@@ -35,10 +36,7 @@ interface CapturedRequest {
 function captureRequest(context: Context): CapturedRequest {
 	return {
 		systemPrompt: context.systemPrompt,
-		tools: (context.tools ?? []).map((tool) => ({
-			name: tool.name,
-			parameters: JSON.stringify(tool.parameters),
-		})),
+		tools: serializeTools(context.tools),
 		messages: structuredClone(context.messages),
 	};
 }

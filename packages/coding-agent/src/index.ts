@@ -45,6 +45,7 @@ export {
 	generateSummaryWithUsage,
 	getLastAssistantUsage,
 	prepareBranchEntries,
+	type SummarizationPrefix,
 	serializeConversation,
 	shouldCompact,
 } from "./core/compaction/index.ts";
@@ -252,6 +253,7 @@ export {
 	sessionEntryToContextMessages,
 	type ThinkingLevelChangeEntry,
 } from "./core/session-manager.ts";
+export type { CacheUsageTotals, RequestKind } from "./core/sessions/cache-usage.ts";
 export {
 	type CompactionSettings,
 	type DefaultProjectTrust,
