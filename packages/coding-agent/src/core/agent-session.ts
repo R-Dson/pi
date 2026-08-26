@@ -23,10 +23,9 @@ import type {
 	AgentTool,
 	BeforeToolCallResult,
 	PrepareNextTurnContext,
-	StreamFn,
 	ThinkingLevel,
 } from "@earendil-works/pi-agent-core";
-import { type AssistantMessageEventStream, type Context, contentText } from "@earendil-works/pi-ai";
+import { contentText } from "@earendil-works/pi-ai";
 import type {
 	AssistantMessage,
 	AuthResult,
@@ -106,15 +105,9 @@ import type { ResourceExtensionPaths, ResourceLoader } from "./resource-loader.t
 import { exportSessionToJsonl } from "./session-export.ts";
 import type { BranchSummaryEntry, CompactionEntry, SessionEntry, SessionManager } from "./session-manager.ts";
 import { getLatestCompactionEntry } from "./session-manager.ts";
-import { type CacheUsageTotals, CacheUsageTracker, type RequestKind } from "./sessions/cache-usage.ts";
-import {
-	attributeUnannouncedInvalidation,
-	diffRequestPrefix,
-	isProviderWireRewriteCause,
-	type PrefixInvalidationCause,
-	PrefixInvalidationTracker,
-	serializeRequestPrefix,
-} from "./sessions/prefix-stability.ts";
+import type { CacheUsageTotals, RequestKind } from "./sessions/cache-usage.ts";
+import type { PrefixInvalidationCause } from "./sessions/prefix-stability.ts";
+import { ProviderRequestObserver, unwrapStreamFn } from "./sessions/request-observer.ts";
 import type { SettingsManager } from "./settings-manager.ts";
 import type { SlashCommandInfo } from "./slash-commands.ts";
 import { createSyntheticSourceInfo, type SourceInfo } from "./source-info.ts";
@@ -215,17 +208,6 @@ function withoutDeletedHeaders(headers: ProviderHeaders | undefined): Record<str
 	return headers
 		? Object.fromEntries(Object.entries(headers).filter((entry): entry is [string, string] => entry[1] !== null))
 		: undefined;
-}
-
-/** See through the prefix-monitor wrapper (and any nested wrappers) to the underlying stream function. */
-function unwrapStreamFn(streamFn: StreamFn): StreamFn {
-	let current = streamFn;
-	let inner = (current as StreamFn & { unwrapped?: StreamFn }).unwrapped;
-	while (inner) {
-		current = inner;
-		inner = (current as StreamFn & { unwrapped?: StreamFn }).unwrapped;
-	}
-	return current;
 }
 
 export interface AgentSessionConfig {
@@ -405,35 +387,15 @@ export class AgentSession {
 	private _truncatedToolOutputBytes = 0;
 	private _toolOutputArtifacts = 0;
 
-	// Prefix-stability monitor (issue #41), observed at the streamFn boundary.
-	// In-memory only: a resumed session restarts these counters from zero.
-	private readonly _prefixTracker = new PrefixInvalidationTracker();
-	private _lastRequestSnapshot: { serializedPrefix: string; modelKey: string } | undefined;
-	private _prefixInvalidationsByCause: Partial<Record<PrefixInvalidationCause, number>> = {};
-	/**
-	 * Last-seen effective `images.blockImages` value (issue #53). Initialized
-	 * from the first observed request; a flip between observed requests
-	 * announces a `settings-change` invalidation, because the rewrite the
-	 * toggle triggers (`convertToLlmWithBlockImages` replaces images in ALL
-	 * messages, including already-sent ones) is the feature, not a violation.
-	 */
-	private _lastBlockImages: boolean | undefined;
-
-	// Provider wire-rewrite attribution (issue #56). The streamFn observer
-	// injects the onWireRewrite seam callback into the options it forwards, and
-	// the adapter invokes it during request serialization. In-memory only: a
+	// Provider-request observer (fork module `core/sessions/request-observer.ts`):
+	// prefix-stability monitoring (issue #41), cache-usage attribution (issue
+	// #42), blockImages flip detection (issue #53), and wire-rewrite consumption
+	// (issue #56), all observed at the streamFn boundary. In-memory only: a
 	// resumed session restarts these counters from zero.
-	private readonly _wireRewriteCausesThisRequest = new Set<string>();
-	private _observedProviderRequests = 0;
-
-	// Cache-economics attribution (issue #42), observed at the same streamFn
-	// boundary. In-memory only: a resumed session restarts these counters
-	// from zero.
-	private readonly _cacheUsage = new CacheUsageTracker();
-	/** Request-kind window: set while a summarizer flow owns the stream. */
-	private _summarizerRequestKind: RequestKind | undefined;
-	/** One-shot marker: the next provider request re-issues a failed one. */
-	private _nextRequestIsRetry = false;
+	private readonly _requestObserver = new ProviderRequestObserver(
+		(event) => this._emit(event),
+		() => this.settingsManager.getBlockImages(),
+	);
 
 	// Extension system
 	private _extensionRunner!: ExtensionRunner;
@@ -498,7 +460,7 @@ export class AgentSession {
 		this._unsubscribeAgent = this.agent.subscribe(this._handleAgentEvent);
 		this._installAgentToolHooks();
 		this._installAgentNextTurnRefresh();
-		this._installStreamObservers();
+		this.agent.streamFunction = this._requestObserver.wrap(this.agent.streamFunction);
 
 		this._buildRuntime({
 			activeToolNames: this._initialActiveToolNames,
@@ -733,163 +695,6 @@ export class AgentSession {
 			};
 		};
 	}
-
-	// =========================================================================
-	// Stream Observers (issue #41 prefix monitor, issue #42 cache attribution)
-	// =========================================================================
-
-	/**
-	 * Wrap the agent's stream function once so every provider request — regular
-	 * turns, retries, and the phase-A replaying compaction/branch-summary calls
-	 * that share the stream function — is observed by the prefix monitor and
-	 * the cache-usage attribution. The wrapper is transparent: it delegates to
-	 * the wrapped function unchanged and carries it on `unwrapped` so
-	 * default-stream detection still works.
-	 */
-	private _installStreamObservers(): void {
-		const inner = this.agent.streamFunction;
-		const monitored = (async (model: Model<any>, context: Context, options?: Parameters<StreamFn>[2]) => {
-			this._observedProviderRequests++;
-			this._wireRewriteCausesThisRequest.clear();
-			const kind = this._claimRequestKind();
-			this._observeProviderRequest(model, context);
-			// Inject the wire-rewrite seam callback (issue #56) so the provider
-			// adapter can report wire-only rewrites; requires no changes to how
-			// pi-ai or the sdk stream function builds its defaults.
-			const stream = await inner(model, context, { ...options, onWireRewrite: this._onWireRewrite });
-			this._observeRequestUsage(kind, stream);
-			return stream;
-		}) as StreamFn;
-		(monitored as StreamFn & { unwrapped?: StreamFn }).unwrapped = inner;
-		this.agent.streamFunction = monitored;
-	}
-
-	/**
-	 * Request kind for the provider call being observed: the one-shot retry
-	 * marker wins (this request re-issues a failed one), then an active
-	 * summarizer-flow window (compaction, branch-summary), else a regular
-	 * turn. The agent is idle while summarizer flows run, so a window cannot
-	 * capture unrelated turns.
-	 */
-	private _claimRequestKind(): RequestKind {
-		if (this._nextRequestIsRetry) {
-			this._nextRequestIsRetry = false;
-			return "retry";
-		}
-		return this._summarizerRequestKind ?? "turn";
-	}
-
-	/**
-	 * Record the request's final-message usage under its kind. The stream's
-	 * `result()` promise resolves when the provider request finishes, for
-	 * agent turns and summarizer calls alike; failed and aborted requests
-	 * record too (usually with zero usage) so request counts stay honest.
-	 * Diagnostic only: never blocks or fails the request path.
-	 */
-	private _observeRequestUsage(kind: RequestKind, stream: AssistantMessageEventStream): void {
-		// result() resolves for done and error completions alike and never
-		// rejects, so a then-only attachment cannot leak an unhandled rejection.
-		void stream.result().then((message) => {
-			try {
-				this._cacheUsage.record(kind, message.usage);
-			} catch {
-				// Diagnostic only; never surface as an unhandled rejection.
-			}
-		});
-	}
-
-	/**
-	 * Run `flow` with every provider request it issues attributed to `kind`.
-	 * Used around the compaction and branch-summary summarizer calls, which
-	 * share the agent's stream function.
-	 */
-	private async _withRequestKind<T>(kind: RequestKind, flow: () => Promise<T>): Promise<T> {
-		const previous = this._summarizerRequestKind;
-		this._summarizerRequestKind = kind;
-		try {
-			return await flow();
-		} finally {
-			this._summarizerRequestKind = previous;
-		}
-	}
-
-	/**
-	 * Compare the outgoing request against the previous one and record any
-	 * invalidation with attribution. Announced invalidations (compaction, model
-	 * switch, tool-set change, prompt override, settings change, tree navigation) count silently;
-	 * unannounced ones also emit a `prefix_invalidated` diagnostic event. The
-	 * model identity is compared alongside the prefix bytes because provider
-	 * prompt caches are per model. Surfaces, never crashes: monitor failures
-	 * must not take down the request path.
-	 */
-	private _observeProviderRequest(model: Model<any>, context: Context): void {
-		try {
-			// A blockImages flip rewrites every message's images on this request
-			// (sdk.ts reads the setting per request). Announce BEFORE diffing so
-			// the history rewrite attributes to the setting; the first observed
-			// request only initializes the tracked value.
-			const blockImages = this.settingsManager.getBlockImages();
-			if (this._lastBlockImages !== undefined && this._lastBlockImages !== blockImages) {
-				this._prefixTracker.expectInvalidation("settings-change");
-			}
-			this._lastBlockImages = blockImages;
-
-			const serializedPrefix = serializeRequestPrefix(context);
-			const modelKey = `${model.provider}\0${model.id}`;
-			const previous = this._lastRequestSnapshot;
-			const diff = diffRequestPrefix(previous?.serializedPrefix, serializedPrefix);
-			const modelChanged = previous !== undefined && previous.modelKey !== modelKey;
-
-			if (!diff.stable || modelChanged) {
-				const expected = this._prefixTracker.peekExpectation();
-				const cause = expected ?? attributeUnannouncedInvalidation(diff, modelChanged);
-				this._prefixInvalidationsByCause[cause] = (this._prefixInvalidationsByCause[cause] ?? 0) + 1;
-				if (!expected) {
-					this._emit({
-						type: "prefix_invalidated",
-						cause,
-						...(diff.firstDivergenceIndex !== undefined
-							? { firstDivergenceIndex: diff.firstDivergenceIndex }
-							: {}),
-					});
-				}
-			}
-			if (diff.stable) {
-				// A stable request ends any announced flow: the latch must not leak
-				// into the next unannounced change.
-				this._prefixTracker.clearExpectation();
-			}
-			this._lastRequestSnapshot = { serializedPrefix, modelKey };
-		} catch {
-			// Diagnostic only; never block the provider request.
-		}
-	}
-
-	/**
-	 * Consumer for the packages/ai wire-rewrite seam (issue #56). The adapter
-	 * invokes this during request serialization, INSIDE the wrapped stream
-	 * call — i.e. after `_observeProviderRequest` diffed this request against
-	 * the previous one. Unlike the blockImages flip (whose rewrite the next
-	 * context diff sees), these transforms are recomputed from state the
-	 * request context does not carry (auth mode, deferred-tool anchoring) and
-	 * never mutate the context, so they never appear in a later context diff
-	 * either: an `expectInvalidation` latch armed here would be cleared by the
-	 * next stable request without ever being consumed, and it would
-	 * mis-attribute the next unannounced context divergence to the provider.
-	 * The report itself is the only observation point, so it counts directly —
-	 * once per cause per request, and never for the first observed request
-	 * (nothing to diverge from before it).
-	 */
-	private _onWireRewrite = (cause: string): void => {
-		try {
-			if (!isProviderWireRewriteCause(cause)) return;
-			if (this._observedProviderRequests <= 1 || this._wireRewriteCausesThisRequest.has(cause)) return;
-			this._wireRewriteCausesThisRequest.add(cause);
-			this._prefixInvalidationsByCause[cause] = (this._prefixInvalidationsByCause[cause] ?? 0) + 1;
-		} catch {
-			// Diagnostic only; never surface as an unhandled rejection.
-		}
-	};
 
 	// =========================================================================
 	// Event Subscription
@@ -1310,7 +1115,7 @@ export class AgentSession {
 			previousActiveToolNames.length !== validToolNames.length ||
 			previousActiveToolNames.some((name, index) => name !== validToolNames[index])
 		) {
-			this._prefixTracker.expectInvalidation("tool-set-change");
+			this._requestObserver.expectInvalidation("tool-set-change");
 		}
 
 		// Rebuild base system prompt with new tool set
@@ -1653,14 +1458,14 @@ export class AgentSession {
 			// Apply extension-modified system prompt, or reset to base
 			if (result?.systemPrompt !== undefined) {
 				if (result.systemPrompt !== this.agent.state.systemPrompt) {
-					this._prefixTracker.expectInvalidation("extension-override");
+					this._requestObserver.expectInvalidation("extension-override");
 				}
 				this._systemPromptOverride = result.systemPrompt;
 				this.agent.state.systemPrompt = result.systemPrompt;
 			} else {
 				// Ensure we're using the base prompt (in case previous turn had modifications)
 				if (this._baseSystemPrompt !== this.agent.state.systemPrompt) {
-					this._prefixTracker.expectInvalidation("extension-override");
+					this._requestObserver.expectInvalidation("extension-override");
 				}
 				this._systemPromptOverride = undefined;
 				this.agent.state.systemPrompt = this._baseSystemPrompt;
@@ -2024,7 +1829,7 @@ export class AgentSession {
 		const thinkingLevel = this._getThinkingLevelForModelSwitch(model);
 		this.agent.state.model = model;
 		if (!modelsAreEqual(previousModel, model)) {
-			this._prefixTracker.expectInvalidation("model-change");
+			this._requestObserver.expectInvalidation("model-change");
 		}
 		this.sessionManager.appendModelChange(model.provider, model.id);
 		if (options.persist) {
@@ -2093,7 +1898,7 @@ export class AgentSession {
 
 		// Apply model
 		this.agent.state.model = next.model;
-		this._prefixTracker.expectInvalidation("model-change");
+		this._requestObserver.expectInvalidation("model-change");
 		this.sessionManager.appendModelChange(next.model.provider, next.model.id);
 		if (options.persist) {
 			this.settingsManager.setDefaultModelAndProvider(next.model.provider, next.model.id);
@@ -2129,7 +1934,7 @@ export class AgentSession {
 
 		const thinkingLevel = this._getThinkingLevelForModelSwitch(nextModel);
 		this.agent.state.model = nextModel;
-		this._prefixTracker.expectInvalidation("model-change");
+		this._requestObserver.expectInvalidation("model-change");
 		this.sessionManager.appendModelChange(nextModel.provider, nextModel.id);
 		if (options.persist) {
 			this.settingsManager.setDefaultModelAndProvider(nextModel.provider, nextModel.id);
@@ -2277,8 +2082,8 @@ export class AgentSession {
 		// turn for the summarizer instruction, and the split-turn turn-prefix
 		// summary is a standalone context), so the replay calls must attribute
 		// to "compaction" rather than surface as unexpected.
-		this._prefixTracker.expectInvalidation("compaction");
-		return this._withRequestKind("compaction", () =>
+		this._requestObserver.expectInvalidation("compaction");
+		return this._requestObserver.withRequestKind("compaction", () =>
 			compact(
 				preparation,
 				requestModel,
@@ -2408,7 +2213,7 @@ export class AgentSession {
 			this.agent.state.messages = sessionContext.messages;
 			// The rebuilt context (checkpoint + kept tail) starts a new prefix; the
 			// next regular request must attribute to compaction, not surprise us.
-			this._prefixTracker.expectInvalidation("compaction");
+			this._requestObserver.expectInvalidation("compaction");
 			const estimatedTokensAfter = estimateMessagesTokens(sessionContext.messages);
 
 			// Get the saved compaction entry for the extension event
@@ -2736,7 +2541,7 @@ export class AgentSession {
 			this.agent.state.messages = sessionContext.messages;
 			// The rebuilt context (checkpoint + kept tail) starts a new prefix; the
 			// next regular request must attribute to compaction, not surprise us.
-			this._prefixTracker.expectInvalidation("compaction");
+			this._requestObserver.expectInvalidation("compaction");
 			const estimatedTokensAfter = estimateMessagesTokens(sessionContext.messages);
 
 			// Get the saved compaction entry for the extension event
@@ -2776,7 +2581,7 @@ export class AgentSession {
 				}
 				// The continuation re-issues the interrupted turn: mark it for
 				// cache-usage attribution (issue #42).
-				this._nextRequestIsRetry = true;
+				this._requestObserver.markNextRequestAsRetry();
 				return true;
 			}
 
@@ -2872,7 +2677,7 @@ export class AgentSession {
 		this._resourceLoader.extendResources(extensionPaths);
 		const rebuiltPrompt = this._rebuildSystemPrompt(this.getActiveToolNames());
 		if (rebuiltPrompt !== this.agent.state.systemPrompt) {
-			this._prefixTracker.expectInvalidation("extension-override");
+			this._requestObserver.expectInvalidation("extension-override");
 		}
 		this._baseSystemPrompt = rebuiltPrompt;
 		this.agent.state.systemPrompt = this._baseSystemPrompt;
@@ -3267,7 +3072,7 @@ export class AgentSession {
 			onRetryAttemptStart: () => {
 				// Fires immediately before the retried summarizer call re-issues
 				// the failed request: mark it for cache-usage attribution (issue #42).
-				this._nextRequestIsRetry = true;
+				this._requestObserver.markNextRequestAsRetry();
 				this._emit({
 					type: "summarization_retry_attempt_start",
 					...source,
@@ -3334,7 +3139,7 @@ export class AgentSession {
 
 		// The caller continues the agent, whose next provider request re-issues
 		// the failed one: mark it for cache-usage attribution (issue #42).
-		this._nextRequestIsRetry = true;
+		this._requestObserver.markNextRequestAsRetry();
 		return true;
 	}
 
@@ -3598,10 +3403,10 @@ export class AgentSession {
 				const { model: requestModel, apiKey, headers, env } = await this._getSummarizationRequestAuth(model);
 				// The branch-summary replay request reorders history around the
 				// abandoned branch; it is an expected invalidation of the prefix.
-				this._prefixTracker.expectInvalidation("session-reset");
+				this._requestObserver.expectInvalidation("session-reset");
 				const branchSummarySettings = this.settingsManager.getBranchSummarySettings();
 				const branchSummarySignal = this._branchSummaryAbortController.signal;
-				const result = await this._withRequestKind("branch-summary", () =>
+				const result = await this._requestObserver.withRequestKind("branch-summary", () =>
 					generateBranchSummary(entriesToSummarize, {
 						model: requestModel,
 						apiKey,
@@ -3695,7 +3500,7 @@ export class AgentSession {
 			this.agent.state.messages = sessionContext.messages;
 			// Tree navigation jumps to a different point in history: an expected
 			// full-prefix reset for the next regular request.
-			this._prefixTracker.expectInvalidation("session-reset");
+			this._requestObserver.expectInvalidation("session-reset");
 
 			// Emit session_tree event
 			await this._extensionRunner.emit({
@@ -3787,8 +3592,8 @@ export class AgentSession {
 			toolOutputBytes,
 			truncatedToolOutputBytes: this._truncatedToolOutputBytes,
 			toolOutputArtifacts: this._toolOutputArtifacts,
-			prefixInvalidationsByCause: { ...this._prefixInvalidationsByCause },
-			cacheUsageByKind: this._cacheUsage.snapshot(),
+			prefixInvalidationsByCause: this._requestObserver.prefixInvalidationsByCause,
+			cacheUsageByKind: this._requestObserver.cacheUsageByKind,
 			totalMessages,
 			tokens: {
 				input: usageTotals.input,
