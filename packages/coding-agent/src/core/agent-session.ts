@@ -110,6 +110,7 @@ import { type CacheUsageTotals, CacheUsageTracker, type RequestKind } from "./se
 import {
 	attributeUnannouncedInvalidation,
 	diffRequestPrefix,
+	isProviderWireRewriteCause,
 	type PrefixInvalidationCause,
 	PrefixInvalidationTracker,
 	serializeRequestPrefix,
@@ -409,6 +410,21 @@ export class AgentSession {
 	private readonly _prefixTracker = new PrefixInvalidationTracker();
 	private _lastRequestSnapshot: { serializedPrefix: string; modelKey: string } | undefined;
 	private _prefixInvalidationsByCause: Partial<Record<PrefixInvalidationCause, number>> = {};
+	/**
+	 * Last-seen effective `images.blockImages` value (issue #53). Initialized
+	 * from the first observed request; a flip between observed requests
+	 * announces a `settings-change` invalidation, because the rewrite the
+	 * toggle triggers (`convertToLlmWithBlockImages` replaces images in ALL
+	 * messages, including already-sent ones) is the feature, not a violation.
+	 */
+	private _lastBlockImages: boolean | undefined;
+
+	// Provider wire-rewrite attribution (issue #56). The streamFn observer
+	// injects the onWireRewrite seam callback into the options it forwards, and
+	// the adapter invokes it during request serialization. In-memory only: a
+	// resumed session restarts these counters from zero.
+	private readonly _wireRewriteCausesThisRequest = new Set<string>();
+	private _observedProviderRequests = 0;
 
 	// Cache-economics attribution (issue #42), observed at the same streamFn
 	// boundary. In-memory only: a resumed session restarts these counters
@@ -733,9 +749,14 @@ export class AgentSession {
 	private _installStreamObservers(): void {
 		const inner = this.agent.streamFunction;
 		const monitored = (async (model: Model<any>, context: Context, options?: Parameters<StreamFn>[2]) => {
+			this._observedProviderRequests++;
+			this._wireRewriteCausesThisRequest.clear();
 			const kind = this._claimRequestKind();
 			this._observeProviderRequest(model, context);
-			const stream = await inner(model, context, options);
+			// Inject the wire-rewrite seam callback (issue #56) so the provider
+			// adapter can report wire-only rewrites; requires no changes to how
+			// pi-ai or the sdk stream function builds its defaults.
+			const stream = await inner(model, context, { ...options, onWireRewrite: this._onWireRewrite });
 			this._observeRequestUsage(kind, stream);
 			return stream;
 		}) as StreamFn;
@@ -795,7 +816,7 @@ export class AgentSession {
 	/**
 	 * Compare the outgoing request against the previous one and record any
 	 * invalidation with attribution. Announced invalidations (compaction, model
-	 * switch, tool-set change, prompt override, tree navigation) count silently;
+	 * switch, tool-set change, prompt override, settings change, tree navigation) count silently;
 	 * unannounced ones also emit a `prefix_invalidated` diagnostic event. The
 	 * model identity is compared alongside the prefix bytes because provider
 	 * prompt caches are per model. Surfaces, never crashes: monitor failures
@@ -803,6 +824,16 @@ export class AgentSession {
 	 */
 	private _observeProviderRequest(model: Model<any>, context: Context): void {
 		try {
+			// A blockImages flip rewrites every message's images on this request
+			// (sdk.ts reads the setting per request). Announce BEFORE diffing so
+			// the history rewrite attributes to the setting; the first observed
+			// request only initializes the tracked value.
+			const blockImages = this.settingsManager.getBlockImages();
+			if (this._lastBlockImages !== undefined && this._lastBlockImages !== blockImages) {
+				this._prefixTracker.expectInvalidation("settings-change");
+			}
+			this._lastBlockImages = blockImages;
+
 			const serializedPrefix = serializeRequestPrefix(context);
 			const modelKey = `${model.provider}\0${model.id}`;
 			const previous = this._lastRequestSnapshot;
@@ -833,6 +864,32 @@ export class AgentSession {
 			// Diagnostic only; never block the provider request.
 		}
 	}
+
+	/**
+	 * Consumer for the packages/ai wire-rewrite seam (issue #56). The adapter
+	 * invokes this during request serialization, INSIDE the wrapped stream
+	 * call — i.e. after `_observeProviderRequest` diffed this request against
+	 * the previous one. Unlike the blockImages flip (whose rewrite the next
+	 * context diff sees), these transforms are recomputed from state the
+	 * request context does not carry (auth mode, deferred-tool anchoring) and
+	 * never mutate the context, so they never appear in a later context diff
+	 * either: an `expectInvalidation` latch armed here would be cleared by the
+	 * next stable request without ever being consumed, and it would
+	 * mis-attribute the next unannounced context divergence to the provider.
+	 * The report itself is the only observation point, so it counts directly —
+	 * once per cause per request, and never for the first observed request
+	 * (nothing to diverge from before it).
+	 */
+	private _onWireRewrite = (cause: string): void => {
+		try {
+			if (!isProviderWireRewriteCause(cause)) return;
+			if (this._observedProviderRequests <= 1 || this._wireRewriteCausesThisRequest.has(cause)) return;
+			this._wireRewriteCausesThisRequest.add(cause);
+			this._prefixInvalidationsByCause[cause] = (this._prefixInvalidationsByCause[cause] ?? 0) + 1;
+		} catch {
+			// Diagnostic only; never surface as an unhandled rejection.
+		}
+	};
 
 	// =========================================================================
 	// Event Subscription
@@ -2240,7 +2297,7 @@ export class AgentSession {
 				env,
 				this.settingsManager.getRetrySettings(),
 				this._summarizationRetryCallbacks({ source: "compaction", reason }),
-				undefined, // sessionId
+				this.agent.sessionId,
 			),
 		);
 	}
@@ -3558,7 +3615,9 @@ export class AgentSession {
 						retry: this.settingsManager.getRetrySettings(),
 						callbacks: this._summarizationRetryCallbacks({ source: "branchSummary" }),
 						// Replay the agent's live request prefix so the branch-summary call
-						// hits the provider prompt cache instead of a full uncached context.
+						// hits the provider prompt cache instead of a full uncached context,
+						// under the same session routing id regular requests carry.
+						sessionId: this.agent.sessionId,
 						prefix: {
 							systemPrompt: this.agent.state.systemPrompt,
 							tools: this.agent.state.tools,

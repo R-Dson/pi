@@ -26,9 +26,11 @@ export interface PrefixDiffResult {
 }
 
 /**
- * Attribution recorded (and reported) for an invalidation. The first five are
- * announced by the subsystem that legitimately rewrote the request; the
- * `unexpected-*` causes mean nobody announced the change.
+ * Attribution recorded (and reported) for an invalidation. The first six are
+ * announced by the subsystem that legitimately rewrote the request; the two
+ * `provider-*` causes are reported by the packages/ai wire-rewrite seam when
+ * the adapter rewrites the wire in ways the request context cannot reveal
+ * (issue #56); the `unexpected-*` causes mean nobody announced the change.
  */
 export type PrefixInvalidationCause =
 	| "compaction"
@@ -36,6 +38,9 @@ export type PrefixInvalidationCause =
 	| "tool-set-change"
 	| "extension-override"
 	| "session-reset"
+	| "settings-change"
+	| "provider-deferred-tool-load"
+	| "provider-auth-mode"
 	| "unexpected-system-prompt-change"
 	| "unexpected-tools-change"
 	| "unexpected-model-change"
@@ -44,11 +49,23 @@ export type PrefixInvalidationCause =
 /** Reasons a subsystem may announce before legitimately rewriting the request. */
 export type PrefixInvalidationExpectation = Exclude<
 	PrefixInvalidationCause,
+	| "provider-deferred-tool-load"
+	| "provider-auth-mode"
 	| "unexpected-system-prompt-change"
 	| "unexpected-tools-change"
 	| "unexpected-model-change"
 	| "unexpected-history-change"
 >;
+
+/** Wire-rewrite cause tags reported through the packages/ai `onWireRewrite` seam (issue #56). */
+export const PROVIDER_WIRE_REWRITE_CAUSES = ["provider-deferred-tool-load", "provider-auth-mode"] as const;
+
+export type ProviderWireRewriteCause = (typeof PROVIDER_WIRE_REWRITE_CAUSES)[number];
+
+/** Narrow an `onWireRewrite` cause tag to the causes this monitor attributes; unknown tags stay uncounted. */
+export function isProviderWireRewriteCause(cause: string): cause is ProviderWireRewriteCause {
+	return PROVIDER_WIRE_REWRITE_CAUSES.includes(cause as ProviderWireRewriteCause);
+}
 
 /** Normalized request prefix; `parameters` is the serialized schema. */
 interface SerializedPrefix {
@@ -136,9 +153,9 @@ export function attributeUnannouncedInvalidation(
 
 /**
  * Expectation announcements for the prefix monitor. Subsystems that
- * legitimately rewrite the request (compaction, model switch, tool-set
- * change, prompt override, tree navigation) call {@link expectInvalidation}
- * before their requests go out.
+ * legitimately rewrite the request (compaction, model switch, tool-set,
+ * settings change, prompt override, tree navigation) call
+ * {@link expectInvalidation} before their requests go out.
  *
  * The expectation stays armed until the next stable request, not just the
  * next request: a flow like split-turn compaction issues several diverging

@@ -1,4 +1,5 @@
-import type { Usage } from "@earendil-works/pi-ai/compat";
+import type { SimpleStreamOptions } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, type Usage } from "@earendil-works/pi-ai/compat";
 import { afterEach, describe, expect, it } from "vitest";
 import { createHarness, type Harness } from "./suite/harness.ts";
 import { assistantMsg, userMsg } from "./utilities.ts";
@@ -53,5 +54,29 @@ describe("Branch summary extensions", () => {
 		const stats = harness.session.getSessionStats();
 		expect(stats.tokens).toEqual({ input: 12, output: 22, cacheRead: 30, cacheWrite: 40, total: 104 });
 		expect(stats.cost).toBe(1);
+	});
+
+	it("forwards the session routing id on the branch-summary replay request", async () => {
+		const harness = await createHarness();
+		harnesses.push(harness);
+		harness.session.agent.sessionId = "branch-summary-routing";
+		let requestOptions: SimpleStreamOptions | undefined;
+		harness.setResponses([
+			(_context, options) => {
+				requestOptions = options;
+				return fauxAssistantMessage("branch summary text");
+			},
+		]);
+
+		const targetId = harness.sessionManager.appendMessage(userMsg("first branch"));
+		harness.sessionManager.appendMessage(assistantMsg("first reply"));
+		harness.sessionManager.appendMessage(userMsg("abandoned branch work"));
+		harness.sessionManager.appendMessage(assistantMsg("abandoned reply"));
+
+		const result = await harness.session.navigateTree(targetId, { summarize: true });
+
+		expect(result.cancelled).toBe(false);
+		expect(result.summaryEntry?.type).toBe("branch_summary");
+		expect(requestOptions?.sessionId).toBe("branch-summary-routing");
 	});
 });
