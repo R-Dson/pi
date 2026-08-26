@@ -622,9 +622,11 @@ export async function completeSummarization(
 	// Cache plan phase A: replaying requests must keep the provider's default
 	// cache retention and routing so a byte-identical prefix hits like a regular
 	// request. Standalone requests still opt out to avoid pointless cache writes.
+	// toolChoice is never set (upstream 6b36eb592: some providers reject it —
+	// #8649, #8638); the summarizer instruction already forbids tool output.
 	const requestOptions: SimpleStreamOptions = cacheOptOut
-		? { ...options, cacheRetention: "none", sessionId: options.sessionId ?? uuidv7(), toolChoice: "none" }
-		: { ...options, toolChoice: "none" };
+		? { ...options, cacheRetention: "none", sessionId: options.sessionId ?? uuidv7() }
+		: { ...options };
 	const produce = async (): Promise<AssistantMessage> =>
 		streamFn
 			? (await streamFn(model, context, requestOptions)).result()

@@ -106,7 +106,7 @@ describe("branch summarization", () => {
 		expect(instructionText).not.toContain("<conversation>");
 	});
 
-	it("disables tools for branch summaries", async () => {
+	it("does not override tool choice for branch summaries", async () => {
 		let requestOptions: SimpleStreamOptions | undefined;
 		const streamFn: StreamFn = (_model, _context, options) => {
 			requestOptions = options;
@@ -124,7 +124,7 @@ describe("branch summarization", () => {
 			prefix,
 		});
 
-		expect(requestOptions?.toolChoice).toBe("none");
+		expect(requestOptions?.toolChoice).toBeUndefined();
 	});
 
 	it("forwards the session routing id on the replaying request", async () => {

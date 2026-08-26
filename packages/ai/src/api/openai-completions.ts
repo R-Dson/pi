@@ -328,6 +328,15 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 			timestamp: Date.now(),
 		};
 
+		// `reasoning_details` are replay metadata, not user-visible stream deltas.
+		// Keep them in memory during streaming and serialize once when the block is finalized.
+		let streamedReasoningDetails: OpenAIReasoningDetail[] | undefined;
+		const applyStreamedReasoningDetails = (block: ThinkingContent): void => {
+			if (streamedReasoningDetails !== undefined) {
+				block.thinkingSignature = JSON.stringify(streamedReasoningDetails);
+			}
+		};
+
 		try {
 			const apiKey = getClientApiKey(model.provider, options?.apiKey, options?.headers);
 			const compat = getCompat(model);
@@ -418,6 +427,7 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 						partial: output,
 					});
 				} else if (block.type === "thinking") {
+					applyStreamedReasoningDetails(block);
 					stream.push({
 						type: "thinking_end",
 						contentIndex,
@@ -645,13 +655,12 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 					if (Array.isArray(reasoningDetails)) {
 						for (const detail of reasoningDetails) {
 							if (!isOpenAIReasoningDetail(detail)) continue;
-							const block = ensureThinkingBlock("");
-							const preservedDetails = parseOpenAIReasoningDetails(block.thinkingSignature) ?? [];
-							appendOpenAIReasoningDetail(preservedDetails, detail);
+							ensureThinkingBlock("");
+							streamedReasoningDetails ??= [];
 							// Keep provider replay data in the existing signature slot. OpenRouter streams
 							// reasoning_details as deltas: consecutive text/summary deltas are merged into
 							// logical entries, while encrypted entries remain opaque and discrete.
-							block.thinkingSignature = JSON.stringify(preservedDetails);
+							appendOpenAIReasoningDetail(streamedReasoningDetails, detail);
 						}
 					}
 				}
@@ -681,6 +690,9 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 			stream.end();
 		} catch (error) {
 			for (const block of output.content) {
+				if (block.type === "thinking") {
+					applyStreamedReasoningDetails(block);
+				}
 				delete (block as { index?: number }).index;
 				// Streaming scratch buffers are only used during parsing; never persist them.
 				delete (block as { partialArgs?: string }).partialArgs;
@@ -834,7 +846,7 @@ function buildParams(
 		applyAnthropicCacheControl(messages, params.tools, cacheControl);
 	}
 
-	if (options?.toolChoice && params.tools?.length) {
+	if (options?.toolChoice) {
 		params.tool_choice = options.toolChoice;
 	}
 
