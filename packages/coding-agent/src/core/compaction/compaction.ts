@@ -466,17 +466,13 @@ export function findCutPoint(
 // ============================================================================
 
 /**
- * The agent's live request prefix (system prompt + tool list) replayed by
- * summarization calls (cache plan phase A). Must carry the same content the
- * last regular request used so the provider's prompt cache covers the replayed
- * conversation history.
- */
-/**
- * The request prefix a replaying summarizer call must reproduce byte for byte:
- * the system prompt (with ALL tool definitions) and tool list the model saw on
- * its last regular request. Precondition: a `transformContext` extension that
- * rewrites history breaks this equivalence, and the cache win with it; the
- * prefix-stability monitor (cache plan phase B) surfaces such rewrites.
+ * The request prefix a replaying summarizer call must reproduce byte for byte
+ * (cache plan phase A): the system prompt (with ALL tool definitions) and
+ * tool list the model saw on its last regular request, so the provider's
+ * prompt cache covers the replayed conversation history. Precondition: a
+ * `transformContext` extension that rewrites history breaks this equivalence,
+ * and the cache win with it; the prefix-stability monitor (cache plan phase B)
+ * surfaces such rewrites.
  */
 export interface SummarizationPrefix {
 	systemPrompt: string;
