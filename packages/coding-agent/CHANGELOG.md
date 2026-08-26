@@ -11,6 +11,10 @@
 - Added a runtime prefix-stability monitor: every provider-bound request (regular turns, retries, and the replaying compaction/branch-summary calls) is compared against the previous one; invalidations are attributed to the subsystem that announced them (compaction, model change, tool-set change, extension override, session reset) or reported as unexpected, counted in the new `SessionStats.prefixInvalidationsByCause` field, and unannounced changes emit a `prefix_invalidated` session event with the first diverging message index ([#41](https://github.com/R-Dson/pi/issues/41)).
 - Added cache-economics attribution to session stats: each provider request is attributed to a request kind (regular turn, compaction or branch-summary summarizer call, retry) and its usage aggregated in the new run-scoped `SessionStats.cacheUsageByKind` field; the `/session` panel renders a compact cache block with the run hit rate, per-kind usage, and prefix-invalidation counts ([#42](https://github.com/R-Dson/pi/issues/42)).
 
+### Fixed
+
+- Fixed auto-discovered extensions and skills enumerating in filesystem readdir order: collections now sort by resolved path so a restarted session replays an identical tool list and skills section instead of busting the provider prompt cache. Settings-declared order, package manifests, and builtin tool order are unchanged; the first request after upgrading may miss the cache once ([#49](https://github.com/R-Dson/pi/issues/49)).
+
 ## [0.84.3] - 2026-08-24
 
 ### New Features
