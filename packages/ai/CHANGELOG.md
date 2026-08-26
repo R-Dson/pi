@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added an optional `onWireRewrite` observer to stream options: the Anthropic adapter reports wire-only rewrites the request context cannot reveal — `"provider-deferred-tool-load"` when a request first anchors a deferred tool load at its tool-result marker, and `"provider-auth-mode"` when the auth mode changes between requests ([#56](https://github.com/R-Dson/pi/issues/56)).
+
 ### Fixed
 
 - Fixed OpenAI-compatible Chat Completions requests sending `tool_choice` without tools, which gateways can reject during compaction ([#8607](https://github.com/earendil-works/pi/issues/8607)).

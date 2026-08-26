@@ -873,6 +873,19 @@ function isOAuthToken(apiKey: string): boolean {
 	return apiKey.includes("sk-ant-oat");
 }
 
+/**
+ * Previous wire-shaping state for `onWireRewrite` reporting (issue #56 seam).
+ * The prefix monitor in coding-agent diffs the request context; the transforms
+ * below are recomputed from state the context does not carry (auth mode,
+ * deferred-tool anchoring), so the adapter reports them itself. Module scope:
+ * shared by every session in this process, so interleaved sessions with
+ * different auth modes or tool sets can cross-report a transition. Reports
+ * feed diagnostic counters only.
+ */
+let lastSerializedOAuth: boolean | undefined;
+/** Deferred tool names a previous request already anchored with a tool_reference. */
+const anchoredDeferredToolNames = new Set<string>();
+
 function createClient(
 	model: Model<"anthropic-messages">,
 	apiKey: string | undefined,
@@ -1000,10 +1013,20 @@ function buildParams(
 			compat.allowEmptySignature,
 			deferredToolNames,
 			normalizeToolName,
+			options?.onWireRewrite,
 		),
 		max_tokens: options?.maxTokens ?? model.maxTokens,
 		stream: true,
 	};
+
+	// Report an auth-mode switch before the mode-dependent shaping below runs:
+	// the mode reshapes the whole wire (Claude Code identity system block plus
+	// tool-name canonicalization across tools and history), a full prefix
+	// rewrite the request context alone cannot reveal.
+	if (lastSerializedOAuth !== undefined && lastSerializedOAuth !== isOAuthToken) {
+		options?.onWireRewrite?.("provider-auth-mode");
+	}
+	lastSerializedOAuth = isOAuthToken;
 
 	// For OAuth tokens, we MUST include Claude Code identity
 	if (isOAuthToken) {
@@ -1122,12 +1145,21 @@ function convertToolResult(
 	deferredToolNames: ReadonlySet<string>,
 	loadedToolNames: Set<string>,
 	normalizeToolName: (name: string) => string,
+	onWireRewrite?: (cause: string) => void,
 ): { toolResult: ContentBlockParam; siblingContent: ContentBlockParam[] } {
 	const references: Array<{ type: "tool_reference"; tool_name: string }> = [];
 	for (const name of msg.addedToolNames ?? []) {
 		const normalizedName = normalizeToolName(name);
 		if (!deferredToolNames.has(normalizedName) || loadedToolNames.has(normalizedName)) continue;
 		loadedToolNames.add(normalizedName);
+		// The first request that anchors this deferred load changes the wire
+		// relative to every earlier request (the tool_reference appears and the
+		// tools-array placement shifts); subsequent requests repeat the same
+		// shape. Report the transition only.
+		if (!anchoredDeferredToolNames.has(normalizedName)) {
+			anchoredDeferredToolNames.add(normalizedName);
+			onWireRewrite?.("provider-deferred-tool-load");
+		}
 		references.push({
 			type: "tool_reference",
 			tool_name: isOAuthToken ? toClaudeCodeName(name) : name,
@@ -1158,6 +1190,7 @@ function convertMessages(
 	allowEmptySignature = false,
 	deferredToolNames: ReadonlySet<string> = new Set(),
 	normalizeToolName: (name: string) => string = (name) => name,
+	onWireRewrite?: (cause: string) => void,
 ): MessageParam[] {
 	const params: MessageParam[] = [];
 	const loadedToolNames = new Set<string>();
@@ -1274,6 +1307,7 @@ function convertMessages(
 					deferredToolNames,
 					loadedToolNames,
 					normalizeToolName,
+					onWireRewrite,
 				);
 				toolResults.push(converted.toolResult);
 				siblingContent.push(...converted.siblingContent);
