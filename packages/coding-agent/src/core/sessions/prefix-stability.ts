@@ -26,7 +26,7 @@ export interface PrefixDiffResult {
 }
 
 /**
- * Attribution recorded (and reported) for an invalidation. The first five are
+ * Attribution recorded (and reported) for an invalidation. The first six are
  * announced by the subsystem that legitimately rewrote the request; the
  * `unexpected-*` causes mean nobody announced the change.
  */
@@ -36,6 +36,7 @@ export type PrefixInvalidationCause =
 	| "tool-set-change"
 	| "extension-override"
 	| "session-reset"
+	| "settings-change"
 	| "unexpected-system-prompt-change"
 	| "unexpected-tools-change"
 	| "unexpected-model-change"
@@ -136,9 +137,9 @@ export function attributeUnannouncedInvalidation(
 
 /**
  * Expectation announcements for the prefix monitor. Subsystems that
- * legitimately rewrite the request (compaction, model switch, tool-set
- * change, prompt override, tree navigation) call {@link expectInvalidation}
- * before their requests go out.
+ * legitimately rewrite the request (compaction, model switch, tool-set,
+ * settings change, prompt override, tree navigation) call
+ * {@link expectInvalidation} before their requests go out.
  *
  * The expectation stays armed until the next stable request, not just the
  * next request: a flow like split-turn compaction issues several diverging

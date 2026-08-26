@@ -409,6 +409,14 @@ export class AgentSession {
 	private readonly _prefixTracker = new PrefixInvalidationTracker();
 	private _lastRequestSnapshot: { serializedPrefix: string; modelKey: string } | undefined;
 	private _prefixInvalidationsByCause: Partial<Record<PrefixInvalidationCause, number>> = {};
+	/**
+	 * Last-seen effective `images.blockImages` value (issue #53). Initialized
+	 * from the first observed request; a flip between observed requests
+	 * announces a `settings-change` invalidation, because the rewrite the
+	 * toggle triggers (`convertToLlmWithBlockImages` replaces images in ALL
+	 * messages, including already-sent ones) is the feature, not a violation.
+	 */
+	private _lastBlockImages: boolean | undefined;
 
 	// Cache-economics attribution (issue #42), observed at the same streamFn
 	// boundary. In-memory only: a resumed session restarts these counters
@@ -795,7 +803,7 @@ export class AgentSession {
 	/**
 	 * Compare the outgoing request against the previous one and record any
 	 * invalidation with attribution. Announced invalidations (compaction, model
-	 * switch, tool-set change, prompt override, tree navigation) count silently;
+	 * switch, tool-set change, prompt override, settings change, tree navigation) count silently;
 	 * unannounced ones also emit a `prefix_invalidated` diagnostic event. The
 	 * model identity is compared alongside the prefix bytes because provider
 	 * prompt caches are per model. Surfaces, never crashes: monitor failures
@@ -803,6 +811,16 @@ export class AgentSession {
 	 */
 	private _observeProviderRequest(model: Model<any>, context: Context): void {
 		try {
+			// A blockImages flip rewrites every message's images on this request
+			// (sdk.ts reads the setting per request). Announce BEFORE diffing so
+			// the history rewrite attributes to the setting; the first observed
+			// request only initializes the tracked value.
+			const blockImages = this.settingsManager.getBlockImages();
+			if (this._lastBlockImages !== undefined && this._lastBlockImages !== blockImages) {
+				this._prefixTracker.expectInvalidation("settings-change");
+			}
+			this._lastBlockImages = blockImages;
+
 			const serializedPrefix = serializeRequestPrefix(context);
 			const modelKey = `${model.provider}\0${model.id}`;
 			const previous = this._lastRequestSnapshot;
