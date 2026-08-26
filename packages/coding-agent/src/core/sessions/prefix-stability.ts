@@ -74,11 +74,6 @@ interface SerializedPrefix {
 	messages: Message[];
 }
 
-/**
- * Serialize a provider request prefix for comparison. Same normalization the
- * stable-prefix tests assert by hand: systemPrompt, tools as
- * `[{name, JSON(parameters)}]` in order, and cloned messages.
- */
 /** Normalize tools as `[{name, JSON(parameters)}]` in order — the shared
  * tool-identity convention for prefix comparisons. */
 export function serializeTools(tools: Context["tools"]): Array<{ name: string; parameters: string }> {
@@ -88,6 +83,11 @@ export function serializeTools(tools: Context["tools"]): Array<{ name: string; p
 	}));
 }
 
+/**
+ * Serialize a provider request prefix for comparison: systemPrompt, tools in
+ * order, and the message array as-is (referenced, not cloned — the result is
+ * only ever compared, never mutated).
+ */
 export function serializeRequestPrefix(context: Pick<Context, "systemPrompt" | "tools" | "messages">): string {
 	const prefix: SerializedPrefix = {
 		systemPrompt: context.systemPrompt,
@@ -111,6 +111,15 @@ export function serializeRequestPrefix(context: Pick<Context, "systemPrompt" | "
 export function diffRequestPrefix(previous: string | undefined, next: string): PrefixDiffResult {
 	if (previous === undefined) {
 		return { stable: true, cause: "reset" };
+	}
+
+	// Fast path: `messages` is the last serialized field, so an append-only
+	// request repeats every byte of the previous serialization except the
+	// closing `]}`. A byte-prefix match therefore proves stability without
+	// parsing; only a mismatch needs the structural diff below to attribute
+	// the divergence.
+	if (next.startsWith(previous.slice(0, -2))) {
+		return { stable: true, cause: "append-only" };
 	}
 
 	const previousPrefix = JSON.parse(previous) as SerializedPrefix;

@@ -14,9 +14,8 @@ import type { Usage } from "@earendil-works/pi-ai/compat";
 
 /**
  * The kind of provider request a usage record belongs to. Current flows
- * produce "turn", "compaction", "branch-summary", and "retry".
- * reserved for request paths that are neither regular turns nor announced
- * summarization flows (none exist today).
+ * produce "turn", "compaction", "branch-summary", and "retry"; kinds are
+ * added when a flow that produces them exists.
  */
 export type RequestKind = "turn" | "compaction" | "branch-summary" | "retry";
 
