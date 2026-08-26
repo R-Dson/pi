@@ -280,10 +280,6 @@ function mergeHeaders(...headerSources: (ProviderHeaders | undefined)[]): Provid
 	return merged;
 }
 
-function mergeClientHeaders(...headerSources: (ProviderHeaders | undefined)[]): ProviderHeaders {
-	return mergeHeaders(...headerSources);
-}
-
 function hasHeader(headers: ProviderHeaders | undefined, name: string): boolean {
 	if (!headers) return false;
 	const expected = name.toLowerCase();
@@ -877,14 +873,28 @@ function isOAuthToken(apiKey: string): boolean {
  * Previous wire-shaping state for `onWireRewrite` reporting (issue #56 seam).
  * The prefix monitor in coding-agent diffs the request context; the transforms
  * below are recomputed from state the context does not carry (auth mode,
- * deferred-tool anchoring), so the adapter reports them itself. Module scope:
- * shared by every session in this process, so interleaved sessions with
- * different auth modes or tool sets can cross-report a transition. Reports
- * feed diagnostic counters only.
+ * deferred-tool anchoring), so the adapter reports them itself. Keyed weakly
+ * on the observer callback: the coding-agent monitor injects one stable
+ * callback per session, so interleaved sessions track their own transitions,
+ * state dies with the observer, and requests without an observer track
+ * nothing. Reports feed diagnostic counters only.
  */
-let lastSerializedOAuth: boolean | undefined;
-/** Deferred tool names a previous request already anchored with a tool_reference. */
-const anchoredDeferredToolNames = new Set<string>();
+interface WireRewriteState {
+	lastOAuth: boolean | undefined;
+	/** Deferred tool names an earlier request of this observer already anchored with a tool_reference. */
+	anchoredDeferredToolNames: Set<string>;
+}
+const wireRewriteStates = new WeakMap<(cause: string) => void, WireRewriteState>();
+
+function wireRewriteStateFor(onWireRewrite: ((cause: string) => void) | undefined): WireRewriteState | undefined {
+	if (!onWireRewrite) return undefined;
+	let state = wireRewriteStates.get(onWireRewrite);
+	if (!state) {
+		state = { lastOAuth: undefined, anchoredDeferredToolNames: new Set() };
+		wireRewriteStates.set(onWireRewrite, state);
+	}
+	return state;
+}
 
 function createClient(
 	model: Model<"anthropic-messages">,
@@ -918,7 +928,7 @@ function createClient(
 			baseURL: model.baseUrl,
 			dangerouslyAllowBrowser: true,
 			fetch,
-			defaultHeaders: mergeClientHeaders(
+			defaultHeaders: mergeHeaders(
 				{
 					accept: "application/json",
 					"anthropic-dangerous-direct-browser-access": "true",
@@ -941,7 +951,7 @@ function createClient(
 			baseURL: model.baseUrl,
 			dangerouslyAllowBrowser: true,
 			fetch,
-			defaultHeaders: mergeClientHeaders(
+			defaultHeaders: mergeHeaders(
 				{
 					accept: "application/json",
 					"anthropic-dangerous-direct-browser-access": "true",
@@ -960,7 +970,7 @@ function createClient(
 	// API key or header-owned auth.
 	const sessionAffinityHeaders: ProviderHeaders =
 		sessionId && getAnthropicCompat(model).sendSessionAffinityHeaders ? { "x-session-affinity": sessionId } : {};
-	const defaultHeaders = mergeClientHeaders(
+	const defaultHeaders = mergeHeaders(
 		{
 			accept: "application/json",
 			"anthropic-dangerous-direct-browser-access": "true",
@@ -1023,10 +1033,13 @@ function buildParams(
 	// the mode reshapes the whole wire (Claude Code identity system block plus
 	// tool-name canonicalization across tools and history), a full prefix
 	// rewrite the request context alone cannot reveal.
-	if (lastSerializedOAuth !== undefined && lastSerializedOAuth !== isOAuthToken) {
+	const wireRewriteState = wireRewriteStateFor(options?.onWireRewrite);
+	if (wireRewriteState?.lastOAuth !== undefined && wireRewriteState.lastOAuth !== isOAuthToken) {
 		options?.onWireRewrite?.("provider-auth-mode");
 	}
-	lastSerializedOAuth = isOAuthToken;
+	if (wireRewriteState) {
+		wireRewriteState.lastOAuth = isOAuthToken;
+	}
 
 	// For OAuth tokens, we MUST include Claude Code identity
 	if (isOAuthToken) {
@@ -1156,8 +1169,9 @@ function convertToolResult(
 		// relative to every earlier request (the tool_reference appears and the
 		// tools-array placement shifts); subsequent requests repeat the same
 		// shape. Report the transition only.
-		if (!anchoredDeferredToolNames.has(normalizedName)) {
-			anchoredDeferredToolNames.add(normalizedName);
+		const wireRewriteState = wireRewriteStateFor(onWireRewrite);
+		if (wireRewriteState && !wireRewriteState.anchoredDeferredToolNames.has(normalizedName)) {
+			wireRewriteState.anchoredDeferredToolNames.add(normalizedName);
 			onWireRewrite?.("provider-deferred-tool-load");
 		}
 		references.push({
