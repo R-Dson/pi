@@ -100,9 +100,10 @@ interface CapturedRequest {
 	systemPrompt: string | undefined;
 	tools: Array<{ name: string; parameters: string }>;
 	messages: Message[];
+	sessionId: string | undefined;
 }
 
-function captureRequest(context: Context): CapturedRequest {
+function captureRequest(context: Context, options?: SimpleStreamOptions): CapturedRequest {
 	return {
 		systemPrompt: context.systemPrompt,
 		tools: (context.tools ?? []).map((tool) => ({
@@ -110,6 +111,7 @@ function captureRequest(context: Context): CapturedRequest {
 			parameters: JSON.stringify(tool.parameters),
 		})),
 		messages: structuredClone(context.messages),
+		sessionId: options?.sessionId,
 	};
 }
 
@@ -328,10 +330,13 @@ describe("AgentSession compaction characterization", () => {
 			settings: { compaction: { keepRecentTokens: 10 } },
 		});
 		harnesses.push(harness);
+		// The routing id regular requests carry (wired from the session manager
+		// in sdk.ts); the summarizer replay must forward the same value.
+		harness.session.agent.sessionId = "prefix-replay-routing";
 
 		const captures: CapturedRequest[] = [];
-		const capture = (reply: string) => (_context: Context) => {
-			captures.push(captureRequest(_context));
+		const capture = (reply: string) => (_context: Context, options: SimpleStreamOptions | undefined) => {
+			captures.push(captureRequest(_context, options));
 			return fauxAssistantMessage(reply);
 		};
 		harness.setResponses([capture("first reply"), capture("second reply"), capture("## Goal\ncheckpoint summary")]);
@@ -370,6 +375,12 @@ describe("AgentSession compaction characterization", () => {
 		expect(instructionText).toContain("Use this EXACT format:");
 		expect(instructionText).not.toContain("<conversation>");
 		expect(instructionText).not.toContain("[User]:");
+
+		// Routing id: the summarizer request carries the same session routing id
+		// as the regular request (prompt-cache key affinity on OpenAI-family
+		// providers), never a minted one.
+		expect(regularRequest.sessionId).toBe("prefix-replay-routing");
+		expect(summarizerRequest.sessionId).toBe(regularRequest.sessionId);
 	});
 
 	it("persists usage from pi-generated manual compaction", async () => {

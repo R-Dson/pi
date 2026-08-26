@@ -2240,7 +2240,7 @@ export class AgentSession {
 				env,
 				this.settingsManager.getRetrySettings(),
 				this._summarizationRetryCallbacks({ source: "compaction", reason }),
-				undefined, // sessionId
+				this.agent.sessionId,
 			),
 		);
 	}
@@ -3558,7 +3558,9 @@ export class AgentSession {
 						retry: this.settingsManager.getRetrySettings(),
 						callbacks: this._summarizationRetryCallbacks({ source: "branchSummary" }),
 						// Replay the agent's live request prefix so the branch-summary call
-						// hits the provider prompt cache instead of a full uncached context.
+						// hits the provider prompt cache instead of a full uncached context,
+						// under the same session routing id regular requests carry.
+						sessionId: this.agent.sessionId,
 						prefix: {
 							systemPrompt: this.agent.state.systemPrompt,
 							tools: this.agent.state.tools,
