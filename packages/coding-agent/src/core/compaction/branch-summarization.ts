@@ -92,6 +92,13 @@ export interface GenerateBranchSummaryOptions {
 	/** Optional callbacks for retry reporting (e.g. TUI retry indicators). */
 	callbacks?: RetryCallbacks;
 	/**
+	 * Routing session id carried on the replaying request (cache plan phase A):
+	 * the same value the session's regular requests use, so providers with
+	 * session-scoped cache routing (OpenAI's `prompt_cache_key` and friends)
+	 * keep the replay on the regular requests' cache. Never minted here.
+	 */
+	sessionId?: string;
+	/**
 	 * Agent request prefix (system prompt + tool list) replayed as the summarizer
 	 * request prefix (cache plan phase A). Must be the same content the last
 	 * regular request used.
@@ -316,6 +323,7 @@ export async function generateBranchSummary(
 		streamFn,
 		retry,
 		callbacks,
+		sessionId,
 		prefix,
 	} = options;
 
@@ -360,7 +368,7 @@ export async function generateBranchSummary(
 			},
 		],
 	};
-	const requestOptions: SimpleStreamOptions = { apiKey, headers, env, signal, maxTokens: 2048 };
+	const requestOptions: SimpleStreamOptions = { apiKey, headers, env, signal, maxTokens: 2048, sessionId };
 	const response = await completeSummarization(model, context, requestOptions, streamFn, retry, callbacks, false);
 
 	// Check if aborted or errored
