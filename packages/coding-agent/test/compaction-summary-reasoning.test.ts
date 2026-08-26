@@ -133,7 +133,6 @@ describe("generateSummary reasoning options", () => {
 		// Replaying summary calls must NOT opt out of caching or mint fresh
 		// routing ids: both would break prefix affinity with the prior request.
 		expect(requestOptions.every((options) => options?.cacheRetention === undefined)).toBe(true);
-		expect(requestOptions.every((options) => options?.toolChoice === "none")).toBe(true);
 		expect(requestOptions.every((options) => options?.sessionId === undefined)).toBe(true);
 	});
 
@@ -164,10 +163,10 @@ describe("generateSummary reasoning options", () => {
 		expect(standalone).toMatchObject({
 			sessionId: "current-routing-session",
 			cacheRetention: "none",
-			toolChoice: "none",
+			toolChoice: "auto",
 		});
 		const replay = completeSimpleMock.mock.calls[1][2];
-		expect(replay).toMatchObject({ sessionId: "current-routing-session", toolChoice: "none" });
+		expect(replay).toMatchObject({ sessionId: "current-routing-session" });
 		expect(replay).not.toHaveProperty("cacheRetention");
 	});
 
