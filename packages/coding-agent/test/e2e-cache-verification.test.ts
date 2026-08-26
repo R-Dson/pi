@@ -33,7 +33,7 @@ import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Agent, type StreamFn } from "@earendil-works/pi-agent-core";
-import type { CacheRetention, ToolChoice } from "@earendil-works/pi-ai";
+import type { CacheRetention } from "@earendil-works/pi-ai";
 import { type AssistantMessage, getModel, streamSimple } from "@earendil-works/pi-ai/compat";
 import { getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -70,9 +70,10 @@ const CACHE_TEST_PADDING = [
 
 /** Final request options of one provider request, recorded under the session's stream observers. */
 interface ObservedRequest {
-	toolChoice: ToolChoice | undefined;
 	cacheRetention: CacheRetention | undefined;
 	sessionId: string | undefined;
+	/** Text of the final message, serialized; summarizer calls end with the persona instruction. */
+	lastMessageText: string;
 }
 
 describe.skipIf(!API_KEY)("E2E cache verification (real provider)", () => {
@@ -108,10 +109,15 @@ describe.skipIf(!API_KEY)("E2E cache verification (real provider)", () => {
 		// marker keeps AgentSession's default-stream detection seeing streamSimple
 		// through both wrapper layers.
 		const recordingStreamFn: StreamFn = async (requestModel, context, options) => {
+			const lastMessage = context.messages.at(-1);
+			const lastContent = lastMessage?.content;
 			observedRequests.push({
-				toolChoice: options?.toolChoice,
 				cacheRetention: options?.cacheRetention,
 				sessionId: options?.sessionId,
+				lastMessageText:
+					typeof lastContent === "string"
+						? lastContent
+						: (lastContent ?? []).map((block) => (block.type === "text" ? block.text : "")).join("\n"),
 			});
 			return streamSimple(requestModel, context, options);
 		};
@@ -211,10 +217,13 @@ describe.skipIf(!API_KEY)("E2E cache verification (real provider)", () => {
 		expect(unexpected).toEqual([]);
 
 		// And the replaying summarizer request(s) carried the session routing
-		// id: `toolChoice: "none"` marks summarizer calls; the standalone
-		// split-turn request additionally opts out with `cacheRetention:
-		// "none"` and is excluded (it deliberately takes a throwaway id).
-		const summarizerRequests = observedRequests.filter((r) => r.toolChoice === "none");
+		// id: summarizer calls are marked by the persona instruction as their
+		// final message (upstream removed the toolChoice override in 6b36eb592);
+		// the standalone split-turn request additionally opts out with
+		// `cacheRetention: "none"` and is excluded (it takes a throwaway id).
+		const summarizerRequests = observedRequests.filter((r) =>
+			r.lastMessageText.includes("Act as a summarizer for this single turn"),
+		);
 		const replaying = summarizerRequests.filter((r) => r.cacheRetention !== "none");
 		expect(replaying.length).toBeGreaterThanOrEqual(1);
 		for (const request of replaying) {
@@ -222,7 +231,7 @@ describe.skipIf(!API_KEY)("E2E cache verification (real provider)", () => {
 		}
 		// Regular turns carry the same routing id.
 		for (const request of observedRequests) {
-			if (request.toolChoice !== "none") {
+			if (!request.lastMessageText.includes("Act as a summarizer for this single turn")) {
 				expect(request.sessionId).toBe(session.sessionId);
 			}
 		}
