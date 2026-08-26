@@ -1,5 +1,6 @@
 /**
- * Runtime prefix-stability monitor tests (cache plan phase B, issue #41).
+ * Runtime prefix-stability monitor tests (cache plan phase B, issue #41;
+ * settings-change announcements from issue #53).
  *
  * Seam: AgentSession's public surface — getSessionStats() counters and the
  * `prefix_invalidated` diagnostic event. The monitor sits on the session's
@@ -146,6 +147,39 @@ describe("runtime prefix-stability monitor (issue #41)", () => {
 		// The request bytes are unchanged by a model switch; the invalidation comes
 		// from the model identity comparison and the setModel announcement.
 		expect(harness.session.getSessionStats().prefixInvalidationsByCause).toEqual({ "model-change": 1 });
+		expect(harness.eventsOfType("prefix_invalidated")).toHaveLength(0);
+	});
+
+	it("attributes a mid-session blockImages toggle to settings-change without a diagnostic event", async () => {
+		const harness = await createHarness();
+		harnesses.push(harness);
+		harness.setResponses([fauxAssistantMessage("first reply"), fauxAssistantMessage("second reply")]);
+
+		// The first request carries a real image; the toggle rewrites it (and the
+		// rest of history) into placeholders on the next request.
+		await harness.session.prompt("describe this", {
+			images: [{ type: "image", mimeType: "image/png", data: "ZmFrZQ==" }],
+		});
+		harness.settingsManager.setBlockImages(true);
+		await harness.session.prompt("second turn");
+
+		expect(harness.session.getSessionStats().prefixInvalidationsByCause).toEqual({ "settings-change": 1 });
+		expect(harness.eventsOfType("prefix_invalidated")).toHaveLength(0);
+	});
+
+	it("records nothing for a blockImages toggle that leaves the request unchanged", async () => {
+		const harness = await createHarness();
+		harnesses.push(harness);
+		harness.setResponses([fauxAssistantMessage("first reply"), fauxAssistantMessage("second reply")]);
+
+		// No images in history: the value flip still announces, but the request
+		// bytes are unchanged (append-only), so nothing is counted and the
+		// announcement does not leak past the stable request.
+		await harness.session.prompt("first turn");
+		harness.settingsManager.setBlockImages(true);
+		await harness.session.prompt("second turn");
+
+		expect(harness.session.getSessionStats().prefixInvalidationsByCause).toEqual({});
 		expect(harness.eventsOfType("prefix_invalidated")).toHaveLength(0);
 	});
 });

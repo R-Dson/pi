@@ -18,7 +18,7 @@ import { registerFauxProvider, streamSimple } from "@earendil-works/pi-ai/compat
 import { AgentSession, type AgentSessionEvent } from "../../src/core/agent-session.ts";
 import { AuthStorage } from "../../src/core/auth-storage.ts";
 import type { ExtensionRunner } from "../../src/core/extensions/index.ts";
-import { convertToLlm } from "../../src/core/messages.ts";
+import { convertToLlm, replaceImagesWithPlaceholders } from "../../src/core/messages.ts";
 import { SessionManager } from "../../src/core/session-manager.ts";
 import type { Settings } from "../../src/core/settings-manager.ts";
 import { SettingsManager } from "../../src/core/settings-manager.ts";
@@ -150,7 +150,13 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 			systemPrompt: options.systemPrompt ?? "You are a test assistant.",
 			tools: [],
 		},
-		convertToLlm,
+		// Mirror the production assembly (sdk.ts's convertToLlmWithBlockImages):
+		// the images.blockImages gate is read per request so mid-session setting
+		// changes take effect exactly as they do in real sessions.
+		convertToLlm: (messages) => {
+			const converted = convertToLlm(messages);
+			return settingsManager.getBlockImages() ? replaceImagesWithPlaceholders(converted) : converted;
+		},
 		onPayload: async (payload) => {
 			const runner = extensionRunnerRef.current;
 			if (!runner?.hasHandlers("before_provider_request")) {
