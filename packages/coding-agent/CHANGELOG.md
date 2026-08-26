@@ -16,6 +16,10 @@
 
 - Fixed inherited extension messages sent with `triggerTurn: false` while the agent is running being inserted between a tool call and its result, which made providers that validate message order reject the replayed history. They are now appended once the turn's tool results are in ([#8537](https://github.com/earendil-works/pi/issues/8537)).
 
+### Fixed
+
+- Fixed auto-discovered extensions and skills enumerating in filesystem readdir order: collections now sort by resolved path so a restarted session replays an identical tool list and skills section instead of busting the provider prompt cache. Settings-declared order, package manifests, and builtin tool order are unchanged; the first request after upgrading may miss the cache once ([#49](https://github.com/R-Dson/pi/issues/49)).
+
 ## [0.84.3] - 2026-08-24
 
 ### New Features

@@ -297,6 +297,92 @@ Content`,
 		});
 	});
 
+	describe("canonical ordering of auto-discovered resources", () => {
+		it("should enumerate auto-discovered extensions in path order regardless of directory creation order", async () => {
+			const extDir = join(agentDir, "extensions");
+			mkdirSync(extDir, { recursive: true });
+			// Small directories enumerate in creation order, so readdir returns
+			// [zeta.ts, mid.ts, alpha.ts] until the collection sorts by path.
+			for (const name of ["zeta.ts", "mid.ts", "alpha.ts"]) {
+				writeFileSync(join(extDir, name), "export default function() {}");
+			}
+
+			const result = await packageManager.resolve();
+
+			expect(result.extensions.map((r) => r.path)).toEqual([
+				join(extDir, "alpha.ts"),
+				join(extDir, "mid.ts"),
+				join(extDir, "zeta.ts"),
+			]);
+		});
+
+		it("should enumerate auto-discovered skills in path order within each precedence rank", async () => {
+			const previousHome = process.env.HOME;
+			process.env.HOME = tempDir;
+
+			try {
+				const userSkillsDir = join(agentDir, "skills");
+				mkdirSync(join(userSkillsDir, "zeta-skill"), { recursive: true });
+				writeFileSync(join(userSkillsDir, "zeta-skill", "SKILL.md"), "---\nname: zeta\ndescription: z\n---\n");
+				mkdirSync(join(userSkillsDir, "alpha-skill"), { recursive: true });
+				writeFileSync(join(userSkillsDir, "alpha-skill", "SKILL.md"), "---\nname: alpha\ndescription: a\n---\n");
+				writeFileSync(join(userSkillsDir, "m-file.md"), "---\nname: m-file\ndescription: m\n---\n");
+
+				const projectSkillsDir = join(tempDir, ".pi", "skills");
+				mkdirSync(join(projectSkillsDir, "y-skill"), { recursive: true });
+				writeFileSync(join(projectSkillsDir, "y-skill", "SKILL.md"), "---\nname: y\ndescription: y\n---\n");
+				mkdirSync(join(projectSkillsDir, "b-skill"), { recursive: true });
+				writeFileSync(join(projectSkillsDir, "b-skill", "SKILL.md"), "---\nname: b\ndescription: b\n---\n");
+
+				const result = await packageManager.resolve();
+
+				// Project rank first, then user rank; alphabetical by path within each rank.
+				expect(result.skills.map((r) => r.path)).toEqual([
+					join(projectSkillsDir, "b-skill", "SKILL.md"),
+					join(projectSkillsDir, "y-skill", "SKILL.md"),
+					join(userSkillsDir, "alpha-skill", "SKILL.md"),
+					join(userSkillsDir, "m-file.md"),
+					join(userSkillsDir, "zeta-skill", "SKILL.md"),
+				]);
+			} finally {
+				if (previousHome === undefined) {
+					delete process.env.HOME;
+				} else {
+					process.env.HOME = previousHome;
+				}
+			}
+		});
+
+		it("should sort extension entries from nested package directories by resolved path", async () => {
+			const extDir = join(agentDir, "extensions");
+			mkdirSync(join(extDir, "zeta-pkg"), { recursive: true });
+			writeFileSync(join(extDir, "zeta-pkg", "index.ts"), "export default function() {}");
+			mkdirSync(join(extDir, "alpha-pkg"), { recursive: true });
+			writeFileSync(join(extDir, "alpha-pkg", "index.ts"), "export default function() {}");
+			writeFileSync(join(extDir, "m-root.ts"), "export default function() {}");
+
+			const result = await packageManager.resolve();
+
+			expect(result.extensions.map((r) => r.path)).toEqual([
+				join(extDir, "alpha-pkg", "index.ts"),
+				join(extDir, "m-root.ts"),
+				join(extDir, "zeta-pkg", "index.ts"),
+			]);
+		});
+
+		it("should preserve settings-declared extension order over path sorting", async () => {
+			const extDir = join(agentDir, "extensions");
+			mkdirSync(extDir, { recursive: true });
+			writeFileSync(join(extDir, "zeta.ts"), "export default function() {}");
+			writeFileSync(join(extDir, "alpha.ts"), "export default function() {}");
+			settingsManager.setExtensionPaths(["extensions/zeta.ts", "extensions/alpha.ts"]);
+
+			const result = await packageManager.resolve();
+
+			expect(result.extensions.map((r) => r.path)).toEqual([join(extDir, "zeta.ts"), join(extDir, "alpha.ts")]);
+		});
+	});
+
 	describe("auto-discovered skill metadata", () => {
 		it("should use the agent dir as baseDir for user .pi/agent skills", async () => {
 			const skillPath = join(agentDir, "skills", "user-pi", "SKILL.md");
