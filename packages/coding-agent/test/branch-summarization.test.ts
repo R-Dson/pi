@@ -127,6 +127,28 @@ describe("branch summarization", () => {
 		expect(requestOptions?.toolChoice).toBe("none");
 	});
 
+	it("forwards the session routing id on the replaying request", async () => {
+		let requestOptions: SimpleStreamOptions | undefined;
+		const streamFn: StreamFn = (_model, _context, options) => {
+			requestOptions = options;
+			const stream = createAssistantMessageEventStream();
+			queueMicrotask(() =>
+				stream.push({ type: "done", reason: "stop", message: response([{ type: "text", text: "summary" }]) }),
+			);
+			return stream;
+		};
+
+		await generateBranchSummary(entries, {
+			model,
+			signal: new AbortController().signal,
+			streamFn,
+			prefix,
+			sessionId: "branch-summary-routing",
+		});
+
+		expect(requestOptions?.sessionId).toBe("branch-summary-routing");
+	});
+
 	it("rejects tool calls from branch summaries", async () => {
 		const streamFn: StreamFn = () => {
 			const stream = createAssistantMessageEventStream();
