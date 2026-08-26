@@ -189,6 +189,7 @@ describe("Anthropic wire-rewrite observer (issue #56 seam)", () => {
 
 	it("does not report auth-mode changes for bearer-header auth", async () => {
 		const causes: string[] = [];
+		const observer = (cause: string) => causes.push(cause);
 		const model = getModel("anthropic", "claude-opus-4-6");
 		const context: Context = { messages: [makeUserMessage("Hello")] };
 
@@ -196,11 +197,30 @@ describe("Anthropic wire-rewrite observer (issue #56 seam)", () => {
 		// OAuth shaping, so it must not fire the auth-mode rewrite.
 		await streamSimple(model, context, {
 			headers: { Authorization: "Bearer gateway-token" },
-			onWireRewrite: (cause) => causes.push(cause),
+			onWireRewrite: observer,
 		}).result();
 		await streamSimple(model, context, {
 			headers: { Authorization: "Bearer other-gateway-token" },
-			onWireRewrite: (cause: string) => causes.push(cause),
+			onWireRewrite: observer,
+		}).result();
+
+		expect(causes).toEqual([]);
+	});
+
+	it("observes nothing when each request passes a fresh closure", async () => {
+		const causes: string[] = [];
+		const model = getModel("anthropic", "claude-opus-4-6");
+		const context: Context = { messages: [makeUserMessage("Hello")] };
+
+		// The documented contract: transition tracking is keyed on the
+		// callback, so a fresh closure per request only ever initializes.
+		await streamSimple(model, context, {
+			apiKey: "anthropic-key",
+			onWireRewrite: (cause) => causes.push(cause),
+		}).result();
+		await streamSimple(model, context, {
+			apiKey: "sk-ant-oat-test",
+			onWireRewrite: (cause) => causes.push(cause),
 		}).result();
 
 		expect(causes).toEqual([]);
