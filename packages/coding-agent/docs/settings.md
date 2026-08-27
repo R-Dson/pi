@@ -218,6 +218,8 @@ Windows paths in JSON must use forward slashes or escaped backslashes:
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
 | `defaultTools` | string[] | - | Built-in tools enabled initially. When omitted, Pi uses its standard defaults |
+| `tools.maxToolOutputBytes` | number | `204800` | Max UTF-8 bytes of tool result text sent to the model before it is replaced by a head+tail excerpt. The full output spills to a file under `<sessionDir>/artifacts/<sessionId>/` (persisted sessions). `0` or less disables the cap |
+| `tools.permissions` | object | - | Tool permission policy. `mode`: `"legacy"` (default, no checks) or `"policy"`. `rules`: ordered rule list. `profile`: `"code"` (default), `"review"`, or `"minimal"` |
 
 `defaultTools` selects the built-in tools enabled at startup. Extension and SDK custom tools remain enabled. Available built-ins are `read`, `bash`, `powershell`, `edit`, `write`, `grep`, `find`, and `ls`:
 
@@ -236,6 +238,33 @@ On Windows, select `powershell` instead of `bash`, or include both:
 ```
 
 An empty array starts with no built-in tools while preserving extension and SDK custom tools. `--tools` replaces this behavior with a strict allowlist for all tools, `--no-tools` disables all tools, and `--no-builtin-tools` disables the built-in defaults. `--exclude-tools` filters the resulting list. A project `defaultTools` array replaces the global array.
+
+`tools.maxToolOutputBytes` bounds what the model sees, not what the tool did: over the cap the model receives the first ~60% and last ~40% of the budget around a marker reporting the omitted bytes and the artifact path. Built-in tools (`read`, `grep`, `bash`) truncate their own output already, so in practice the cap governs extension and MCP tools.
+
+`tools.permissions` rules run before each tool call in policy mode. A rule matches when every field it specifies matches the call:
+
+- `tool`: exact tool name, e.g. `"bash"`
+- `capability`: exact capability (`"filesystem.read"`, `"filesystem.write"`, `"process.execute"`, `"network.access"`, `"session.modify"`); custom tools without a capability never match capability rules
+- `path`: path-segment prefix of the call's `path` argument; `/repo/src` matches `/repo/src/a.ts` but not `/repo/src-other/a.ts`
+- `command`: string prefix of the call's `command` argument; `"git"` matches `"git push"`
+- `effect`: `"allow"`, `"ask"`, or `"deny"` (required)
+
+Precedence is deny > ask > allow; among matching rules of the winning kind, the last one wins. Calls that match nothing are allowed. `ask` blocks the call with a reason explaining how to allow it; there is no approval prompt yet. A `deny` rule with `hide: true` also removes the tool from the model's tool list, so the model cannot attempt it.
+
+Profiles are rule presets that user `rules` override: `code` (default, no preset rules), `review` (deny and hide writes and process execution), `minimal` (deny and hide `bash`, `powershell`, `edit`, `write`). Profiles apply only in policy mode.
+
+```json
+{
+  "tools": {
+    "permissions": {
+      "mode": "policy",
+      "rules": [{ "tool": "bash", "command": "git push", "effect": "deny" }]
+    }
+  }
+}
+```
+
+This blocks `git push` and changes nothing else.
 
 ### Sessions
 

@@ -3,16 +3,9 @@ import {
 	evaluatePermission,
 	type PermissionDecision,
 	type PermissionRule,
+	TOOL_CAPABILITIES,
 	type ToolCapability,
 } from "../src/core/tools/permissions.ts";
-
-const ALL_CAPABILITIES: ToolCapability[] = [
-	"filesystem.read",
-	"filesystem.write",
-	"process.execute",
-	"network.access",
-	"session.modify",
-];
 
 function evaluate(
 	rules: PermissionRule[],
@@ -414,8 +407,10 @@ describe("evaluatePermission hide flag and match reporting", () => {
 });
 
 describe("evaluatePermission capability coverage", () => {
-	it("accepts every documented capability value", () => {
-		for (const capability of ALL_CAPABILITIES) {
+	it("accepts every capability value the module exports", () => {
+		// Derived from TOOL_CAPABILITIES so adding a capability here fails this
+		// test until the evaluator proves it matches like the existing ones.
+		for (const capability of TOOL_CAPABILITIES) {
 			const decision = evaluate([{ capability, effect: "ask" }], {
 				toolName: "tool",
 				capability,

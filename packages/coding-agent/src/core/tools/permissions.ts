@@ -42,13 +42,17 @@
  * mode — legacy mode ignores them entirely.
  */
 
+/** Capability values a tool can exercise, used by permission policy evaluation. */
+export const TOOL_CAPABILITIES = [
+	"filesystem.read",
+	"filesystem.write",
+	"process.execute",
+	"network.access",
+	"session.modify",
+] as const;
+
 /** Capability a tool exercises, used by permission policy evaluation. */
-export type ToolCapability =
-	| "filesystem.read"
-	| "filesystem.write"
-	| "process.execute"
-	| "network.access"
-	| "session.modify";
+export type ToolCapability = (typeof TOOL_CAPABILITIES)[number];
 
 /** Effect kinds, strongest first. */
 const EFFECT_STRENGTH: Record<PermissionRule["effect"], number> = {
