@@ -49,6 +49,7 @@ export {
 	type PermissionRule,
 	type ProfileConfig,
 	resolveProfileConfig,
+	TOOL_CAPABILITIES,
 	type ToolCapability,
 	type ToolProfile,
 } from "./permissions.ts";

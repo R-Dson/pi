@@ -1998,6 +1998,19 @@ pi.registerTool({
 
 **Early termination:** Return `terminate: true` from `execute()` to hint that the automatic follow-up LLM call should be skipped after the current tool batch. This only takes effect when every finalized tool result in that batch is terminating. See [examples/extensions/structured-output.ts](../examples/extensions/structured-output.ts) for a minimal example where the agent ends on a final structured-output tool call.
 
+**Timeouts:** Add `timeoutMs` to the definition to cap one `execute()` call in milliseconds. Past the deadline pi aborts the tool's signal and records a terminal error result (`Tool <name> timed out after Nms`); the run continues. Declare it on tools that may never settle on their own, such as network requests or spawned processes. Built-in tools bound themselves already (for example the `bash` tool's `timeout` parameter), so this field matters for extension and MCP tools.
+
+```typescript
+pi.registerTool({
+  name: "fetch_stats",
+  // ...
+  timeoutMs: 30_000, // one execute() call gets at most 30s
+  async execute() {
+    /* ... */
+  },
+});
+```
+
 ```typescript
 // Correct: throw to signal an error
 async execute(toolCallId, params) {

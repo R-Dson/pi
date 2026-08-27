@@ -171,6 +171,24 @@ describe("SessionManager append and tree traversal", () => {
 			expect(path).toHaveLength(2);
 			expect(path.map((e) => e.id)).toEqual([id1, id2]);
 		});
+
+		it("terminates on cyclic ancestry and returns the entries below the cycle", () => {
+			const session = SessionManager.inMemory();
+
+			const id1 = session.appendMessage(userMsg("1"));
+			const id2 = session.appendMessage(assistantMsg("2"));
+			const _id3 = session.appendMessage(userMsg("3"));
+			const id4 = session.appendMessage(assistantMsg("4"));
+
+			// Close a two-entry cycle (hand-edited file shape): entries share
+			// objects with the manager's index, so repointing entry 1's parent at
+			// entry 2 leaves the walk alternating 1 <-> 2 forever without a guard.
+			const entries = session.getEntries();
+			entries[0].parentId = id2;
+
+			const path = session.getBranch();
+			expect(path.map((e) => e.id)).toEqual([id1, id2, _id3, id4]);
+		});
 	});
 
 	describe("getTree", () => {
