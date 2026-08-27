@@ -95,6 +95,12 @@ A long session lives or dies by the provider prompt cache: a cached input token 
 - Auto-discovered extensions and skills sort by path instead of filesystem order, so a restarted session replays the same tool list rather than busting the cache. Expect exactly one first-request miss after upgrading.
 - `/session` shows where the cache went: usage split by request kind (turn, compaction, branch summary, retry), hit rate, and prefix invalidations with attribution. A runtime monitor watches every outgoing request; when something rewrites history without announcing itself, a misbehaving extension, a settings toggle, a provider-side rewrite, the invalidation is counted under its cause.
 
+### Core vs. extensions
+
+Pi's rule is a minimal core: if a feature can be an extension, it should be. The fork keeps that rule and adds one of its own: every fork feature stays in core only as far as pi's extension API allows, and the [ledger](docs/fork/upstream-integration.md) records what it would take to move each one out.
+
+The split today: session repair, deterministic ordering, the compaction replay, and the request monitor are core because they sit on the resume and provider-request paths, which extensions cannot reach. The output cap and the permission policies are core because pi's extension API has no settings access and no slot for a fork-shipped default-on extension — but their seams are public: `tool_result` handlers replace content, `tool_call` handlers block with a reason, and `setActiveTools` filters the model's tool list. [`examples/extensions/read-only-mode.ts`](packages/coding-agent/examples/extensions/read-only-mode.ts) is a working read-only review pass built on those seams alone, with no fork code and no settings. If pi grows settings access for extensions, the policies move out of core ([#70](https://github.com/R-Dson/pi/issues/70)).
+
 ## Relationship to upstream
 
 Pi is developed by [Mario Zechner (badlogic)](https://github.com/badlogic) and [earendil works](https://github.com/earendil-works). This fork builds on their work rather than diverging from it:
