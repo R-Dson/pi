@@ -16,6 +16,7 @@ import {
 	createCustomMessage,
 } from "../messages.ts";
 import type { ReadonlySessionManager, SessionEntry } from "../session-manager.ts";
+import { INTERRUPTED_TOOL_RESULT_TEXT } from "../sessions/recovery.ts";
 import {
 	completeSummarization,
 	estimateTokens,
@@ -169,12 +170,12 @@ export function collectEntriesForBranchSummary(
 /**
  * Extract AgentMessage from a session entry.
  * Similar to getMessageFromEntry in compaction.ts but also handles compaction entries.
+ * Tool results are included: the replay sends structured messages, and a strict
+ * provider (Anthropic) rejects a tool_use whose tool_result never arrives.
  */
 function getMessageFromEntry(entry: SessionEntry): AgentMessage | undefined {
 	switch (entry.type) {
 		case "message":
-			// Skip tool results - context is in assistant's tool call
-			if (entry.message.role === "toolResult") return undefined;
 			return entry.message;
 
 		case "custom_message":
@@ -196,10 +197,80 @@ function getMessageFromEntry(entry: SessionEntry): AgentMessage | undefined {
 	}
 }
 
+/** A replay unit: messages that must enter (or leave) the budget window together. */
+interface BranchUnit {
+	messages: AgentMessage[];
+	/** Compaction/branch-summary entries keep the fit-anyway budget exception. */
+	important: boolean;
+}
+
+/**
+ * Group branch messages into replay units: an assistant message carrying tool
+ * calls and its trailing tool results replay together or not at all, because a
+ * strict provider (Anthropic) rejects a tool_use whose tool_result is missing —
+ * splitting a pair at the budget edge would rebuild exactly that. A dangling
+ * call at a branch tail (session died mid-turn) gets one synthesized terminal
+ * result per unanswered id, mirroring core/sessions/recovery.ts; an orphan
+ * result whose call fell outside the window is dropped rather than replayed
+ * unpaired.
+ */
+function groupBranchUnits(entries: SessionEntry[]): BranchUnit[] {
+	const units: BranchUnit[] = [];
+	for (const entry of entries) {
+		const message = getMessageFromEntry(entry);
+		if (!message) continue;
+
+		if (message.role === "toolResult") {
+			const last = units[units.length - 1];
+			const head = last?.messages[0];
+			if (
+				head?.role === "assistant" &&
+				head.content.some((block) => block.type === "toolCall" && block.id === message.toolCallId)
+			) {
+				last.messages.push(message);
+				continue;
+			}
+			// The calling message is not the last unit's head (call outside the
+			// window, or no such call). Replaying the result alone would be
+			// just as invalid as replaying the call alone.
+			continue;
+		}
+
+		units.push({
+			messages: [message],
+			important: entry.type === "compaction" || entry.type === "branch_summary",
+		});
+	}
+
+	for (const unit of units) {
+		const head = unit.messages[0];
+		if (head?.role !== "assistant") continue;
+		const answered = new Set(
+			unit.messages
+				.filter(
+					(message): message is Extract<AgentMessage, { role: "toolResult" }> => message.role === "toolResult",
+				)
+				.map((message) => message.toolCallId),
+		);
+		for (const block of head.content) {
+			if (block.type !== "toolCall" || answered.has(block.id)) continue;
+			unit.messages.push({
+				role: "toolResult",
+				toolCallId: block.id,
+				toolName: block.name,
+				content: [{ type: "text", text: INTERRUPTED_TOOL_RESULT_TEXT }],
+				isError: true,
+				timestamp: head.timestamp,
+			});
+		}
+	}
+	return units;
+}
+
 /**
  * Prepare entries for summarization with token budget.
  *
- * Walks entries from NEWEST to OLDEST, adding messages until we hit the token budget.
+ * Walks units from NEWEST to OLDEST, adding messages until we hit the token budget.
  * This ensures we keep the most recent context when the branch is too long.
  *
  * Also collects file operations from:
@@ -232,31 +303,27 @@ export function prepareBranchEntries(entries: SessionEntry[], tokenBudget: numbe
 		}
 	}
 
-	// Second pass: walk from newest to oldest, adding messages until token budget
-	for (let i = entries.length - 1; i >= 0; i--) {
-		const entry = entries[i];
-		const message = getMessageFromEntry(entry);
-		if (!message) continue;
-
-		// Extract file ops from assistant messages (tool calls)
-		extractFileOpsFromMessage(message, fileOps);
-
-		const tokens = estimateTokens(message);
+	// Second pass: walk units from newest to oldest, adding whole units until
+	// the token budget — never a partial call/result pair.
+	const units = groupBranchUnits(entries);
+	for (let i = units.length - 1; i >= 0; i--) {
+		const unit = units[i];
+		const tokens = unit.messages.reduce((sum, message) => sum + estimateTokens(message), 0);
 
 		// Check budget before adding
 		if (tokenBudget > 0 && totalTokens + tokens > tokenBudget) {
 			// If this is a summary entry, try to fit it anyway as it's important context
-			if (entry.type === "compaction" || entry.type === "branch_summary") {
-				if (totalTokens < tokenBudget * 0.9) {
-					messages.unshift(message);
-					totalTokens += tokens;
-				}
+			if (unit.important && totalTokens < tokenBudget * 0.9) {
+				for (const message of unit.messages) extractFileOpsFromMessage(message, fileOps);
+				messages.unshift(...unit.messages);
+				totalTokens += tokens;
 			}
 			// Stop - we've hit the budget
 			break;
 		}
 
-		messages.unshift(message);
+		for (const message of unit.messages) extractFileOpsFromMessage(message, fileOps);
+		messages.unshift(...unit.messages);
 		totalTokens += tokens;
 	}
 
