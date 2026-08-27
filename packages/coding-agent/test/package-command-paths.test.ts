@@ -577,8 +577,9 @@ if(args.includes("root")) console.log(path.join(prefix,"lib","node_modules"));
 		writeFileSync(
 			fakeNpmPath,
 			`const fs=require("node:fs"),path=require("node:path"),args=process.argv.slice(2),prefix=args[args.indexOf("--prefix")+1];
-	if(args.includes("root")) console.log(path.join(prefix,"lib","node_modules"));
-	else fs.writeFileSync(${JSON.stringify(recordPath)},JSON.stringify(args));
+if(args.includes("root")) console.log(path.join(prefix,"lib","node_modules"));
+else if(args.includes("--version")) console.log("12.3.4");
+else fs.writeFileSync(${JSON.stringify(recordPath)},JSON.stringify(args));
 `,
 		);
 		writeFileSync(
@@ -608,7 +609,60 @@ if(args.includes("root")) console.log(path.join(prefix,"lib","node_modules"));
 			expect(recordedArgs).toContain("https://github.com/R-Dson/pi/releases/latest/download/pi-fork.tgz");
 			expect(recordedArgs).not.toContain(`${PACKAGE_NAME}@latest`);
 			expect(recordedArgs).not.toContain("@earendil-works/pi-coding-agent@latest");
+			// Issue #74: npm >= 12 needs --allow-remote=all for the tarball spec.
+			expect(recordedArgs).toContain("--allow-remote=all");
 			expect(stdout).toContain("Updated pi to the latest fork release");
+		} finally {
+			logSpy.mockRestore();
+			errorSpy.mockRestore();
+		}
+	});
+
+	it("self-updates GitHub Packages installs from the fork registry", async () => {
+		const globalPrefix = join(tempDir, "fork-registry-global-prefix");
+		const selfPackageDir = join(globalPrefix, "lib", "node_modules", "@r-dson", "pi-coding-agent");
+		const fakeNpmPath = join(tempDir, "fake-fork-registry-npm.cjs");
+		const recordPath = join(tempDir, "fork-registry-self-update.json");
+		mkdirSync(selfPackageDir, { recursive: true });
+		writeFileSync(
+			join(selfPackageDir, "package.json"),
+			JSON.stringify({ name: "@r-dson/pi-coding-agent", version: "0.84.2-fork.2" }),
+		);
+		writeFileSync(
+			fakeNpmPath,
+			`const fs=require("node:fs"),path=require("node:path"),args=process.argv.slice(2),prefix=args[args.indexOf("--prefix")+1];
+if(args.includes("root")) console.log(path.join(prefix,"lib","node_modules"));
+else fs.writeFileSync(${JSON.stringify(recordPath)},JSON.stringify(args));
+`,
+		);
+		writeFileSync(
+			join(agentDir, "settings.json"),
+			JSON.stringify({ npmCommand: [originalExecPath, fakeNpmPath, "--prefix", globalPrefix] }, null, 2),
+		);
+		process.env.PI_PACKAGE_DIR = selfPackageDir;
+		Object.defineProperty(process, "execPath", {
+			value: join(selfPackageDir, "dist", "cli.js"),
+			configurable: true,
+		});
+		const fetchMock = vi.fn();
+		vi.stubGlobal("fetch", fetchMock);
+
+		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+		try {
+			await expect(runPackageCommandDirectly(["update", "--self"])).resolves.toBeUndefined();
+
+			expect(process.exitCode).toBeUndefined();
+			expect(errorSpy).not.toHaveBeenCalled();
+			// Issue #74: the GitHub Packages channel stays on the fork registry.
+			expect(fetchMock).not.toHaveBeenCalled();
+			const stdout = logSpy.mock.calls.map(([message]) => String(message)).join("\n");
+			const recordedArgs = JSON.parse(readFileSync(recordPath, "utf-8")) as string[];
+			expect(recordedArgs).toContain("@r-dson/pi-coding-agent@latest");
+			expect(recordedArgs).not.toContain(`${PACKAGE_NAME}@latest`);
+			expect(recordedArgs).not.toContain("@earendil-works/pi-coding-agent@latest");
+			expect(stdout).toContain("Updated pi to the latest fork registry release");
 		} finally {
 			logSpy.mockRestore();
 			errorSpy.mockRestore();

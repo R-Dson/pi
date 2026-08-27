@@ -22,6 +22,7 @@ import { DefaultResourceLoader } from "./core/resource-loader.ts";
 import {
 	classifySelfUpdateInstall,
 	FORK_INSTALL_COMMAND,
+	FORK_REGISTRY_PACKAGE_NAME,
 	FORK_STANDALONE_TARBALL_URL,
 	resolveRunningPackageName,
 } from "./core/self-update-source.ts";
@@ -766,9 +767,11 @@ export async function handlePackageCommand(
 						process.exitCode = 1;
 						return true;
 					}
-					// Issue #29: a fork standalone install updates from the fork's
-					// GitHub release tarball, never from npmjs (which would replace
-					// the fork with the upstream package).
+					// Issues #29/#74: fork installs update from the fork's own
+					// channels — the GitHub release tarball for standalone
+					// installs, the @r-dson registry for GitHub Packages
+					// installs — never from npmjs under the upstream package
+					// name (which would replace the fork with upstream pi).
 					const runningPackageName = resolveRunningPackageName();
 					if (runningPackageName === "" && installMethod !== "unknown") {
 						// The running install's manifest could not be read. Never fall
@@ -794,7 +797,11 @@ export async function handlePackageCommand(
 					const selfUpdateTarget = {
 						packageName: PACKAGE_NAME,
 						installSpec:
-							installKind === "fork-standalone" ? FORK_STANDALONE_TARBALL_URL : `${PACKAGE_NAME}@latest`,
+							installKind === "fork-standalone"
+								? FORK_STANDALONE_TARBALL_URL
+								: installKind === "fork-registry"
+									? `${FORK_REGISTRY_PACKAGE_NAME}@latest`
+									: `${PACKAGE_NAME}@latest`,
 					};
 					const selfUpdateCommand = getSelfUpdateCommand(PACKAGE_NAME, selfUpdateNpmCommand, selfUpdateTarget);
 					if (!selfUpdateCommand) {
@@ -827,7 +834,9 @@ export async function handlePackageCommand(
 						chalk.green(
 							installKind === "fork-standalone"
 								? `Updated ${APP_NAME} to the latest fork release`
-								: `Updated ${APP_NAME} to the latest version`,
+								: installKind === "fork-registry"
+									? `Updated ${APP_NAME} to the latest fork registry release`
+									: `Updated ${APP_NAME} to the latest version`,
 						),
 					);
 				}

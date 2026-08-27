@@ -71,6 +71,29 @@ function makeSelfUpdateCommandStep(command: string, args: string[]): SelfUpdateC
 	};
 }
 
+export function parseNpmMajorVersion(version: string): number | undefined {
+	const match = /^v?(\d+)/.exec(version.trim());
+	return match ? Number.parseInt(match[1], 10) : undefined;
+}
+
+function isRemoteTarballInstallSpec(installSpec: string): boolean {
+	return /^https?:\/\//.test(installSpec);
+}
+
+/**
+ * npm >= 12 blocks remote-tarball install specs by default (EALLOWREMOTE)
+ * while npm < 12 errors on the unknown option, so --allow-remote=all is
+ * needed only for remote tarball URLs on new npm. Unparseable version output
+ * fails open (no flag) to keep old npm working.
+ */
+export function npmAllowRemoteArgsForInstallSpec(installSpec: string, npmVersionOutput: string | undefined): string[] {
+	if (!isRemoteTarballInstallSpec(installSpec)) {
+		return [];
+	}
+	const major = npmVersionOutput === undefined ? undefined : parseNpmMajorVersion(npmVersionOutput);
+	return major !== undefined && major >= 12 ? ["--allow-remote=all"] : [];
+}
+
 export function detectInstallMethod(): InstallMethod {
 	if (isBunBinary) {
 		return "bun-binary";
@@ -168,12 +191,18 @@ function getSelfUpdateCommandForMethod(
 			const [command = "npm", ...npmArgs] = npmCommand ?? [];
 			const inferred = npmCommand?.length ? undefined : getInferredNpmInstall();
 			const prefixArgs = [...npmArgs, ...(inferred ? ["--prefix", inferred.prefix] : [])];
+			// Probe the running npm's version once, and only for remote tarball
+			// specs (registry specs never need --allow-remote).
+			const npmVersionOutput = isRemoteTarballInstallSpec(target.installSpec)
+				? readCommandOutput(command, [...npmArgs, "--version"])
+				: undefined;
 			const installStep = makeSelfUpdateCommandStep(command, [
 				...prefixArgs,
 				"install",
 				"-g",
 				"--ignore-scripts",
 				"--min-release-age=0",
+				...npmAllowRemoteArgsForInstallSpec(target.installSpec, npmVersionOutput),
 				target.installSpec,
 			]);
 			const uninstallStep =
