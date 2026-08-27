@@ -653,6 +653,9 @@ export class AgentSession {
 			baseRules,
 			// Unmatched calls proceed: rules opt calls out, policy mode is not default-deny.
 			defaultEffect: "allow",
+			// Relative tool args resolve against the session cwd, so path rules
+			// must normalize against it too.
+			cwd: this._cwd,
 		});
 
 		if (decision.kind === "allow") {
@@ -1142,6 +1145,7 @@ export class AgentSession {
 			rules,
 			baseRules,
 			defaultEffect: "allow",
+			cwd: this._cwd,
 		});
 		return decision.kind === "deny" && decision.hidden;
 	}
