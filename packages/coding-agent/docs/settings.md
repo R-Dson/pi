@@ -241,12 +241,12 @@ An empty array starts with no built-in tools while preserving extension and SDK 
 
 `tools.maxToolOutputBytes` bounds what the model sees, not what the tool did: over the cap the model receives the first ~60% and last ~40% of the budget around a marker reporting the omitted bytes and the artifact path. Built-in tools (`read`, `grep`, `bash`) truncate their own output already, so in practice the cap governs extension and MCP tools.
 
-`tools.permissions` rules run before each tool call in policy mode. A rule matches when every field it specifies matches the call:
+`tools.permissions` rules run before each tool call in policy mode. A rule matches when every field it specifies matches the call. An empty-string field counts as unspecified:
 
 - `tool`: exact tool name, e.g. `"bash"`
 - `capability`: exact capability (`"filesystem.read"`, `"filesystem.write"`, `"process.execute"`, `"network.access"`, `"session.modify"`); custom tools without a capability never match capability rules
-- `path`: path-segment prefix of the call's `path` argument; `/repo/src` matches `/repo/src/a.ts` but not `/repo/src-other/a.ts`
-- `command`: string prefix of the call's `command` argument; `"git"` matches `"git push"`
+- `path`: normalized prefix of the call's `path` argument; `~` expands, and rule and argument resolve against the session directory, so `/repo/src` matches `/repo/src/a.ts` and (from `/repo`) `src/a.ts`, but not `/repo/src/../escape` or `/repo/src-other/a.ts`
+- `command`: token-boundary prefix of the call's `command` argument; `"git"` matches `"git push"` but not `"gitx evil"`. `command` allow rules stay coarse — anything appended after the allowed command still matches — so prefer them for deny/ask; use containerization for real isolation
 - `effect`: `"allow"`, `"ask"`, or `"deny"` (required)
 
 Precedence is deny > ask > allow; among matching rules of the winning kind, the last one wins. Calls that match nothing are allowed. `ask` blocks the call with a reason explaining how to allow it; there is no approval prompt yet. A `deny` rule with `hide: true` also removes the tool from the model's tool list, so the model cannot attempt it.
