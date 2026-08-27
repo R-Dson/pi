@@ -1012,8 +1012,13 @@ export class SessionManager {
 	getBranch(fromId?: string): SessionEntry[] {
 		const path: SessionEntry[] = [];
 		const startId = fromId ?? this.leafId;
+		// Cyclic ancestry (hand-edited files) must terminate: a revisit is treated
+		// like a broken parent reference, ending the chain there. Mirrors the
+		// visited-set guard in core/sessions/projector.ts buildSessionPath.
+		const visited = new Set<string>();
 		let current = startId ? this.byId.get(startId) : undefined;
-		while (current) {
+		while (current && !visited.has(current.id)) {
+			visited.add(current.id);
 			path.push(current);
 			current = current.parentId ? this.byId.get(current.parentId) : undefined;
 		}

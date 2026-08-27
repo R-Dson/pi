@@ -208,6 +208,46 @@ describe("AgentSession dynamic tool registration", () => {
 		session.dispose();
 	});
 
+	it("forwards timeoutMs from a registered tool definition to the runtime tool", async () => {
+		const settingsManager = SettingsManager.create(tempDir, agentDir);
+		const sessionManager = SessionManager.inMemory();
+		const resourceLoader = new DefaultResourceLoader({
+			cwd: tempDir,
+			agentDir,
+			settingsManager,
+			extensionFactories: [
+				(pi) => {
+					pi.registerTool({
+						name: "timed_tool",
+						label: "Timed Tool",
+						description: "Tool with a per-call deadline",
+						parameters: Type.Object({}),
+						timeoutMs: 30_000,
+						execute: async () => ({
+							content: [{ type: "text", text: "ok" }],
+							details: {},
+						}),
+					});
+				},
+			],
+		});
+		await resourceLoader.reload();
+
+		const { session } = await createAgentSession({
+			cwd: tempDir,
+			agentDir,
+			model: getModel("anthropic", "claude-sonnet-4-5")!,
+			settingsManager,
+			sessionManager,
+			resourceLoader,
+		});
+
+		const agentTool = session.agent.state.tools.find((tool) => tool.name === "timed_tool");
+		expect(agentTool?.timeoutMs).toBe(30_000);
+
+		session.dispose();
+	});
+
 	it("keeps custom tools active but omits them from available tools when promptSnippet is not provided", async () => {
 		const settingsManager = SettingsManager.create(tempDir, agentDir);
 		const sessionManager = SessionManager.inMemory();

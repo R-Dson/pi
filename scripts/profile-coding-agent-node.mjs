@@ -37,7 +37,7 @@ Options:
   --agent-dir <dir>      Use a specific PI_CODING_AGENT_DIR for the benchmark run
   --isolated-agent-dir   Use a fresh temporary agent dir instead of the normal one
   --bundle               Build and profile the bundled Node entrypoint instead of dist/cli.js
-  --no-offline           Do not force PI_OFFLINE=1 / PI_SKIP_VERSION_CHECK=1
+  --no-offline           Do not force PI_OFFLINE=1
   --skip-build           Reuse the selected build output without rebuilding first (Node only)
   --cpu-profile          Write CPU profiles for benchmark runs
   --help                 Show this help
@@ -392,7 +392,6 @@ function createBenchmarkEnv(options, isolatedAgentDir) {
 	}
 	if (options.offline) {
 		env.PI_OFFLINE = "1";
-		env.PI_SKIP_VERSION_CHECK = "1";
 	}
 	return env;
 }
