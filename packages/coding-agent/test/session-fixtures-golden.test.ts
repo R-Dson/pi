@@ -1,3 +1,5 @@
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { TextContent, ToolCall } from "@earendil-works/pi-ai";
 import { join } from "path";
@@ -21,8 +23,8 @@ import {
 
 const FIXTURES_DIR = join(__dirname, "fixtures", "sessions");
 
-function loadFixtureEntries(name: string): SessionEntry[] {
-	const fileEntries = loadEntriesFromFile(join(FIXTURES_DIR, name));
+function loadFixtureEntries(name: string, dir: string = FIXTURES_DIR): SessionEntry[] {
+	const fileEntries = loadEntriesFromFile(join(dir, name));
 	expect(fileEntries.length).toBeGreaterThan(0);
 	const header = fileEntries[0];
 	expect(header.type).toBe("session");
@@ -272,9 +274,18 @@ describe("golden session fixture projection", () => {
 
 	describe("truncated-tail.jsonl", () => {
 		it("silently drops the torn final line (current behavior, to improve when session validation lands)", () => {
-			const truncated = loadFixtureEntries("truncated-tail.jsonl");
-			const normal = loadFixtureEntries("normal.jsonl");
-			expect(truncated).toEqual(normal.slice(0, -1));
+			// loadEntriesFromFile repairs a missing trailing newline in place
+			// (upstream 0b5ee5d8b), so load a disposable copy to keep the
+			// committed fixture torn.
+			const dir = mkdtempSync(join(tmpdir(), "pi-golden-fixtures-"));
+			writeFileSync(join(dir, "truncated-tail.jsonl"), readFileSync(join(FIXTURES_DIR, "truncated-tail.jsonl")));
+			try {
+				const truncated = loadFixtureEntries("truncated-tail.jsonl", dir);
+				const normal = loadFixtureEntries("normal.jsonl");
+				expect(truncated).toEqual(normal.slice(0, -1));
+			} finally {
+				rmSync(dir, { recursive: true, force: true });
+			}
 		});
 	});
 
