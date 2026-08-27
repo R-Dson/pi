@@ -14,6 +14,7 @@
 - Added cache-economics attribution to session stats: each provider request is attributed to a request kind (regular turn, compaction or branch-summary summarizer call, retry) and its usage aggregated in the new run-scoped `SessionStats.cacheUsageByKind` field; the `/session` panel renders a compact cache block with the run hit rate, per-kind usage, and prefix-invalidation counts ([#42](https://github.com/R-Dson/pi/issues/42)).
 - Added inherited RPC `clear_queue` to retrieve and remove queued steering and follow-up messages ([#8432](https://github.com/earendil-works/pi/issues/8432)).
 - Added inherited environment variables and advanced settings for overriding auto-detected terminal hyperlink, image, and truecolor capabilities ([#8665](https://github.com/earendil-works/pi/issues/8665)).
+- Added `capability` to `ToolInfo` (the extension API's `getAllTools` view), so extensions can match tools by capability exactly like the core permission policies; `examples/extensions/read-only-mode.ts` demonstrates a review pass built on the public seams ([#69](https://github.com/R-Dson/pi/issues/69)).
 
 ### Fixed
 

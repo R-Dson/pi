@@ -6,15 +6,18 @@
  * after the filter ran) is blocked at call time with a reason the model can
  * relay to the user.
  *
- * Built entirely on pi's public extension API — the same `setActiveTools`,
+ * Built on pi's public extension API — the same `setActiveTools`,
  * `getAllTools`, and `tool_call` seams the fork's opt-in permission policies
- * use in core. No fork code and no settings are involved; copy this file into
- * ~/.pi/extensions/ (or a project's .pi/extensions/) to use it.
+ * use in core. Capability matching needs the fork's `ToolInfo.capability`;
+ * on upstream pi the same file runs with the builtin-name fallback. Copy it
+ * into ~/.pi/agent/extensions/ (global) or a project's .pi/extensions/
+ * (trusted projects only) to use it; no settings are involved.
  *
  * Limitations that come with staying on the public API: tools without
  * capability metadata and without a known name (some MCP or custom tools) are
  * neither hidden nor blocked, and the filter re-applies on session_start
- * (startup, resume, fork, reload) rather than on every registry change.
+ * (every reason: startup, new, resume, fork, reload) rather than on every
+ * registry change.
  */
 
 import type { ExtensionAPI, ToolCallEvent, ToolInfo } from "@earendil-works/pi-coding-agent";
