@@ -7,16 +7,16 @@ The fork distributes `pi` from GitHub only. Every release attaches a self-contai
 Releases are manual:
 
 1. Open the repo's **Actions** tab and select **Fork Release**.
-2. Click **Run workflow**, choose `main` as the branch.
+2. Click **Run workflow**, choose `main` as the branch (the workflow refuses to release from any other ref).
 3. Optionally fill **Release version**. Leave it empty for the default `<upstream-version>-fork.<run number>` (for example `0.84.2-fork.42`).
 
-The workflow builds the workspace, stages every public package with its manifest rewritten to the fork scope, publishes to GitHub Packages, then tags `v<version>` and creates a GitHub Release listing the published packages and attaching `pi-fork.tgz`. It never modifies tracked files and creates no commits; the only git object it produces is the tag.
+The workflow builds the workspace, verifies the `v<version>` tag does not already exist (before anything is published, so a colliding version fails while the run is still retryable), stages every public package with its manifest rewritten to the fork scope, publishes to GitHub Packages, tags `v<version>`, builds the standalone tarball, and creates the GitHub Release as a draft that is published and marked latest only after `pi-fork.tgz` is attached — `releases/latest/download/pi-fork.tgz` therefore never resolves to a release without its asset. It never modifies tracked files and creates no commits; the only git object it produces is the tag.
 
 ## Install (recommended: standalone, no configuration)
 
 The standalone tarball carries the coding-agent release bundle — all workspace packages are already inlined into it — plus only the dependencies that resolve from the public npm registry. No `.npmrc` mapping, no PAT.
 
-The install script is the zero-friction path — it verifies `npm` and `curl`, downloads the tarball to a temp file with `curl`, and installs it with `npm install -g --ignore-scripts` (works on every npm version):
+The install script is the zero-friction path — it verifies `npm` and `curl`, downloads the tarball to a temp file with `curl`, and installs it with `npm install -g --ignore-scripts` (works on every npm version). When you pass an explicit version older than the installed `pi`, it prints a downgrade warning naming both versions before installing (warning only — downgrades stay possible; there is no tty to prompt on under `curl | sh`):
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/R-Dson/pi/main/scripts/install-fork.sh | sh
@@ -70,8 +70,8 @@ Note: OAuth tokens from `gh auth login` are rejected by the npm registry; it mus
 
 - All public workspace packages (9 total), renamed `@earendil-works/X` → `@r-dson/X`. The rename happens at publish time only; repo manifests stay identical to upstream so merges stay clean.
 - Inter-package dependencies are rewritten to the `@r-dson` scope and pinned to the exact release version, so a fork install cannot accidentally resolve upstream `@earendil-works` packages from npmjs.org.
-- `pi-fork.tgz`, the standalone tarball: a `@r-dson/pi-standalone` package assembled from the coding-agent bundle. Its manifest is derived mechanically from `packages/coding-agent/package.json` — dependencies minus the `@earendil-works/*` entries (verbatim pins), `optionalDependencies` and `engines` copied — so there is no curated dependency list to keep in sync.
-- `npm-shrinkwrap.json` and `install-lock` are excluded from registry publishes: the shrinkwrap pins `@earendil-works/*` names that do not exist on the fork registry. Dependency integrity comes from the exact version pins in the rewritten manifests instead.
+- `pi-fork.tgz`, the standalone tarball: a `@r-dson/pi-standalone` package assembled from the coding-agent bundle. Its manifest is derived mechanically from `packages/coding-agent/package.json` — dependencies minus the `@earendil-works/*` entries (verbatim pins), `optionalDependencies`, `overrides`, and `engines` copied — so there is no curated dependency list to keep in sync.
+- `npm-shrinkwrap.json` and `install-lock` are excluded from registry publishes: the shrinkwrap pins `@earendil-works/*` names that do not exist on the fork registry. Dependency integrity is partial by design: direct dependencies are pinned exactly in the rewritten manifests, the carried `overrides` block pins the known-bad transitives (`protobufjs`, `rimraf`), and no shrinkwrap ships, so full transitive resolution is npm's.
 - Staging also drops `node_modules`, `src`, `test`, and dotfiles; the staged `.npmrc` is written by the publish script itself.
 
 ## Versioning scheme
