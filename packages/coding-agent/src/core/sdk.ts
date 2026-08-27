@@ -196,8 +196,10 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 
 	// A crash mid-tool-execution leaves the final assistant message with tool
 	// calls and no results; strict providers reject tool_use without tool_result.
-	// Append one terminal error toolResult per dangling call (append-only) before
-	// the messages are adopted, then re-derive the context so it includes them.
+	// Append one terminal error toolResult per dangling call (append-only, and
+	// only where the results stay adjacent to their tool_use — see recovery.ts)
+	// before the messages are adopted, then re-derive the context so it includes
+	// them; nothing appended means nothing to re-derive.
 	if (hasExistingSession && appendInterruptedTurnResults(sessionManager).length > 0) {
 		existingSession = sessionManager.buildSessionContext();
 	}
