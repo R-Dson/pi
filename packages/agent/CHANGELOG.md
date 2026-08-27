@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added optional per-tool `timeoutMs`: past the deadline the agent loop aborts the tool's signal and records a terminal timeout error result, and the run continues; tools without a deadline behave as before ([#8](https://github.com/R-Dson/pi/issues/8)).
+
 ### Fixed
 
 - Fixed Windows `NodeExecutionEnv` aborts crashing when `taskkill.exe` is unavailable on `PATH` ([#6596](https://github.com/earendil-works/pi/issues/6596)).
