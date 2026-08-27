@@ -4,7 +4,7 @@
 
 ### Added
 
-- Added an optional `onWireRewrite` observer to stream options: the Anthropic adapter reports wire-only rewrites the request context cannot reveal — `"provider-deferred-tool-load"` when a request first anchors a deferred tool load at its tool-result marker, and `"provider-auth-mode"` when the auth mode changes between requests ([#56](https://github.com/R-Dson/pi/issues/56)).
+- Added an optional `onWireRewrite` observer to stream options: the Anthropic adapter reports wire-only rewrites the request context cannot reveal — `"provider-deferred-tool-load"` when a request first anchors a deferred tool load at its tool-result marker, and `"provider-auth-mode"` when the auth mode changes between requests. Transition tracking is keyed on the callback, so pass one stable function across a session's requests; interleaved sessions do not cross-report ([#56](https://github.com/R-Dson/pi/issues/56)).
 
 ### Fixed
 

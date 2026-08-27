@@ -215,6 +215,12 @@ export interface StreamOptions extends ProviderRequestOptions<Model<Api>> {
 	 * Anthropic). Invoked during request serialization, before the request is
 	 * sent, with a stable cause tag (e.g. `"provider-auth-mode"`). Adapters that
 	 * report nothing never invoke it; it must never affect the request.
+	 *
+	 * Transition detection is stateful and keyed on the callback: pass one
+	 * stable function across a session's requests (the coding-agent monitor
+	 * injects a single bound method) so transitions are observed per session
+	 * and the tracking dies with the callback. A fresh closure per request
+	 * observes nothing.
 	 */
 	onWireRewrite?: (cause: string) => void;
 	/**

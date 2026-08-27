@@ -1,9 +1,8 @@
 import { Type } from "typebox";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-// Module-scoped adapter state: lastSerializedOAuth and anchoredDeferredToolNames
-// never reset, so auth-mode tests run in a known order (key first, then OAuth)
-// and deferred-tool tests use unique tool names per test.
+// Adapter wire-rewrite state is keyed on the observer callback, so tests are
+// order-independent: each test's callbacks track their own transitions.
 import { getModel, streamSimple } from "../src/compat.ts";
 import type { AssistantMessage, Context, Tool, ToolResultMessage, UserMessage } from "../src/types.ts";
 
@@ -190,6 +189,7 @@ describe("Anthropic wire-rewrite observer (issue #56 seam)", () => {
 
 	it("does not report auth-mode changes for bearer-header auth", async () => {
 		const causes: string[] = [];
+		const observer = (cause: string) => causes.push(cause);
 		const model = getModel("anthropic", "claude-opus-4-6");
 		const context: Context = { messages: [makeUserMessage("Hello")] };
 
@@ -197,11 +197,30 @@ describe("Anthropic wire-rewrite observer (issue #56 seam)", () => {
 		// OAuth shaping, so it must not fire the auth-mode rewrite.
 		await streamSimple(model, context, {
 			headers: { Authorization: "Bearer gateway-token" },
-			onWireRewrite: (cause) => causes.push(cause),
+			onWireRewrite: observer,
 		}).result();
 		await streamSimple(model, context, {
 			headers: { Authorization: "Bearer other-gateway-token" },
-			onWireRewrite: (cause: string) => causes.push(cause),
+			onWireRewrite: observer,
+		}).result();
+
+		expect(causes).toEqual([]);
+	});
+
+	it("observes nothing when each request passes a fresh closure", async () => {
+		const causes: string[] = [];
+		const model = getModel("anthropic", "claude-opus-4-6");
+		const context: Context = { messages: [makeUserMessage("Hello")] };
+
+		// The documented contract: transition tracking is keyed on the
+		// callback, so a fresh closure per request only ever initializes.
+		await streamSimple(model, context, {
+			apiKey: "anthropic-key",
+			onWireRewrite: (cause) => causes.push(cause),
+		}).result();
+		await streamSimple(model, context, {
+			apiKey: "sk-ant-oat-test",
+			onWireRewrite: (cause) => causes.push(cause),
 		}).result();
 
 		expect(causes).toEqual([]);
@@ -221,5 +240,48 @@ describe("Anthropic wire-rewrite observer (issue #56 seam)", () => {
 			{ apiKey: "sk-ant-oat-test" },
 		).result();
 		expect(oauth.stopReason).toBe("stop");
+	});
+
+	it("tracks auth mode per observer, so interleaved sessions do not cross-report", async () => {
+		const sessionA: string[] = [];
+		const sessionB: string[] = [];
+		// One stable callback per session, as the coding-agent monitor injects.
+		const observerA = (cause: string) => sessionA.push(cause);
+		const observerB = (cause: string) => sessionB.push(cause);
+		const model = getModel("anthropic", "claude-opus-4-6");
+		const context: Context = { messages: [makeUserMessage("Hello")] };
+
+		// Two sessions initialize with different auth modes: neither reports.
+		await streamSimple(model, context, { apiKey: "anthropic-key", onWireRewrite: observerA }).result();
+		await streamSimple(model, context, { apiKey: "sk-ant-oat-b", onWireRewrite: observerB }).result();
+		expect(sessionA).toEqual([]);
+		expect(sessionB).toEqual([]);
+
+		// Session A then switches to OAuth: its own transition, one report,
+		// and session B's tracking is unaffected.
+		await streamSimple(model, context, { apiKey: "sk-ant-oat-a", onWireRewrite: observerA }).result();
+		expect(sessionA).toEqual(["provider-auth-mode"]);
+		expect(sessionB).toEqual([]);
+	});
+
+	it("tracks deferred-tool anchors per observer, so interleaved sessions do not suppress each other", async () => {
+		const sessionA: string[] = [];
+		const sessionB: string[] = [];
+		const observerA = (cause: string) => sessionA.push(cause);
+		const observerB = (cause: string) => sessionB.push(cause);
+		const model = getModel("anthropic", "claude-opus-4-6");
+
+		// Both sessions send the same dynamic-tool context with the same tool
+		// names: each session's first anchor is its own rewrite.
+		await streamSimple(model, makeDeferredContext("inter_base", "inter_late"), {
+			apiKey: "anthropic-key",
+			onWireRewrite: observerA,
+		}).result();
+		await streamSimple(model, makeDeferredContext("inter_base", "inter_late"), {
+			apiKey: "anthropic-key",
+			onWireRewrite: observerB,
+		}).result();
+		expect(sessionA).toEqual(["provider-deferred-tool-load"]);
+		expect(sessionB).toEqual(["provider-deferred-tool-load"]);
 	});
 });

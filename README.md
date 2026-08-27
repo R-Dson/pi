@@ -11,7 +11,7 @@
 
 Pi is an interactive, self-extensible coding agent, plus the agent runtime and unified multi-provider LLM API underneath it.
 
-This fork of [earendil-works/pi](https://github.com/earendil-works/pi) merges upstream regularly and changes as little as possible on top of it: sessions that survive crashes, tools with timeouts and output caps, opt-in permission policies. **Out of the box it behaves like upstream**, apart from two safety nets: a 200 KB cap on tool output and automatic repair of crashed sessions. Fork decisions and changed files live in the [fork ledger](docs/fork/upstream-integration.md).
+This fork of [earendil-works/pi](https://github.com/earendil-works/pi) merges upstream regularly and changes as little as possible on top of it: sessions that survive crashes, tools with timeouts and output caps, opt-in permission policies, and cache-friendly request handling. Out of the box it differs from upstream in three visible ways: tool output sent to the model is capped at 200 KB, crashed sessions repair themselves on resume, and the binary talks to no one but your providers — no telemetry, no update checks, no remote model catalog (see [Zero telemetry](#zero-telemetry)). Request construction also differs where it protects the provider prompt cache; see [Cache economics](#cache-economics). Fork decisions and changed files live in the [fork ledger](docs/fork/upstream-integration.md).
 
 ## Install
 
@@ -38,9 +38,13 @@ pi            # interactive mode; authenticate a provider on first run
 pi -p "..."   # one-shot prompt
 ```
 
-Usage, providers, extensions, and everything else match upstream pi ([docs](https://pi.dev/docs/latest)). What follows is what the fork changes.
+Usage, providers, and extensions match upstream pi ([docs](https://pi.dev/docs/latest)); the SDK differs where the sections below say so. What follows is what the fork changes.
 
 ## What the fork adds
+
+### Zero telemetry
+
+The fork phones home for nothing (issue #32). No install or version pings, no startup update check, no automatic extension-update check, and no remote model-catalog refresh: the model list comes from the built-in catalog plus your local overrides. Provider requests carry no app-identification headers; only headers the provider API itself requires are sent. Update commands run only when you type them. `packages/coding-agent/test/suite/no-tracking-traffic.test.ts` asserts a representative session performs zero non-provider fetches; the full endpoint-by-endpoint audit is in the [fork ledger](docs/fork/upstream-integration.md#outbound-traffic-audit-issue-32).
 
 ### Session reliability
 
@@ -82,6 +86,20 @@ Policy mode keeps upstream's allow-by-default: rules opt calls out. This one blo
 - Rules match on tool name, capability (`process.execute`, `filesystem.write`, `filesystem.read`, ...), path prefix, or command prefix. Deny beats ask beats allow, and your rules beat the profile's presets. `ask` blocks the call with a reason explaining how to allow it; there is no approval prompt yet.
 - Profiles are plain rule presets: `code` (default, everything), `review` (read-only: writes and process execution hidden), `minimal` (read/search tools only; bash, powershell, edit, and write are hidden).
 - A `deny` rule with `hide: true` removes the tool from the model's tool list entirely, so the model cannot even try to call it.
+
+### Cache economics
+
+A long session lives or dies by the provider prompt cache: a cached input token costs a fraction of an uncached one (roughly 1/120 on DeepSeek, 1/10 on Anthropic), and the cache only hits when each request extends the previous one byte for byte.
+
+- Compaction and branch summaries used to serialize the whole conversation into a standalone summarizer request, a full cache miss at the exact moment the context is largest. They now replay the previous request (same system prompt, tool list, and history) with one appended instruction turn, so the summarizer call runs almost entirely as a cache hit. SDK note: `compact()` and `generateSummary()` therefore take a required `SummarizationPrefix` argument.
+- Auto-discovered extensions and skills sort by path instead of filesystem order, so a restarted session replays the same tool list rather than busting the cache. Expect exactly one first-request miss after upgrading.
+- `/session` shows where the cache went: usage split by request kind (turn, compaction, branch summary, retry), hit rate, and prefix invalidations with attribution. A runtime monitor watches every outgoing request; when something rewrites history without announcing itself, a misbehaving extension, a settings toggle, a provider-side rewrite, the invalidation is counted under its cause.
+
+### Core vs. extensions
+
+Pi's rule is a minimal core: if a feature can be an extension, it should be. The fork keeps that rule and adds one of its own: every fork feature stays in core only as far as pi's extension API allows, and the [ledger](docs/fork/upstream-integration.md) records what it would take to move each one out.
+
+The split today: session repair, deterministic ordering, the compaction replay, and the request monitor are core because they sit on the resume and provider-request paths, which extensions cannot reach. The output cap and the permission policies are core because pi's extension API has no settings access and no slot for a fork-shipped default-on extension — but their seams are public: `tool_result` handlers replace content, `tool_call` handlers block with a reason, and `setActiveTools` filters the model's tool list. [`examples/extensions/read-only-mode.ts`](packages/coding-agent/examples/extensions/read-only-mode.ts) is a working read-only review pass on those seams, with no settings involved (capability matching uses the fork's `ToolInfo.capability`; on upstream pi it falls back to builtin names). If pi grows settings access for extensions, the policies move out of core ([#70](https://github.com/R-Dson/pi/issues/70)).
 
 ## Relationship to upstream
 
