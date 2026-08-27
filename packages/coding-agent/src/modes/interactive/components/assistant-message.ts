@@ -16,6 +16,28 @@ function hasVisibleThinking(content: AssistantMessage["content"][number]): boole
 }
 
 /**
+ * Non-thinking content that streaming produces once a thinking run has ended:
+ * visible text or a tool call.
+ */
+function isStreamedNonThinking(content: AssistantMessage["content"][number]): boolean {
+	return (content.type === "text" && content.text.trim().length > 0) || content.type === "toolCall";
+}
+
+/**
+ * Whether streaming has moved past the newest visible thinking run (visible
+ * text or a tool call follows it), i.e. that run has ended.
+ */
+function hasStreamedContentAfterNewestThinking(content: AssistantMessage["content"]): boolean {
+	let newestThinking = -1;
+	for (let i = 0; i < content.length; i++) {
+		if (hasVisibleThinking(content[i])) {
+			newestThinking = i;
+		}
+	}
+	return newestThinking !== -1 && content.slice(newestThinking + 1).some(isStreamedNonThinking);
+}
+
+/**
  * Collapse a thinking run into a single-line preview (whitespace flattened,
  * width-aware ellipsis after THINKING_PREVIEW_MAX_CHARS display columns).
  */
@@ -39,7 +61,7 @@ export class AssistantMessageComponent extends Container {
 	private isStreaming = false;
 	/** When hidden thinking was first seen while streaming; used for the finished duration marker. */
 	private thinkingStartedAt: number | undefined;
-	/** Frozen thinking duration once the message finishes; undefined when it was never streamed live. */
+	/** Frozen thinking duration; undefined while the newest run is still streaming or when it was never streamed live. */
 	private thinkingDurationMs: number | undefined;
 
 	constructor(
@@ -107,6 +129,7 @@ export class AssistantMessageComponent extends Container {
 	}
 
 	updateContent(message: AssistantMessage, isStreaming = this.isStreaming): void {
+		const wasStreaming = this.isStreaming;
 		this.lastMessage = message;
 		this.isStreaming = isStreaming;
 
@@ -115,10 +138,27 @@ export class AssistantMessageComponent extends Container {
 		// history reloads fall back to the static label.
 		const hasThinking = message.content.some((c) => c.type === "thinking" && c.thinking.trim());
 		if (hasThinking) {
+			// The newest run has ended once non-thinking content streams after it.
+			const newestRunEnded = hasStreamedContentAfterNewestThinking(message.content);
 			if (isStreaming) {
 				this.thinkingStartedAt ??= Date.now();
-			} else if (this.thinkingStartedAt !== undefined && this.thinkingDurationMs === undefined) {
-				this.thinkingDurationMs = Math.max(0, Date.now() - this.thinkingStartedAt);
+				if (newestRunEnded) {
+					// Freeze at the first non-thinking block after the newest run:
+					// post-thinking streaming is not thinking time.
+					this.thinkingDurationMs ??= Math.max(0, Date.now() - this.thinkingStartedAt);
+				} else {
+					// A newer run is streaming after earlier content: reopen the clock.
+					this.thinkingDurationMs = undefined;
+				}
+			} else if (this.thinkingStartedAt !== undefined) {
+				if (newestRunEnded) {
+					this.thinkingDurationMs ??= Math.max(0, Date.now() - this.thinkingStartedAt);
+				} else if (wasStreaming || this.thinkingDurationMs === undefined) {
+					// Finished while the newest run was still the trailing content
+					// (including a final run that arrived un-streamed): that run
+					// spanned to the end, so measure to it.
+					this.thinkingDurationMs = Math.max(0, Date.now() - this.thinkingStartedAt);
+				}
 			}
 		}
 
@@ -175,10 +215,12 @@ export class AssistantMessageComponent extends Container {
 						continue;
 					}
 
-					// While streaming, show a live single-line preview of the newest
-					// thinking run; once finished, collapse to a one-line marker.
+					// Live preview only while the newest run is still the trailing
+					// streaming content; once non-thinking blocks follow it (or the
+					// message finished), collapse to the one-line marker.
+					const runEnded = message.content.slice(i + 1).some(isStreamedNonThinking);
 					let line: string;
-					if (this.isStreaming) {
+					if (this.isStreaming && !runEnded) {
 						line = `${this.hiddenThinkingLabel} ${thinkingPreviewText(thinkingBlocks.join("\n\n"))}`;
 					} else {
 						line =
