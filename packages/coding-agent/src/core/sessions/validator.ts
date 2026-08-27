@@ -13,6 +13,7 @@
 
 import { existsSync, readFileSync } from "fs";
 import { normalizePath } from "../../utils/paths.ts";
+import { migrateSessionEntries } from "../session-manager.ts";
 import {
 	buildContextEntries,
 	buildSessionPath,
@@ -114,10 +115,13 @@ export function recoverSessionEntries(path: string): SessionRecovery {
 /**
  * Validate a session file on disk. Combines line-level issues (torn tail,
  * malformed lines) with the structural checks from validateEntries and never
- * mutates or rewrites the file.
+ * mutates or rewrites the file. Entries are run through the same migration
+ * loading applies (v1/v2 -> v3), so structural checks judge what the projector
+ * would actually see; a valid legacy file must not false-positive.
  */
 export function validateSessionFile(path: string): SessionValidationReport {
 	const { entries, issues } = scanSessionContent(readSessionFile(path));
+	migrateSessionEntries(entries);
 	const structural = validateEntries(entries);
 	return { issues: [...issues, ...structural.issues] };
 }

@@ -1,14 +1,17 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import type { AssistantMessage, Context, Model } from "@earendil-works/pi-ai";
+import type { AssistantMessage, Context, Model, Usage } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	type CompactionPreparation,
+	type CompactionSettings,
 	compact,
 	completeSummarization,
 	generateSummary,
 	generateSummaryWithUsage,
+	prepareCompaction,
 } from "../src/core/compaction/index.ts";
+import type { CompactionEntry, SessionEntry, SessionMessageEntry } from "../src/core/session-manager.ts";
 
 const { completeSimpleMock } = vi.hoisted(() => ({
 	completeSimpleMock: vi.fn(),
@@ -342,5 +345,77 @@ describe("generateSummary reasoning options", () => {
 			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 		});
 		expect(completeSimpleMock.mock.calls.map((call) => call[2]?.maxTokens)).toEqual([128000, 128000]);
+	});
+});
+
+describe("split-turn compaction with a previous checkpoint", () => {
+	const timestamp = "2025-01-01T00:00:00.000Z";
+	const usage: Usage = {
+		input: 10,
+		output: 10,
+		cacheRead: 0,
+		cacheWrite: 0,
+		totalTokens: 20,
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+	};
+
+	function assistantEntry(id: string, parentId: string, text: string): SessionMessageEntry {
+		return {
+			type: "message",
+			id,
+			parentId,
+			timestamp,
+			message: {
+				role: "assistant",
+				content: [{ type: "text", text }],
+				api: "anthropic-messages",
+				provider: "anthropic",
+				model: "claude-sonnet-4-5",
+				usage,
+				stopReason: "stop",
+				timestamp: 1,
+			},
+		};
+	}
+
+	function userEntry(id: string, parentId: string | null, text: string): SessionMessageEntry {
+		return {
+			type: "message",
+			id,
+			parentId,
+			timestamp,
+			message: { role: "user", content: text, timestamp: 1 },
+		};
+	}
+
+	it("keeps the prior checkpoint when the split cut leaves no new messages to summarize", async () => {
+		// Session: a checkpoint keeping from u1, one giant turn (u1, a1), and a
+		// short follow-up turn. A keep window that cuts inside the giant turn
+		// splits the first kept turn, leaving messagesToSummarize empty.
+		const u1 = userEntry("u1", null, "giant request");
+		const a1 = assistantEntry("a1", "u1", "x".repeat(20000));
+		const checkpoint: CompactionEntry = {
+			type: "compaction",
+			id: "k1",
+			parentId: "a1",
+			timestamp,
+			summary: "## Goal\nPRIOR-CHECKPOINT-MARKER",
+			firstKeptEntryId: "u1",
+			tokensBefore: 50000,
+		};
+		const u2 = userEntry("u2", "k1", "short follow-up");
+		const a2 = assistantEntry("a2", "u2", "short reply");
+		const entries: SessionEntry[] = [u1, a1, checkpoint, u2, a2];
+
+		const settings: CompactionSettings = { enabled: true, reserveTokens: 2000, keepRecentTokens: 200 };
+		const preparation = prepareCompaction(entries, settings);
+
+		expect(preparation).toBeDefined();
+		expect(preparation!.isSplitTurn).toBe(true);
+		expect(preparation!.messagesToSummarize).toEqual([]);
+		expect(preparation!.previousSummary).toBe(checkpoint.summary);
+
+		const result = await compact(preparation!, createModel(false), prefix, "test-key");
+		expect(result.summary).toContain("PRIOR-CHECKPOINT-MARKER");
 	});
 });

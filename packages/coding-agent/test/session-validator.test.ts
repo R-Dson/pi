@@ -107,6 +107,57 @@ describe("validateSessionFile", () => {
 	it("throws for a missing file", () => {
 		expect(() => validateSessionFile(join(FIXTURES_DIR, "does-not-exist.jsonl"))).toThrow(/not found/);
 	});
+
+	it("validates a v1 session through the same migration loading applies", () => {
+		// v1 shape (no header version, no entry ids, compaction by index), modeled
+		// on the reader migration's fixtures: loading assigns the tree ids, so the
+		// validator must judge the migrated entries, not the raw ones.
+		const dir = mkdtempSync(join(tmpdir(), "pi-validator-v1-"));
+		try {
+			const file = join(dir, "v1.jsonl");
+			const lines = [
+				{ type: "session", id: "v1-sess", timestamp: "2025-01-01T00:00:00Z", cwd: "/tmp" },
+				{
+					type: "message",
+					timestamp: "2025-01-01T00:00:01Z",
+					message: { role: "user", content: "hi", timestamp: 1 },
+				},
+				{
+					type: "message",
+					timestamp: "2025-01-01T00:00:02Z",
+					message: {
+						role: "assistant",
+						content: [{ type: "text", text: "hello" }],
+						api: "anthropic-messages",
+						provider: "anthropic",
+						model: "claude-sonnet-4-5",
+						usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 },
+						stopReason: "stop",
+						timestamp: 2,
+					},
+				},
+				{
+					type: "compaction",
+					timestamp: "2025-01-01T00:00:03Z",
+					summary: "v1 checkpoint",
+					firstKeptEntryIndex: 1,
+					tokensBefore: 10,
+				},
+				{
+					type: "message",
+					timestamp: "2025-01-01T00:00:04Z",
+					message: { role: "user", content: "after", timestamp: 3 },
+				},
+			];
+			writeFileSync(file, `${lines.map((line) => JSON.stringify(line)).join("\n")}\n`);
+
+			const report = validateSessionFile(file);
+			expect(report.issues.filter((issue) => issue.code === "invalid-entry-id")).toEqual([]);
+			expect(report.issues).toEqual([]);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
 });
 
 describe("validateEntries synthetic corruption", () => {
