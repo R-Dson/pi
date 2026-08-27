@@ -14,8 +14,10 @@ import { appendInterruptedTurnResults } from "../src/core/sessions/recovery.ts";
  * A crash mid-tool-execution leaves the final assistant message with toolCalls
  * and no toolResults. appendInterruptedTurnResults repairs the turn at resume
  * time by appending one terminal error toolResult per dangling call
- * (append-only, no history rewrite); the pure projector keeps projecting raw
- * entries unchanged (see session-fixtures-golden.test.ts).
+ * (append-only, no history rewrite) — but only where appending keeps each
+ * result adjacent to its tool_use, i.e. when no later message entry follows the
+ * dangling turn; the pure projector keeps projecting raw entries unchanged
+ * (see session-fixtures-golden.test.ts).
  */
 
 const FIXTURES_DIR = join(__dirname, "fixtures", "sessions");
@@ -114,7 +116,7 @@ describe("appendInterruptedTurnResults", () => {
 		expect(appendInterruptedTurnResults(toolSuccess)).toEqual([]);
 	});
 
-	it("repairs a dangling call even when later turns exist (any unanswered call breaks strict providers)", () => {
+	it("appends nothing when later message entries follow the dangling turn", () => {
 		const session = SessionManager.inMemory();
 		session.appendMessage({ role: "user", content: "run two things", timestamp: 1 });
 		session.appendMessage({
@@ -137,8 +139,11 @@ describe("appendInterruptedTurnResults", () => {
 			stopReason: "stop",
 			timestamp: 2,
 		});
-		// A later completed turn ends the session: the dangling call above is
-		// mid-path and must stay untouched; the final assistant has no calls.
+		// A steering user message persisted mid-tool-run before the crash: the
+		// dangling call is mid-path. A tail-appended toolResult would land after
+		// this message — non-adjacent to its tool_use, so Anthropic rejects the
+		// request anyway and only the local validator would be satisfied. The
+		// repair is skipped and resume proceeds unrepaired.
 		session.appendMessage({ role: "user", content: "actually never mind", timestamp: 3 });
 		session.appendMessage({
 			role: "assistant",
@@ -158,13 +163,43 @@ describe("appendInterruptedTurnResults", () => {
 			timestamp: 4,
 		});
 
-		// The dangling call sits mid-path, but assistant tool_use without a
-		// following tool_result is rejected by strict providers wherever it
-		// occurs, so it is repaired too.
-		expect(appendInterruptedTurnResults(session)).toHaveLength(1);
-		expect(danglingToolCallIds(session.buildSessionContext().messages)).toEqual([]);
+		expect(appendInterruptedTurnResults(session)).toEqual([]);
+		expect(session.getEntries()).toHaveLength(4);
+		expect(danglingToolCallIds(session.buildSessionContext().messages)).toEqual(["call_mid"]);
+	});
 
-		// The interrupted fixture loaded in memory gets repaired the same way.
+	it("appends results when only non-message entries follow the dangling turn", () => {
+		const session = SessionManager.inMemory();
+		session.appendMessage({ role: "user", content: "run it", timestamp: 1 });
+		const assistantId = session.appendMessage({
+			role: "assistant",
+			content: [{ type: "toolCall", id: "call_tail", name: "bash", arguments: { command: "echo tail" } }],
+			api: "anthropic-messages",
+			provider: "anthropic",
+			model: "claude-sonnet-4-5",
+			usage: {
+				input: 1,
+				output: 1,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 2,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+			stopReason: "toolUse",
+			timestamp: 2,
+		});
+		// Non-message entries (settings, labels) project nothing into the LLM
+		// context, so tail-appended results stay adjacent to the tool_use.
+		session.appendThinkingLevelChange("medium");
+		session.appendLabelChange(assistantId, "mark");
+
+		expect(appendInterruptedTurnResults(session)).toHaveLength(1);
+		const messages = session.buildSessionContext().messages;
+		expect(messages.map((message) => message.role)).toEqual(["user", "assistant", "toolResult"]);
+		expect(danglingToolCallIds(messages)).toEqual([]);
+	});
+
+	it("repairs a dangling call that ends the context (tail case, in memory)", () => {
 		const interrupted = inMemoryFromFixture("interrupted-turn.jsonl");
 		expect(appendInterruptedTurnResults(interrupted)).toHaveLength(1);
 		const messages = interrupted.buildSessionContext().messages;
