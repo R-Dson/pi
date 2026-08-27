@@ -947,7 +947,11 @@ export async function compact(
 	let summaryUsage: Usage;
 
 	if (isSplitTurn && turnPrefixMessages.length > 0) {
-		let historyText = "No prior history.";
+		// With no new messages to summarize (the cut splits the first kept turn
+		// of the prior checkpoint), the turn-prefix summary would silently
+		// replace the checkpoint; seed the history section with it so the new
+		// checkpoint keeps the old context.
+		let historyText = previousSummary ?? "No prior history.";
 		let historyUsage: Usage | undefined;
 		if (messagesToSummarize.length > 0) {
 			const historyResult = await generateSummaryWithUsage(

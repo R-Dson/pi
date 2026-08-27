@@ -63,7 +63,7 @@ It detects torn tails, malformed lines, duplicate ids, broken or cyclic ancestry
 ### Tool runtime
 
 - A tool that never settles used to hang the whole run. Tools can now declare `timeoutMs`; past its deadline the call ends in a timeout error and the run continues.
-- An extension or MCP tool returning megabytes used to pass all of it to the model. Tool output sent to the model is now capped at 200 KB by default (`tools.maxToolOutputBytes`; 0 or less disables the cap). The model receives a head-and-tail excerpt with an omitted-bytes marker, and the full output spills to a file under `<sessionDir>/artifacts/<sessionId>/` (persisted sessions). Builtin tools already truncate their own output, so in practice this caps tools that don't.
+- An extension tool returning megabytes used to pass all of it to the model. Tool output sent to the model is now capped at 200 KB by default (`tools.maxToolOutputBytes`; 0 or less disables the cap). The model receives a head-and-tail excerpt with an omitted-bytes marker, and the full output spills to a file under `<sessionDir>/artifacts/<sessionId>/` (persisted sessions). Builtin tools already truncate their own output, so in practice this caps tools that don't.
 - To see what the caps did to a run, the `/session` panel reports tool output volume, truncated bytes, and artifact file counts.
 
 ### Permissions (opt-in)

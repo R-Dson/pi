@@ -486,6 +486,15 @@ export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = un
 	 */
 	executionMode?: ToolExecutionMode;
 
+	/**
+	 * Deadline for a single `execute()` call in milliseconds. When the deadline
+	 * passes, the agent loop aborts the tool's signal and records a terminal
+	 * timeout error result; the run continues. Intended for extension/MCP tools
+	 * that may never settle (network calls, spawned processes); built-in tools
+	 * bound themselves already.
+	 */
+	timeoutMs?: number;
+
 	/** Execute the tool. */
 	execute(
 		toolCallId: string,

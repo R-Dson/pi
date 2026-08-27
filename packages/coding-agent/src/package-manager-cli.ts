@@ -22,6 +22,7 @@ import { DefaultResourceLoader } from "./core/resource-loader.ts";
 import {
 	classifySelfUpdateInstall,
 	FORK_INSTALL_COMMAND,
+	FORK_REGISTRY_PACKAGE_NAME,
 	FORK_STANDALONE_TARBALL_URL,
 	resolveRunningPackageName,
 } from "./core/self-update-source.ts";
@@ -141,7 +142,7 @@ Update pi, installed packages, or model catalogs.
 Options:
   --self                  Update pi only (default when no target is given)
   --extensions            Update installed packages only
-  --models                Refresh model catalogs only
+  --models                Restore model catalogs from the local store
   --all                   Update pi and installed packages
   --extension <source>    Update one package only
   -a, --approve           Trust project-local files for this command
@@ -150,7 +151,7 @@ Options:
 Short forms:
   ${APP_NAME} update                Update pi only
   ${APP_NAME} update --all          Update pi and all extensions
-  ${APP_NAME} update --models       Refresh model catalogs only
+  ${APP_NAME} update --models       Restore model catalogs from the local store
   ${APP_NAME} update <source>       Update one package
   ${APP_NAME} update pi             Update pi only (self works as alias to pi)
 `);
@@ -377,6 +378,9 @@ async function refreshModelCatalogs(agentDir: string): Promise<void> {
 			allowModelNetwork: false,
 			signal: controller.signal,
 		});
+		// allowNetwork/force are inert for the builtin catalogs after the fork's
+		// catalog neutralization (issue #32): refresh restores the persisted
+		// local overlay and never touches pi.dev. Report what actually happened.
 		const result = await modelRuntime.refresh({
 			allowNetwork: true,
 			force: true,
@@ -392,7 +396,7 @@ async function refreshModelCatalogs(agentDir: string): Promise<void> {
 	} finally {
 		clearTimeout(timeout);
 	}
-	console.log(chalk.green("Model catalogs refreshed"));
+	console.log(chalk.green("Model catalogs restored from the local store (network refresh unavailable in this fork)"));
 }
 
 function printSelfUpdateUnavailable(
@@ -766,9 +770,11 @@ export async function handlePackageCommand(
 						process.exitCode = 1;
 						return true;
 					}
-					// Issue #29: a fork standalone install updates from the fork's
-					// GitHub release tarball, never from npmjs (which would replace
-					// the fork with the upstream package).
+					// Issues #29/#74: fork installs update from the fork's own
+					// channels — the GitHub release tarball for standalone
+					// installs, the @r-dson registry for GitHub Packages
+					// installs — never from npmjs under the upstream package
+					// name (which would replace the fork with upstream pi).
 					const runningPackageName = resolveRunningPackageName();
 					if (runningPackageName === "" && installMethod !== "unknown") {
 						// The running install's manifest could not be read. Never fall
@@ -794,7 +800,11 @@ export async function handlePackageCommand(
 					const selfUpdateTarget = {
 						packageName: PACKAGE_NAME,
 						installSpec:
-							installKind === "fork-standalone" ? FORK_STANDALONE_TARBALL_URL : `${PACKAGE_NAME}@latest`,
+							installKind === "fork-standalone"
+								? FORK_STANDALONE_TARBALL_URL
+								: installKind === "fork-registry"
+									? `${FORK_REGISTRY_PACKAGE_NAME}@latest`
+									: `${PACKAGE_NAME}@latest`,
 					};
 					const selfUpdateCommand = getSelfUpdateCommand(PACKAGE_NAME, selfUpdateNpmCommand, selfUpdateTarget);
 					if (!selfUpdateCommand) {
@@ -827,7 +837,9 @@ export async function handlePackageCommand(
 						chalk.green(
 							installKind === "fork-standalone"
 								? `Updated ${APP_NAME} to the latest fork release`
-								: `Updated ${APP_NAME} to the latest version`,
+								: installKind === "fork-registry"
+									? `Updated ${APP_NAME} to the latest fork registry release`
+									: `Updated ${APP_NAME} to the latest version`,
 						),
 					);
 				}

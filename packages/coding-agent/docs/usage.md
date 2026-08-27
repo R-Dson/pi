@@ -204,6 +204,7 @@ cat README.md | pi -p "Summarize this text"
 | `--session-dir <dir>` | Custom session storage directory |
 | `--no-session` | Ephemeral mode; do not save |
 | `--name <name>`, `-n <name>` | Set session display name at startup |
+| `--validate-session <file>` | Validate a session file and print a report, then exit. Checks structure (torn tails, malformed lines, duplicate ids, broken or cyclic ancestry, orphaned or duplicate tool results) and history consistency (compactions summarizing from the wrong point, interrupted turns). Exits 0 when clean or warnings-only, 1 on errors. Diagnostic only: loading tolerates all of these, so run it when a session resumes oddly |
 
 ### Tool Options
 

@@ -195,6 +195,12 @@ describe.skipIf(!API_KEY)("E2E cache verification (real provider)", () => {
 		// The tool turn actually used a tool.
 		expect(session.getSessionStats().toolCalls).toBeGreaterThan(0);
 
+		// Pre-compaction context size: the last regular turn's reported input +
+		// cacheRead is the conversation prefix the replaying summarizer must
+		// read back from cache.
+		const lastRegularUsage = replies[replies.length - 1].usage;
+		const preCompactionContext = lastRegularUsage.input + lastRegularUsage.cacheRead;
+
 		// Manual compaction: the replaying summarizer call must itself
 		// create/read provider cache; the per-kind attribution (issue #42)
 		// proves it.
@@ -206,8 +212,11 @@ describe.skipIf(!API_KEY)("E2E cache verification (real provider)", () => {
 		const compaction = stats.cacheUsageByKind.compaction;
 		expect(compaction).toBeDefined();
 		// The replay call's whole point is reading the warm prefix: prior turns
-		// wrote it, so the summarizer must READ cache, not merely write a new one.
-		expect(compaction!.cacheRead).toBeGreaterThan(0);
+		// wrote exactly the pre-compaction context, so the summarizer must READ
+		// most of it back, not merely write a new cache block. The floor leaves
+		// slack for provider counting differences; a replay that diverges from
+		// the regular requests' message 0 reads almost none of it.
+		expect(compaction!.cacheRead).toBeGreaterThanOrEqual(Math.floor(preCompactionContext * 0.6));
 
 		// Routing regression class (issue #51): no request during the whole
 		// run diverged from its announced prefix.

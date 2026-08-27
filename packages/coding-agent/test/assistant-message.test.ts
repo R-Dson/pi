@@ -276,7 +276,8 @@ describe("AssistantMessageComponent", () => {
 				]),
 				true,
 			);
-			expect(stripAnsi(component.render(100).join("\n"))).toContain("first thought about parsing");
+			// Text already follows the run, so it renders collapsed, not previewed.
+			expect(stripAnsi(component.render(100).join("\n"))).toContain("Thought for");
 
 			component.updateContent(
 				createAssistantMessage([
@@ -334,6 +335,87 @@ describe("AssistantMessageComponent", () => {
 				expect(rendered).not.toContain("first thought about parsing");
 				expect(rendered).not.toContain("now verifying the result");
 				expect(rendered.match(/Thought for/g)).toHaveLength(1);
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+
+		test("freezes the duration and collapses the preview once text streams after the newest run", () => {
+			initTheme("dark");
+			vi.useFakeTimers();
+			vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+			try {
+				const component = new AssistantMessageComponent(undefined, true);
+				component.updateContent(
+					createAssistantMessage([{ type: "thinking", thinking: "pondering the approach" }]),
+					true,
+				);
+				let rendered = stripAnsi(component.render(100).join("\n"));
+				expect(rendered).toContain("Thinking...");
+				expect(rendered).toContain("pondering the approach");
+
+				// Text starts streaming after the thinking run: collapse immediately.
+				vi.advanceTimersByTime(1500);
+				component.updateContent(
+					createAssistantMessage([
+						{ type: "thinking", thinking: "pondering the approach" },
+						{ type: "text", text: "par" },
+					]),
+					true,
+				);
+				rendered = stripAnsi(component.render(100).join("\n"));
+				expect(rendered).toContain("Thought for 2s");
+				expect(rendered).not.toContain("Thinking...");
+				expect(rendered).not.toContain("pondering the approach");
+				expect(rendered).toContain("par");
+
+				// The text-streaming window is not thinking time.
+				vi.advanceTimersByTime(8000);
+				component.updateContent(
+					createAssistantMessage([
+						{ type: "thinking", thinking: "pondering the approach" },
+						{ type: "text", text: "partial answer" },
+					]),
+					true,
+				);
+				rendered = stripAnsi(component.render(100).join("\n"));
+				expect(rendered).toContain("Thought for 2s");
+				expect(rendered).toContain("partial answer");
+
+				// Finishing the message keeps the frozen duration.
+				component.updateContent(
+					createAssistantMessage([
+						{ type: "thinking", thinking: "pondering the approach" },
+						{ type: "text", text: "partial answer" },
+					]),
+					false,
+				);
+				rendered = stripAnsi(component.render(100).join("\n"));
+				expect(rendered).toContain("Thought for 2s");
+				expect(rendered.match(/Thought for/g)).toHaveLength(1);
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+
+		test("collapses the preview once a tool call streams after the newest run", () => {
+			initTheme("dark");
+			vi.useFakeTimers();
+			vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+			try {
+				const component = new AssistantMessageComponent(undefined, true);
+				component.updateContent(
+					createAssistantMessage([
+						{ type: "thinking", thinking: "planning the edit" },
+						{ type: "toolCall", id: "tool-1", name: "read", arguments: { path: "file.txt" } },
+					]),
+					true,
+				);
+				const rendered = stripAnsi(component.render(100).join("\n"));
+
+				expect(rendered).toContain("Thought for 1s");
+				expect(rendered).not.toContain("Thinking...");
+				expect(rendered).not.toContain("planning the edit");
 			} finally {
 				vi.useRealTimers();
 			}

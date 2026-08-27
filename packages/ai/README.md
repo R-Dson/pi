@@ -991,6 +991,23 @@ const response = await models.complete(model, context, {
 
 The callback is supported by `stream`, `complete`, `streamSimple`, and `completeSimple`.
 
+### Observing Provider Wire Rewrites
+
+Some transforms happen inside the provider adapter, after the request options are assembled: on Anthropic, switching between API-key and OAuth auth reshapes the system block and tool names, and deferred tool loading rewrites the wire tools array plus past tool results when a tool's load anchor first appears. None of this is derivable from `context` alone. The `onWireRewrite` option reports it:
+
+```typescript
+const response = await models.complete(model, context, {
+  onWireRewrite: (cause) => {
+    // "provider-auth-mode" or "provider-deferred-tool-load"
+    console.log(`Adapter rewrote the wire payload: ${cause}`);
+  }
+});
+```
+
+The callback fires during request serialization, before the request is sent, once per cause per request. It is diagnostic-only: it must never affect the request, and adapters that report nothing never invoke it.
+
+Transition detection is stateful and keyed on the callback itself. Pass one stable function across a session's requests (the coding-agent monitor injects a single bound method per session) so transitions are observed per session and the tracking dies with the callback. A fresh closure per request observes nothing, and the first observation of each callback initializes silently.
+
 ## Custom Providers
 
 ### createProvider()

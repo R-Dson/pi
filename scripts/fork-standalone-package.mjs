@@ -17,8 +17,11 @@ const STANDALONE_NAME = "@r-dson/pi-standalone";
 const CODING_AGENT_DIR = join(REPO_ROOT, "packages", "coding-agent");
 const SEMVER_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 // Sections copied verbatim from the source manifest when present. description,
-// license, and type are scalars; engines is an object.
-const COPIED_SECTIONS = ["description", "license", "type", "engines"];
+// license, and type are scalars; engines and overrides are objects (overrides
+// nests, so object sections are deep-copied). The overrides pin known-bad
+// transitives (protobufjs, rimraf) that the excluded shrinkwrap would otherwise
+// cover; their keys reference external packages only, so no scope rewrite.
+const COPIED_SECTIONS = ["description", "license", "type", "engines", "overrides"];
 
 export function deriveStandaloneManifest(manifest, { version }) {
 	const filterWorkspaceDeps = (deps) => {
@@ -47,9 +50,9 @@ export function deriveStandaloneManifest(manifest, { version }) {
 		delete derived.optionalDependencies;
 	}
 
-	for (const section of ["description", "license", "type", "engines"]) {
+	for (const section of COPIED_SECTIONS) {
 		if (manifest[section] !== undefined) {
-			derived[section] = typeof manifest[section] === "object" ? { ...manifest[section] } : manifest[section];
+			derived[section] = typeof manifest[section] === "object" ? structuredClone(manifest[section]) : manifest[section];
 		}
 	}
 
