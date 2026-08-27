@@ -239,7 +239,7 @@ On Windows, select `powershell` instead of `bash`, or include both:
 
 An empty array starts with no built-in tools while preserving extension and SDK custom tools. `--tools` replaces this behavior with a strict allowlist for all tools, `--no-tools` disables all tools, and `--no-builtin-tools` disables the built-in defaults. `--exclude-tools` filters the resulting list. A project `defaultTools` array replaces the global array.
 
-`tools.maxToolOutputBytes` bounds what the model sees, not what the tool did: over the cap the model receives the first ~60% and last ~40% of the budget around a marker reporting the omitted bytes and the artifact path. Built-in tools (`read`, `grep`, `bash`) truncate their own output already, so in practice the cap governs extension and MCP tools.
+`tools.maxToolOutputBytes` bounds what the model sees, not what the tool did: over the cap the model receives the first ~60% and last ~40% of the budget around a marker reporting the omitted bytes and the artifact path. Built-in tools (`read`, `grep`, `bash`) truncate their own output already, so in practice the cap governs extension tools.
 
 `tools.permissions` rules run before each tool call in policy mode. A rule matches when every field it specifies matches the call:
 
