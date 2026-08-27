@@ -13,15 +13,21 @@ describe("self-update install classification", () => {
 		expect(classifySelfUpdateInstall("@r-dson/pi-standalone")).toBe("fork-standalone");
 	});
 
+	it("classifies GitHub Packages installs under the fork scope as fork-registry", () => {
+		// Issue #74: any @r-dson/* name other than the standalone package is a
+		// GitHub Packages install and must update from the fork registry.
+		expect(classifySelfUpdateInstall("@r-dson/pi-coding-agent")).toBe("fork-registry");
+		expect(classifySelfUpdateInstall("@r-dson/pi-ai")).toBe("fork-registry");
+	});
+
 	it("classifies the upstream npm package name", () => {
 		expect(classifySelfUpdateInstall("@earendil-works/pi-coding-agent")).toBe("upstream-package");
 	});
 
 	it("classifies any other resolved package as other", () => {
-		// GitHub Packages channel keeps the fork scope but a different package name.
-		expect(classifySelfUpdateInstall("@r-dson/pi-coding-agent")).toBe("other");
 		expect(classifySelfUpdateInstall("pi")).toBe("other");
 		expect(classifySelfUpdateInstall("")).toBe("other");
+		expect(classifySelfUpdateInstall("@other-scope/pi-coding-agent")).toBe("other");
 	});
 
 	it("never classifies the fork standalone name as upstream or other", () => {
