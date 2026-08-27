@@ -28,6 +28,13 @@ const sourceManifest = {
 		"@mariozechner/clipboard": "0.3.9",
 	},
 	devDependencies: { typescript: "5.9.3" },
+	overrides: {
+		protobufjs: "7.6.5",
+		rimraf: "6.1.2",
+		gaxios: {
+			rimraf: "6.1.2",
+		},
+	},
 	engines: { node: ">=22.19.0" },
 };
 
@@ -53,6 +60,26 @@ test("deriveStandaloneManifest drops workspace deps and keeps foreign deps verba
 	assert.equal(derived.type, "module");
 });
 
+test("deriveStandaloneManifest carries the overrides block through derivation", () => {
+	const manifest = structuredClone(sourceManifest);
+
+	const derived = deriveStandaloneManifest(manifest, { version: "0.84.2-fork.7" });
+
+	// Overrides reference external packages only (no @earendil-works/* keys), so
+	// they must survive verbatim: they pin known-bad transitives that the
+	// shrinkwrap (excluded from fork publishes) would otherwise cover.
+	assert.deepEqual(derived.overrides, {
+		protobufjs: "7.6.5",
+		rimraf: "6.1.2",
+		gaxios: {
+			rimraf: "6.1.2",
+		},
+	});
+	// Nested override values must not be shared with the source manifest.
+	derived.overrides.gaxios.rimraf = "0.0.0";
+	assert.deepEqual(manifest.overrides, sourceManifest.overrides);
+});
+
 test("deriveStandaloneManifest carries over nothing but the derived and copied sections", () => {
 	const derived = deriveStandaloneManifest(sourceManifest, { version: "0.84.2-fork.7" });
 
@@ -67,8 +94,9 @@ test("deriveStandaloneManifest carries over nothing but the derived and copied s
 		"license",
 		"type",
 		"engines",
+		"overrides",
 	]);
-	for (const section of ["scripts", "devDependencies", "main", "exports", "repository", "overrides", "keywords", "author"]) {
+	for (const section of ["scripts", "devDependencies", "main", "exports", "repository", "keywords", "author"]) {
 		assert.ok(!(section in derived), `expected ${section} to be absent`);
 	}
 });
