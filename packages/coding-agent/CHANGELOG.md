@@ -21,6 +21,8 @@
 - Added opt-in permission policies (`tools.permissions`): `legacy` mode (default) is byte-identical to upstream; `policy` mode evaluates rules matching tool name, capability, path prefix, or command prefix with deny > ask > allow precedence, user rules overriding profile presets, and `hide: true` removing a tool from the model's tool list; profiles `code` (default), `review` (read-only), and `minimal` are plain rule presets ([#11](https://github.com/R-Dson/pi/issues/11)).
 - Added fork-aware self-update channels: the running install's package name picks the update source — the fork's standalone tarball, the fork's GitHub-Packages registry, or upstream npmjs with a channel notice — so no update path replaces the fork with upstream ([#29](https://github.com/R-Dson/pi/issues/29)).
 - Added a live preview of the newest thinking run while thinking is hidden: first ~120 display columns while streaming, collapsing to a one-line duration marker when the message finishes ([#30](https://github.com/R-Dson/pi/issues/30)).
+- Added inherited `ui_prompt_start` and `ui_prompt_end` extension events so host integrations can distinguish active agent work from waiting on user-facing `ctx.ui` prompts ([#5329](https://github.com/earendil-works/pi/issues/5329)).
+- Added inherited `fullscreenCopyOnSelect` to disable automatic fullscreen selection copy; when disabled, `Ctrl+X` copies the active text selection before falling back to the last assistant message, while `/tree` still copies the selected message ([#7720](https://github.com/earendil-works/pi/issues/7720)).
 
 ### Fixed
 
@@ -30,6 +32,7 @@
 - Fixed inherited Windows shell aborts crashing Pi when `taskkill.exe` is unavailable on `PATH` ([#6596](https://github.com/earendil-works/pi/issues/6596)).
 - Fixed inherited resumed sessions corrupting the next appended entry when their JSONL file lacks a trailing newline ([#8345](https://github.com/earendil-works/pi/issues/8345)).
 - Fixed inherited compaction and branch summaries forcing `toolChoice: "none"` ([#8649](https://github.com/earendil-works/pi/issues/8649), [#8638](https://github.com/earendil-works/pi/issues/8638)).
+- Fixed inherited Google Vertex requests failing with `HttpsProxyAgent is not a constructor` when the bundled Node.js runtime uses an HTTP(S) proxy ([#8610](https://github.com/earendil-works/pi/issues/8610)).
 
 ### Removed
 
@@ -52,7 +55,11 @@
 - Added an optional `powershell` tool for Windows, configurable through `defaultTools` and the SDK. See [PowerShell Tool](docs/windows.md#powershell-tool).
 - Added a `/thinking` selector and searchable default choices to the model and thinking selectors; Ctrl+S saves the selected model as the global default. See [Models and Thinking](docs/keybindings.md#models-and-thinking).
 - Added optional routing session IDs to exported compaction summary helpers so callers can preserve provider routing without enabling prompt cache writes.
-- Added transcript usage notices for compaction and branch summaries when cache miss notices are enabled.
+- Added 
+
+
+
+usage notices for compaction and branch summaries when cache miss notices are enabled.
 - Added `session_compact_failed` extension events so compaction failures and aborts expose their reason, retry state, source, and error message to handlers ([#8175](https://github.com/earendil-works/pi/issues/8175)).
 - Added inherited provider-neutral `toolChoice` support to simple stream requests.
 - Added inherited automatic Anthropic server-side refusal fallback for supported first-party models, including returned-model usage pricing ([#8017](https://github.com/earendil-works/pi/issues/8017)).
