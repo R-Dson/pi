@@ -15,6 +15,12 @@
 - Added inherited RPC `clear_queue` to retrieve and remove queued steering and follow-up messages ([#8432](https://github.com/earendil-works/pi/issues/8432)).
 - Added inherited environment variables and advanced settings for overriding auto-detected terminal hyperlink, image, and truecolor capabilities ([#8665](https://github.com/earendil-works/pi/issues/8665)).
 - Added `capability` to `ToolInfo` (the extension API's `getAllTools` view), so extensions can match tools by capability exactly like the core permission policies; `examples/extensions/read-only-mode.ts` demonstrates a review pass built on the public seams ([#69](https://github.com/R-Dson/pi/issues/69)).
+- Added `pi --validate-session <file>`: reports torn tails, malformed lines, duplicate ids, broken or cyclic ancestry, orphaned or duplicate tool results, wrong-point compactions, and interrupted turns with line numbers; loading tolerates all of them ([#7](https://github.com/R-Dson/pi/issues/7)).
+- Added crash recovery at resume: a torn JSONL tail is skipped on load, and dangling tool calls of an interrupted final turn get terminal error tool results appended so strict providers accept the next request; history is only ever appended to, never rewritten ([#18](https://github.com/R-Dson/pi/issues/18)).
+- Added `tools.maxToolOutputBytes` (default 200 KB, 0 or less disables): tool result text sent to the model is bounded to a head-and-tail excerpt around an omitted-bytes marker, and the full output spills to a file under `<sessionDir>/artifacts/<sessionId>/`; `/session` reports tool output volume, truncated bytes, and artifact counts ([#9](https://github.com/R-Dson/pi/issues/9)).
+- Added opt-in permission policies (`tools.permissions`): `legacy` mode (default) is byte-identical to upstream; `policy` mode evaluates rules matching tool name, capability, path prefix, or command prefix with deny > ask > allow precedence, user rules overriding profile presets, and `hide: true` removing a tool from the model's tool list; profiles `code` (default), `review` (read-only), and `minimal` are plain rule presets ([#11](https://github.com/R-Dson/pi/issues/11)).
+- Added fork-aware self-update channels: the running install's package name picks the update source — the fork's standalone tarball, the fork's GitHub-Packages registry, or upstream npmjs with a channel notice — so no update path replaces the fork with upstream ([#29](https://github.com/R-Dson/pi/issues/29)).
+- Added a live preview of the newest thinking run while thinking is hidden: first ~120 display columns while streaming, collapsing to a one-line duration marker when the message finishes ([#30](https://github.com/R-Dson/pi/issues/30)).
 
 ### Fixed
 
@@ -24,6 +30,10 @@
 - Fixed inherited Windows shell aborts crashing Pi when `taskkill.exe` is unavailable on `PATH` ([#6596](https://github.com/earendil-works/pi/issues/6596)).
 - Fixed inherited resumed sessions corrupting the next appended entry when their JSONL file lacks a trailing newline ([#8345](https://github.com/earendil-works/pi/issues/8345)).
 - Fixed inherited compaction and branch summaries forcing `toolChoice: "none"` ([#8649](https://github.com/earendil-works/pi/issues/8649), [#8638](https://github.com/earendil-works/pi/issues/8638)).
+
+### Removed
+
+- Removed telemetry and tracking (the fork phones home for nothing): the install/version pings, the startup update check, automatic extension-update checks, the remote model-catalog refresh (catalogs restore from the local store only), the analytics opt-in and tracking id, and app-identification headers on provider requests; provider-required headers stay, and update commands run only when typed ([#32](https://github.com/R-Dson/pi/issues/32)).
 
 ## [0.84.3] - 2026-08-24
 
