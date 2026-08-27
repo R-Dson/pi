@@ -176,8 +176,12 @@ export function buildSessionPath(
 	}
 
 	const path: SessionEntry[] = [];
+	// Cyclic ancestry (hand-edited files) must terminate: a revisit is treated
+	// like a broken parent reference, ending the chain there.
+	const visited = new Set<string>();
 	let current: SessionEntry | undefined = leaf;
-	while (current) {
+	while (current && !visited.has(current.id)) {
+		visited.add(current.id);
 		path.push(current);
 		current = current.parentId ? index.get(current.parentId) : undefined;
 	}

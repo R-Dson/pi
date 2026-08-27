@@ -1,7 +1,12 @@
 import { readFileSync } from "fs";
 import { join } from "path";
 import { describe, expect, it } from "vitest";
-import { buildSessionContext, type FileEntry, type SessionEntry } from "../src/core/sessions/projector.ts";
+import {
+	buildSessionContext,
+	buildSessionPath,
+	type FileEntry,
+	type SessionEntry,
+} from "../src/core/sessions/projector.ts";
 
 /**
  * Projector module seam test.
@@ -38,5 +43,16 @@ describe("session projector module", () => {
 		const ctx = buildSessionContext(loadFixtureEntries("normal.jsonl"));
 		expect(ctx.thinkingLevel).toBe("off");
 		expect(ctx.model).toEqual({ provider: "anthropic", modelId: "claude-sonnet-4-5" });
+	});
+
+	it("terminates on cyclic ancestry and returns the entries below the cycle", () => {
+		// normal.jsonl entries: [u1, a1, u2, a2] with a1.parentId = u1; repointing
+		// u1 at a1 closes a two-entry cycle (same construction as the validator's
+		// cycle test). The default leaf (a2) must still project the chain below it.
+		const entries = loadFixtureEntries("normal.jsonl");
+		entries[0].parentId = entries[1].id;
+
+		const path = buildSessionPath(entries);
+		expect(path.map((entry) => entry.id)).toEqual(["e5632b6e", "24260eb7", "9a0b53f7", "5a6b2f8f"]);
 	});
 });
