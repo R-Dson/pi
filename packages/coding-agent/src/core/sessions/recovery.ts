@@ -16,7 +16,7 @@
 import type { SessionManager } from "../session-manager.ts";
 import { unansweredFinalToolCalls } from "./projector.ts";
 
-const INTERRUPTED_TOOL_RESULT_TEXT = "Tool execution was interrupted before completing; no result was recorded.";
+export const INTERRUPTED_TOOL_RESULT_TEXT = "Tool execution was interrupted before completing; no result was recorded.";
 
 /**
  * Append one terminal error toolResult message per dangling tool call of the

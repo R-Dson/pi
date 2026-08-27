@@ -9,7 +9,7 @@ import {
 } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
-import { generateBranchSummary } from "../src/core/compaction/index.ts";
+import { estimateTokens, generateBranchSummary, prepareBranchEntries } from "../src/core/compaction/index.ts";
 import type { SessionEntry } from "../src/core/session-manager.ts";
 
 const model: Model<"anthropic-messages"> = {
@@ -197,5 +197,215 @@ describe("branch summarization", () => {
 		expect(result.error).toBe(
 			"Branch summarization failed: generation hit the token cap and the summary is incomplete",
 		);
+	});
+
+	it("replays tool results so tool_use blocks stay paired", async () => {
+		let requestContext: Context | undefined;
+		const streamFn: StreamFn = (_model, context) => {
+			requestContext = context;
+			const stream = createAssistantMessageEventStream();
+			queueMicrotask(() =>
+				stream.push({ type: "done", reason: "stop", message: response([{ type: "text", text: "summary" }]) }),
+			);
+			return stream;
+		};
+
+		const toolEntries: SessionEntry[] = [
+			entries[0],
+			{
+				type: "message",
+				id: "branch-tool-call",
+				parentId: "branch-user",
+				timestamp: new Date(2).toISOString(),
+				message: {
+					role: "assistant",
+					content: [{ type: "toolCall", id: "call_1", name: "bash", arguments: { command: "ls" } }],
+					api: model.api,
+					provider: model.provider,
+					model: model.id,
+					usage: {
+						input: 0,
+						output: 0,
+						cacheRead: 0,
+						cacheWrite: 0,
+						totalTokens: 0,
+						cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+					},
+					stopReason: "toolUse",
+					timestamp: 2,
+				},
+			},
+			{
+				type: "message",
+				id: "branch-tool-result",
+				parentId: "branch-tool-call",
+				timestamp: new Date(3).toISOString(),
+				message: {
+					role: "toolResult",
+					toolCallId: "call_1",
+					toolName: "bash",
+					content: [{ type: "text", text: "file listing" }],
+					isError: false,
+					timestamp: 3,
+				},
+			},
+		];
+
+		await generateBranchSummary(toolEntries, {
+			model,
+			signal: new AbortController().signal,
+			streamFn,
+			prefix,
+		});
+
+		const messages = requestContext?.messages ?? [];
+		const roles = messages.map((message) => message.role);
+		expect(roles).toContain("toolResult");
+		// The result must sit directly after its call: a strict provider rejects
+		// a tool_use whose tool_result is missing or reordered.
+		const callIndex = roles.indexOf("assistant");
+		const resultIndex = roles.indexOf("toolResult");
+		expect(callIndex).toBeGreaterThanOrEqual(0);
+		expect(resultIndex).toBe(callIndex + 1);
+	});
+
+	it("synthesizes a terminal result for a dangling tool call at the branch tail", async () => {
+		let requestContext: Context | undefined;
+		const streamFn: StreamFn = (_model, context) => {
+			requestContext = context;
+			const stream = createAssistantMessageEventStream();
+			queueMicrotask(() =>
+				stream.push({ type: "done", reason: "stop", message: response([{ type: "text", text: "summary" }]) }),
+			);
+			return stream;
+		};
+
+		// Branch abandoned mid-turn: the assistant called a tool, the session
+		// died before the result landed.
+		const danglingEntries: SessionEntry[] = [
+			entries[0],
+			{
+				type: "message",
+				id: "branch-dangling-call",
+				parentId: "branch-user",
+				timestamp: new Date(2).toISOString(),
+				message: {
+					role: "assistant",
+					content: [{ type: "toolCall", id: "call_dangling", name: "bash", arguments: { command: "ls" } }],
+					api: model.api,
+					provider: model.provider,
+					model: model.id,
+					usage: {
+						input: 0,
+						output: 0,
+						cacheRead: 0,
+						cacheWrite: 0,
+						totalTokens: 0,
+						cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+					},
+					stopReason: "toolUse",
+					timestamp: 2,
+				},
+			},
+		];
+
+		await generateBranchSummary(danglingEntries, {
+			model,
+			signal: new AbortController().signal,
+			streamFn,
+			prefix,
+		});
+
+		const messages = requestContext?.messages ?? [];
+		const synthesized = messages.find(
+			(message) =>
+				message.role === "toolResult" && "toolCallId" in message && message.toolCallId === "call_dangling",
+		);
+		expect(synthesized).toBeDefined();
+		expect(synthesized?.role === "toolResult" && synthesized.isError).toBe(true);
+	});
+
+	it("drops an orphan tool result whose call is not in the window", () => {
+		const orphanEntries: SessionEntry[] = [
+			{
+				type: "message",
+				id: "branch-orphan-result",
+				parentId: "branch-user",
+				timestamp: new Date(2).toISOString(),
+				message: {
+					role: "toolResult",
+					toolCallId: "call_ghost",
+					toolName: "bash",
+					content: [{ type: "text", text: "no matching call" }],
+					isError: false,
+					timestamp: 2,
+				},
+			},
+		];
+
+		const { messages } = prepareBranchEntries(orphanEntries);
+		expect(messages).toEqual([]);
+	});
+
+	it("never splits a call/result pair at the budget edge", () => {
+		const pairThenUser: SessionEntry[] = [
+			{
+				type: "message",
+				id: "branch-budget-call",
+				parentId: "branch-user",
+				timestamp: new Date(2).toISOString(),
+				message: {
+					role: "assistant",
+					content: [{ type: "toolCall", id: "call_budget", name: "bash", arguments: { command: "ls" } }],
+					api: model.api,
+					provider: model.provider,
+					model: model.id,
+					usage: {
+						input: 0,
+						output: 0,
+						cacheRead: 0,
+						cacheWrite: 0,
+						totalTokens: 0,
+						cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+					},
+					stopReason: "toolUse",
+					timestamp: 2,
+				},
+			},
+			{
+				type: "message",
+				id: "branch-budget-result",
+				parentId: "branch-budget-call",
+				timestamp: new Date(3).toISOString(),
+				message: {
+					role: "toolResult",
+					toolCallId: "call_budget",
+					toolName: "bash",
+					content: [{ type: "text", text: "listing" }],
+					isError: false,
+					timestamp: 3,
+				},
+			},
+			{
+				type: "message",
+				id: "branch-budget-user",
+				parentId: "branch-budget-result",
+				timestamp: new Date(4).toISOString(),
+				message: { role: "user", content: "A relatively newer user message", timestamp: 4 },
+			},
+		];
+
+		// Budget fits the newest user message but leaves no room for the pair
+		// on top of it: the walk must cut the pair as a whole, leaving neither
+		// half behind (the module's own estimator sets the scale).
+		const { messages: full } = prepareBranchEntries(pairThenUser);
+		const userTokens = estimateTokens(full[full.length - 1]);
+		const pairTokens = full.reduce((sum, message) => sum + estimateTokens(message), 0) - userTokens;
+		const { messages: cut } = prepareBranchEntries(pairThenUser, userTokens + pairTokens - 1);
+
+		const roles = cut.map((message) => message.role);
+		expect(roles).toContain("user");
+		expect(roles).not.toContain("assistant");
+		expect(roles).not.toContain("toolResult");
 	});
 });
