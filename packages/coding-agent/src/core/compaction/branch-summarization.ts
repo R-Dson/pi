@@ -223,13 +223,16 @@ function groupBranchUnits(entries: SessionEntry[]): BranchUnit[] {
 		if (message.role === "toolResult") {
 			const last = units[units.length - 1];
 			const head = last?.messages[0];
-			if (head?.role === "assistant" && head.content.some((block) => block.type === "toolCall")) {
+			if (
+				head?.role === "assistant" &&
+				head.content.some((block) => block.type === "toolCall" && block.id === message.toolCallId)
+			) {
 				last.messages.push(message);
 				continue;
 			}
-			// No assistant-with-calls unit to attach to: the call sits outside
-			// the window (or never existed). Replaying the result alone would
-			// be just as invalid as replaying the call alone.
+			// The calling message is not the last unit's head (call outside the
+			// window, or no such call). Replaying the result alone would be
+			// just as invalid as replaying the call alone.
 			continue;
 		}
 

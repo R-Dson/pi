@@ -9,7 +9,7 @@ import {
 } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
-import { generateBranchSummary } from "../src/core/compaction/index.ts";
+import { estimateTokens, generateBranchSummary, prepareBranchEntries } from "../src/core/compaction/index.ts";
 import type { SessionEntry } from "../src/core/session-manager.ts";
 
 const model: Model<"anthropic-messages"> = {
@@ -323,5 +323,89 @@ describe("branch summarization", () => {
 		);
 		expect(synthesized).toBeDefined();
 		expect(synthesized?.role === "toolResult" && synthesized.isError).toBe(true);
+	});
+
+	it("drops an orphan tool result whose call is not in the window", () => {
+		const orphanEntries: SessionEntry[] = [
+			{
+				type: "message",
+				id: "branch-orphan-result",
+				parentId: "branch-user",
+				timestamp: new Date(2).toISOString(),
+				message: {
+					role: "toolResult",
+					toolCallId: "call_ghost",
+					toolName: "bash",
+					content: [{ type: "text", text: "no matching call" }],
+					isError: false,
+					timestamp: 2,
+				},
+			},
+		];
+
+		const { messages } = prepareBranchEntries(orphanEntries);
+		expect(messages).toEqual([]);
+	});
+
+	it("never splits a call/result pair at the budget edge", () => {
+		const pairThenUser: SessionEntry[] = [
+			{
+				type: "message",
+				id: "branch-budget-call",
+				parentId: "branch-user",
+				timestamp: new Date(2).toISOString(),
+				message: {
+					role: "assistant",
+					content: [{ type: "toolCall", id: "call_budget", name: "bash", arguments: { command: "ls" } }],
+					api: model.api,
+					provider: model.provider,
+					model: model.id,
+					usage: {
+						input: 0,
+						output: 0,
+						cacheRead: 0,
+						cacheWrite: 0,
+						totalTokens: 0,
+						cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+					},
+					stopReason: "toolUse",
+					timestamp: 2,
+				},
+			},
+			{
+				type: "message",
+				id: "branch-budget-result",
+				parentId: "branch-budget-call",
+				timestamp: new Date(3).toISOString(),
+				message: {
+					role: "toolResult",
+					toolCallId: "call_budget",
+					toolName: "bash",
+					content: [{ type: "text", text: "listing" }],
+					isError: false,
+					timestamp: 3,
+				},
+			},
+			{
+				type: "message",
+				id: "branch-budget-user",
+				parentId: "branch-budget-result",
+				timestamp: new Date(4).toISOString(),
+				message: { role: "user", content: "A relatively newer user message", timestamp: 4 },
+			},
+		];
+
+		// Budget fits the newest user message but leaves no room for the pair
+		// on top of it: the walk must cut the pair as a whole, leaving neither
+		// half behind (the module's own estimator sets the scale).
+		const { messages: full } = prepareBranchEntries(pairThenUser);
+		const userTokens = estimateTokens(full[full.length - 1]);
+		const pairTokens = full.reduce((sum, message) => sum + estimateTokens(message), 0) - userTokens;
+		const { messages: cut } = prepareBranchEntries(pairThenUser, userTokens + pairTokens - 1);
+
+		const roles = cut.map((message) => message.role);
+		expect(roles).toContain("user");
+		expect(roles).not.toContain("assistant");
+		expect(roles).not.toContain("toolResult");
 	});
 });
