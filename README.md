@@ -83,9 +83,11 @@ For runs where the agent should not do everything it can: a read-only review pas
 
 Policy mode keeps upstream's allow-by-default: rules opt calls out. This one blocks `git push` and changes nothing else.
 
-- Rules match on tool name, capability (`process.execute`, `filesystem.write`, `filesystem.read`, ...), path prefix, or command prefix. Deny beats ask beats allow, and your rules beat the profile's presets. `ask` blocks the call with a reason explaining how to allow it; there is no approval prompt yet.
+- Rules match on tool name, capability (`process.execute`, `filesystem.write`, `filesystem.read`, ...), path prefix, or command prefix (at a token boundary, with `~`/cwd-normalized paths). Deny beats ask beats allow, and your rules beat the profile's presets. `ask` blocks the call with a reason explaining how to allow it; there is no approval prompt in core mode.
 - Profiles are plain rule presets: `code` (default, everything), `review` (read-only: writes and process execution hidden), `minimal` (read/search tools only; bash, powershell, edit, and write are hidden).
 - A `deny` rule with `hide: true` removes the tool from the model's tool list entirely, so the model cannot even try to call it.
+
+The same engine ships as a plain extension with zero core surface: [`examples/extensions/permission-policies.ts`](packages/coding-agent/examples/extensions/permission-policies.ts). It configures itself from `.pi/permissions.json` (project) layered over `~/.pi/agent/permissions.json` (global) instead of settings, and its `ask` rules open an interactive approval dialog when the run has UI — the one thing core mode cannot do. Installing the extension is the recommended path; core `tools.permissions` remains for settings-integrated use.
 
 ### Cache economics
 
@@ -99,7 +101,7 @@ A long session lives or dies by the provider prompt cache: a cached input token 
 
 Pi's rule is a minimal core: if a feature can be an extension, it should be. The fork keeps that rule and adds one of its own: every fork feature stays in core only as far as pi's extension API allows, and the [ledger](docs/fork/upstream-integration.md) records what it would take to move each one out.
 
-The split today: session repair, deterministic ordering, the compaction replay, and the request monitor are core because they sit on the resume and provider-request paths, which extensions cannot reach. The output cap and the permission policies are core because pi's extension API has no settings access and no slot for a fork-shipped default-on extension — but their seams are public: `tool_result` handlers replace content, `tool_call` handlers block with a reason, and `setActiveTools` filters the model's tool list. [`examples/extensions/read-only-mode.ts`](packages/coding-agent/examples/extensions/read-only-mode.ts) is a working read-only review pass on those seams, with no settings involved (capability matching uses the fork's `ToolInfo.capability`; on upstream pi it falls back to builtin names). If pi grows settings access for extensions, the policies move out of core ([#70](https://github.com/R-Dson/pi/issues/70)).
+The split today: session repair, deterministic ordering, the compaction replay, and the request monitor are core because they sit on the resume and provider-request paths, which extensions cannot reach. The output cap is core because it is a default-on safety net and pi's extension API has no slot for a fork-shipped default-on extension. The permission policies keep a core form only for settings integration — the re-evaluation found the original blockers overstated (config can live in policy files, and permissions were always opt-in), so the engine now also ships as an extension: [`examples/extensions/permission-policies.ts`](packages/coding-agent/examples/extensions/permission-policies.ts) on the public seams (`tool_call` blocking, `ToolInfo.capability`, `setActiveTools`), with `read-only-mode.ts` as the minimal variant. Whether the core form shrinks away is an open decision tracked in [#70](https://github.com/R-Dson/pi/issues/70).
 
 ## Relationship to upstream
 

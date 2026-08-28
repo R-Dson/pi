@@ -1294,7 +1294,11 @@ export class SettingsManager {
 		return { mode, rules, baseRules };
 	}
 
-	/** Replace the user permission rule list. Takes effect on the next tool call or active-tool change. */
+	/**
+	 * Replace the user permission rule list. Call-time rules take effect on the
+	 * next tool call; visibility (hide) changes apply on the next active-tool
+	 * change, not immediately.
+	 */
 	setPermissionRules(rules: PermissionRule[]): void {
 		if (!this.globalSettings.tools) {
 			this.globalSettings.tools = {};
