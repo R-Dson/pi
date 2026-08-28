@@ -12,8 +12,6 @@
 - Added `settings-change` prefix-invalidation attribution: toggling `blockImages` mid-session is counted under its own cause instead of surfacing as an unexpected history change ([#53](https://github.com/R-Dson/pi/issues/53)).
 - Added provider wire-rewrite attribution: the prefix monitor injects the new packages/ai `onWireRewrite` seam callback into every provider request and counts adapter-reported wire-only rewrites (Anthropic deferred-tool anchoring, auth-mode switches) under the new `provider-deferred-tool-load` and `provider-auth-mode` causes; the reports count directly (they never appear in the context diff the monitor compares) and never arm the expectation latch, so later unannounced divergences keep their own attribution ([#56](https://github.com/R-Dson/pi/issues/56)).
 - Added cache-economics attribution to session stats: each provider request is attributed to a request kind (regular turn, compaction or branch-summary summarizer call, retry) and its usage aggregated in the new run-scoped `SessionStats.cacheUsageByKind` field; the `/session` panel renders a compact cache block with the run hit rate, per-kind usage, and prefix-invalidation counts ([#42](https://github.com/R-Dson/pi/issues/42)).
-- Added inherited RPC `clear_queue` to retrieve and remove queued steering and follow-up messages ([#8432](https://github.com/earendil-works/pi/issues/8432)).
-- Added inherited environment variables and advanced settings for overriding auto-detected terminal hyperlink, image, and truecolor capabilities ([#8665](https://github.com/earendil-works/pi/issues/8665)).
 - Added `capability` to `ToolInfo` (the extension API's `getAllTools` view), so extensions can match tools by capability exactly like the core permission policies; `examples/extensions/read-only-mode.ts` demonstrates a review pass built on the public seams ([#69](https://github.com/R-Dson/pi/issues/69)).
 - Added `pi --validate-session <file>`: reports torn tails, malformed lines, duplicate ids, broken or cyclic ancestry, orphaned or duplicate tool results, wrong-point compactions, and interrupted turns with line numbers; loading tolerates all of them ([#7](https://github.com/R-Dson/pi/issues/7)).
 - Added crash recovery at resume: a torn JSONL tail is skipped on load, and dangling tool calls of an interrupted final turn get terminal error tool results appended so strict providers accept the next request; history is only ever appended to, never rewritten ([#18](https://github.com/R-Dson/pi/issues/18)).
@@ -21,23 +19,54 @@
 - Added opt-in permission policies (`tools.permissions`): `legacy` mode (default) is byte-identical to upstream; `policy` mode evaluates rules matching tool name, capability, path prefix, or command prefix with deny > ask > allow precedence, user rules overriding profile presets, and `hide: true` removing a tool from the model's tool list; profiles `code` (default), `review` (read-only), and `minimal` are plain rule presets ([#11](https://github.com/R-Dson/pi/issues/11)).
 - Added fork-aware self-update channels: the running install's package name picks the update source — the fork's standalone tarball, the fork's GitHub-Packages registry, or upstream npmjs with a channel notice — so no update path replaces the fork with upstream ([#29](https://github.com/R-Dson/pi/issues/29)).
 - Added a live preview of the newest thinking run while thinking is hidden: first ~120 display columns while streaming, collapsing to a one-line duration marker when the message finishes ([#30](https://github.com/R-Dson/pi/issues/30)).
-- Added inherited `ui_prompt_start` and `ui_prompt_end` extension events so host integrations can distinguish active agent work from waiting on user-facing `ctx.ui` prompts ([#5329](https://github.com/earendil-works/pi/issues/5329)).
-- Added inherited `fullscreenCopyOnSelect` to disable automatic fullscreen selection copy; when disabled, `Ctrl+X` copies the active text selection before falling back to the last assistant message, while `/tree` still copies the selected message ([#7720](https://github.com/earendil-works/pi/issues/7720)).
 
 ### Fixed
 
 - Fixed auto-discovered extensions and skills enumerating in filesystem readdir order: collections now sort by resolved path so a restarted session replays an identical tool list and skills section instead of busting the provider prompt cache. Settings-declared order, package manifests, and builtin tool order are unchanged; the first request after upgrading may miss the cache once ([#49](https://github.com/R-Dson/pi/issues/49)).
-- Fixed inherited extension messages sent with `triggerTurn: false` while the agent is running being inserted between a tool call and its result, which made providers that validate message order reject the replayed history. They are now appended once the turn's tool results are in ([#8537](https://github.com/earendil-works/pi/issues/8537)).
-- Fixed inherited toggling thinking visibility clearing partial output from running Bash tools ([#8611](https://github.com/earendil-works/pi/issues/8611)).
-- Fixed inherited Windows shell aborts crashing Pi when `taskkill.exe` is unavailable on `PATH` ([#6596](https://github.com/earendil-works/pi/issues/6596)).
-- Fixed inherited resumed sessions corrupting the next appended entry when their JSONL file lacks a trailing newline ([#8345](https://github.com/earendil-works/pi/issues/8345)).
-- Fixed inherited compaction and branch summaries forcing `toolChoice: "none"` ([#8649](https://github.com/earendil-works/pi/issues/8649), [#8638](https://github.com/earendil-works/pi/issues/8638)).
-- Fixed inherited large tool results crossing the auto-compaction threshold being sent to the provider before compaction. Pi now compacts between tool execution and the next assistant response in the same run, and restores interactive progress when that run resumes ([#6879](https://github.com/earendil-works/pi/issues/6879)).
-- Fixed inherited Google Vertex requests failing with `HttpsProxyAgent is not a constructor` when the bundled Node.js runtime uses an HTTP(S) proxy ([#8610](https://github.com/earendil-works/pi/issues/8610)).
 
 ### Removed
 
 - Removed telemetry and tracking (the fork phones home for nothing): the install/version pings, the startup update check, automatic extension-update checks, the remote model-catalog refresh (catalogs restore from the local store only), the analytics opt-in and tracking id, and app-identification headers on provider requests; provider-required headers stay, and update commands run only when typed ([#32](https://github.com/R-Dson/pi/issues/32)).
+
+## [0.84.4] - 2026-08-28
+
+### New Features
+
+- **Terminal capability overrides** — Override detected terminal hyperlink, image, and truecolor support. See [Capability Overrides](docs/terminal-setup.md#capability-overrides).
+- **Extension UI prompt events** — Integrations can distinguish active agent work from time spent waiting for `ctx.ui` prompts. See [Extension UI prompt events](docs/extensions.md#ui_prompt_start--ui_prompt_end).
+- **RPC queue clearing** — Retrieve and clear queued steering and follow-up messages with `clear_queue`. See [RPC `clear_queue`](docs/rpc.md#clear_queue).
+- **Fullscreen selection copy controls** — Disable automatic selection copying in fullscreen mode and use Ctrl+X to copy the active selection. See [UI & Display](docs/settings.md#ui--display).
+- **DeepSeek V4 Flash Vision (experimental)** — Use the vision-capable model through the built-in DeepSeek provider. See [API Keys](docs/providers.md#api-keys).
+
+### Added
+
+- Added `ui_prompt_start` and `ui_prompt_end` extension events so host integrations can distinguish active agent work from waiting on user-facing `ctx.ui` prompts ([#8355](https://github.com/earendil-works/pi/pull/8355) by [@cristinaponcela](https://github.com/cristinaponcela)).
+- Added `detectSupportedImageMimeTypeFromFile()` to the public library exports ([#8600](https://github.com/earendil-works/pi/pull/8600) by [@xl0](https://github.com/xl0)).
+- Added inherited experimental vision-capable `deepseek-v4-flash-vision-exp` model support.
+- Added transcript usage notices for compaction and branch summaries when cache miss notices are enabled.
+- Added RPC `clear_queue` to retrieve and remove queued steering and follow-up messages ([#8432](https://github.com/earendil-works/pi/issues/8432)).
+- Added environment variables and advanced settings for overriding auto-detected terminal hyperlink, image, and truecolor capabilities ([#8665](https://github.com/earendil-works/pi/issues/8665)).
+- Added `fullscreenCopyOnSelect` to disable automatic fullscreen selection copy; when disabled, `Ctrl+X` copies the active text selection before falling back to the last assistant message, while `/tree` still copies the selected message ([#7720](https://github.com/earendil-works/pi/issues/7720)).
+
+### Fixed
+
+- Fixed toggling thinking visibility clearing partial output from running Bash tools ([#8611](https://github.com/earendil-works/pi/issues/8611)).
+- Fixed Windows shell aborts crashing Pi when `taskkill.exe` is unavailable on `PATH` ([#6596](https://github.com/earendil-works/pi/issues/6596)).
+- Fixed resumed sessions corrupting the next appended entry when their JSONL file lacks a trailing newline ([#8345](https://github.com/earendil-works/pi/issues/8345)).
+- Fixed extension messages sent with `triggerTurn: false` while the agent is running being inserted between a tool call and its result, which made providers that validate message order reject the replayed history. They are now appended once the turn's tool results are in ([#8537](https://github.com/earendil-works/pi/issues/8537)).
+- Fixed compaction and branch summaries forcing `toolChoice: "none"` ([#8649](https://github.com/earendil-works/pi/issues/8649), [#8638](https://github.com/earendil-works/pi/issues/8638)).
+- Fixed large tool results crossing the auto-compaction threshold being sent to the provider before compaction. Pi now compacts between tool execution and the next assistant response in the same run, and restores interactive progress when that run resumes ([#6879](https://github.com/earendil-works/pi/issues/6879)).
+- Fixed Google Vertex requests failing with `HttpsProxyAgent is not a constructor` when the bundled Node.js runtime uses an HTTP(S) proxy ([#8610](https://github.com/earendil-works/pi/issues/8610)).
+- Fixed saving a default model from a non-empty model scope so it remains available in that scope.
+- Fixed inherited `@` file autocomplete ranking to prefer direct and shallower matches over similarly ranked nested paths ([#8669](https://github.com/earendil-works/pi/pull/8669)).
+- Fixed inherited OpenAI-compatible streams serializing thinking signatures repeatedly during streaming ([#8671](https://github.com/earendil-works/pi/pull/8671)).
+- Fixed inherited main-screen rendering crashing when image-heavy output exceeded V8's string length limit ([#8028](https://github.com/earendil-works/pi/issues/8028)).
+- Fixed inherited fullscreen double-click word selection splitting paths and kebab-case tokens on `/` and `-` ([#8676](https://github.com/earendil-works/pi/pull/8676)).
+- Fixed inherited Cloudflare AI Gateway catalogs omitting supported `workers-ai/*` passthrough models.
+- Fixed inherited OpenAI-compatible reasoning replay to merge consecutive streamed text and summary `reasoning_details` deltas.
+- Fixed inherited OpenRouter reasoning controls so reasoning-mandatory models do not receive `effort: "none"` ([#8614](https://github.com/earendil-works/pi/pull/8614) by [@davidbrai](https://github.com/davidbrai)).
+- Fixed inherited OpenAI-compatible Chat Completions ignoring an explicitly requested `toolChoice` when no tools are defined.
+- Fixed inherited fragmented Mistral tool calls splitting when continuation chunks omit the tool-call ID ([#8387](https://github.com/earendil-works/pi/issues/8387)).
 
 ## [0.84.3] - 2026-08-24
 
@@ -110,7 +139,7 @@ usage notices for compaction and branch summaries when cache miss notices are en
 - Added `session_compact_failed` extension events so compaction failures and aborts expose their reason, retry state, source, and error message to handlers ([#8175](https://github.com/earendil-works/pi/issues/8175)).
 - Fixed truncated compaction and branch summaries being persisted when generation reaches its output token limit ([#7048](https://github.com/earendil-works/pi/issues/7048)).
 - Fixed npm package update checks treating older registry versions as available updates, preventing `pi update` from downgrading already-newer installed packages ([#8226](https://github.com/earendil-works/pi/issues/8226)).
-- Fixed built-in llama.cpp models disappearing from `/model` when `/llama` refreshed a configured server under `PI_OFFLINE`, and included idle-slept `sleeping` router models plus autoloadable unloaded presets in the selectable catalog ([#8167](https://github.com/earendil-works/pi/issues/8167)).
+- Fixed built-in llama.cpp models disappearing from `/model` when `/llama` refreshed a configured server under `PI_OFFLINE`, and included idle-slept `sleeping` router models plus autoloadable unloaded presets in the selectable catalog ([#8558](https://github.com/earendil-works/pi/pull/8558) by [@cristinaponcela](https://github.com/cristinaponcela)).
 - Fixed `pi.registerFlag()` accepting default values that do not match the declared flag type ([#8064](https://github.com/earendil-works/pi/issues/8064)).
 - Fixed Z.AI Coding Plan defaults referencing the removed GLM-5.1 model ([#8096](https://github.com/earendil-works/pi/issues/8096)).
 - Fixed repeated ambiguous truncated-response recovery being mislabeled as context overflow ([#8130](https://github.com/earendil-works/pi/issues/8130)).
