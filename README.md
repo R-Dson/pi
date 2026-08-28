@@ -9,7 +9,7 @@
 
 # Pi
 
-Pi is an interactive, self-extensible coding agent. This fork of [earendil-works/pi](https://github.com/earendil-works/pi) merges upstream regularly and stays close to it. Three things differ out of the box: crashed sessions repair themselves on resume, tool output sent to the model is capped at 200 KB, and the binary talks to no one but your providers. Everything else is opt-in. Every fork decision and changed upstream file is recorded in the [fork ledger](docs/fork/upstream-integration.md).
+Pi is an interactive, self-extensible coding agent. This fork of [earendil-works/pi](https://github.com/earendil-works/pi) merges upstream regularly and stays close to it. Its headline work is cache-cost discipline: requests are built so the provider prompt cache covers them, which is what makes long sessions cheap (see [Cache discipline](#cache-discipline)). Three things differ out of the box: crashed sessions repair themselves on resume, tool output sent to the model is capped at 200 KB, and the binary talks to no one but your providers. Everything else is opt-in. Every fork decision and changed upstream file is recorded in the [fork ledger](docs/fork/upstream-integration.md).
 
 ## Install
 
@@ -36,7 +36,18 @@ pi -p "..."   # one-shot prompt
 
 Usage, providers, and extensions match upstream pi ([docs](https://pi.dev/docs/latest)).
 
-## What the fork changes
+## Cache discipline
+
+A long session lives or dies by the provider prompt cache. A cached input token costs a fraction of an uncached one, roughly 1/120 on DeepSeek and 1/10 on Anthropic, and the cache only hits when each request extends the previous one byte for byte. The fork adapts three ideas from [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (design reference: [A Programming Paradigm for Spatiotemporal Composability](https://arxiv.org/abs/2608.25512)): an append-only transcript, byte-stable request prefixes, and summarization that does not discard the cached prefix. Concretely:
+
+- **Compaction and branch summaries replay the previous request.** They used to serialize the whole conversation into a standalone summarizer request, a full cache miss at the exact moment the context is largest. They now send the same system prompt, tool list, and history with one appended instruction turn, so the largest call in a session runs almost entirely as a cache hit. This is where nearly all the savings are.
+- **Restarts keep the prefix.** Auto-discovered extensions and skills sort by path instead of filesystem order, so a restarted session replays an identical tool list instead of busting the cache. Summarizer calls carry the session routing id, keeping them in the provider's session-scoped cache bucket where one exists (OpenAI `prompt_cache_key`, Mistral affinity).
+- **Violations are visible, not silent.** A runtime monitor compares every outgoing request with the previous one. Legitimate rewrites (compaction, model switch, settings toggle, provider-side shaping) are announced and counted under their cause; anything else surfaces as an unexpected invalidation with the first diverging message index.
+- **`/session` shows the money.** Cache usage split by request kind (turn, compaction, branch summary, retry), run hit rate, and invalidation counts with attribution.
+
+The full design and slicing live in [docs/fork/cache-preserving-context-plan.md](docs/fork/cache-preserving-context-plan.md); the ledger records each shipped piece. A key-gated e2e test verifies real hit behavior against Anthropic when `ANTHROPIC_API_KEY` is set. SDK note: `compact()` and `generateSummary()` take a required `SummarizationPrefix` argument.
+
+## What else the fork changes
 
 - **Zero telemetry.** No install or version pings, no startup update check, no automatic extension updates, no remote model catalog. Provider requests carry no app-identification headers. A test asserts a representative session performs zero non-provider fetches; the [endpoint audit](docs/fork/upstream-integration.md#outbound-traffic-audit-issue-32) lists every outbound call.
 - **Crash-safe sessions.** Sessions are append-only JSONL. A torn tail is skipped on load; a tool call that never got its result gets a terminal error appended at resume, so the next request is accepted. `pi --validate-session <file>` diagnoses any session file with line numbers.
@@ -49,7 +60,6 @@ Usage, providers, and extensions match upstream pi ([docs](https://pi.dev/docs/l
   } } }
   ```
   Rules match tool name, capability, path, or command (token boundary, normalized paths). Deny beats ask beats allow; your rules beat the profile presets (`code`, `review`, `minimal`); `hide: true` removes a tool from the model's list. The same engine ships as an extension with no core surface: [`permission-policies.ts`](packages/coding-agent/examples/extensions/permission-policies.ts), configured by `.pi/permissions.json`, with interactive `ask` dialogs. [`read-only-mode.ts`](packages/coding-agent/examples/extensions/read-only-mode.ts) is the minimal variant.
-- **Cache-friendly requests.** Compaction and branch summaries replay the previous request with one appended instruction turn, so the largest call in a session hits the provider prompt cache instead of missing it. Auto-discovered extensions and skills sort by path, so a restart replays the same tool list. `/session` shows cache usage per request kind and counts prefix invalidations with their causes. SDK note: `compact()` and `generateSummary()` take a required `SummarizationPrefix` argument.
 
 Each feature sits in core only as far as pi's extension API allows; the ledger records why, and what it would take to move each one out.
 
@@ -61,7 +71,7 @@ Pi is developed by [Mario Zechner (badlogic)](https://github.com/badlogic) and [
 - The [fork ledger](docs/fork/upstream-integration.md) records every decision, every changed upstream file, and the sync procedure.
 - Contributions and bug reports for core Pi belong upstream ([CONTRIBUTING.md](CONTRIBUTING.md), [Discord](https://discord.com/invite/3cU7Bz4UPx)).
 
-The runtime layer was inspired by [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness). For isolation stronger than permission rules, see the containerization patterns in [packages/coding-agent/docs/containerization.md](packages/coding-agent/docs/containerization.md).
+The cache discipline and runtime layer were inspired by [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (see [Cache discipline](#cache-discipline)). For isolation stronger than permission rules, see the containerization patterns in [packages/coding-agent/docs/containerization.md](packages/coding-agent/docs/containerization.md).
 
 ## Packages
 
