@@ -138,6 +138,22 @@ describe("permission-policies example", () => {
 		expect(active()).toEqual(["read", "bash"]);
 	});
 
+	it("a global allow cannot un-deny a profile preset (same base layer)", () => {
+		const globalPath = process.env.PI_PERMISSION_POLICIES_GLOBAL as string;
+		writeFileSync(globalPath, `{ "rules": [{ "capability": "process.execute", "effect": "allow" }] }`);
+		tempDirs.push(globalPath);
+		const cwd = projectWithPolicy(`{ "profile": "review" }`);
+
+		// Global allow and the review preset compose under deny > ask > allow
+		// within the base layer: the preset's deny+hide wins, and only a
+		// project rule could override it.
+		const { active, sessionStart } = install(cwd, {
+			tools: [makeTool("read", "filesystem.read"), makeTool("bash", "process.execute")],
+		});
+		sessionStart("startup");
+		expect(active()).toEqual(["read"]);
+	});
+
 	it("warns and ignores an unreadable policy file", () => {
 		const cwd = projectWithPolicy(`{ not json`);
 		const warnings: string[] = [];

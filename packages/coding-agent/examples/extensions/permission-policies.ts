@@ -9,10 +9,12 @@
  * or a project's .pi/extensions/ (trusted projects only).
  *
  * Configuration lives in policy files instead of settings.json (extensions
- * cannot read pi settings): `.pi/permissions.json` in the project overrides
- * `~/.pi/agent/permissions.json` globally, and both layer over the profile
- * preset — any matching project rule beats a global rule, which beats the
- * profile. Shape (all fields optional):
+ * cannot read pi settings). Precedence, exactly as the evaluator computes it:
+ * a matching PROJECT rule decides outright; otherwise the GLOBAL rules and
+ * the profile preset compose as one base layer under deny > ask > allow — a
+ * global rule can strengthen a profile (deny over its ask/allow) but a global
+ * allow cannot un-deny a profile preset, so put allow-overrides in the
+ * project file. Shape (all fields optional):
  *
  * {
  *   "profile": "review",
@@ -23,14 +25,20 @@
  *   ]
  * }
  *
- * `ask` opens an interactive approval dialog when the run has UI; in print /
- * json / rpc modes it blocks with a reason the model can relay (the dialog is
- * the one thing this extension can do that core policy mode cannot).
+ * `ask` opens an interactive approval dialog when the run has UI (interactive
+ * and RPC modes); in print / json modes it blocks with a reason the model can
+ * relay (the dialog is the one thing this extension can do that core policy
+ * mode cannot).
  *
- * Ordering note: extensions run before user extensions mutate tool-call
- * arguments, so rules judge the model's original call — preferable for deny
- * rules — but a later extension can still rewrite an allowed call. Deny/ask
- * rules are the safe use; real isolation needs containerization.
+ * Ordering: `tool_call` handlers run in extension load order, so rules judge
+ * the call as this extension sees it — an earlier-loaded extension may have
+ * mutated the arguments, and a later one can still rewrite an allowed call.
+ * Deny/ask rules are the safe use; real isolation needs containerization.
+ *
+ * Interaction: each session_start re-applies visibility by re-activating
+ * every non-hidden tool, which overrides a narrower active-tool set another
+ * extension installed (read-only-mode and this extension both reshape the
+ * list; last session_start wins). `/reload` re-reads the policy files.
  */
 
 import { readFileSync } from "node:fs";
@@ -54,7 +62,11 @@ interface PermissionFile {
 /** Layered configuration resolved from the global and project policy files. */
 export interface ResolvedPermissionConfig {
 	profile: ToolProfile;
-	/** Base layer: profile preset first, global rules after (last match wins). */
+	/**
+	 * Base layer: profile preset plus the global rules. They compose under
+	 * deny > ask > allow (within one effect kind, the later rule wins), so a
+	 * global rule can strengthen the profile but not un-deny it.
+	 */
 	baseRules: PermissionRule[];
 	/** Override layer: project rules; any match beats the base layer. */
 	rules: PermissionRule[];
@@ -143,6 +155,9 @@ export default function permissionPolicies(pi: ExtensionAPI) {
 			baseRules: config.baseRules,
 			rules: config.rules,
 			defaultEffect: "allow",
+			// Match core policy mode: relative path rules resolve against the
+			// session cwd, not the process working directory.
+			cwd: ctx.cwd,
 		});
 		if (decision.kind === "allow") return;
 

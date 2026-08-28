@@ -87,7 +87,7 @@ Policy mode keeps upstream's allow-by-default: rules opt calls out. This one blo
 - Profiles are plain rule presets: `code` (default, everything), `review` (read-only: writes and process execution hidden), `minimal` (read/search tools only; bash, powershell, edit, and write are hidden).
 - A `deny` rule with `hide: true` removes the tool from the model's tool list entirely, so the model cannot even try to call it.
 
-The same engine ships as a plain extension with zero core surface: [`examples/extensions/permission-policies.ts`](packages/coding-agent/examples/extensions/permission-policies.ts). It configures itself from `.pi/permissions.json` (project) layered over `~/.pi/agent/permissions.json` (global) instead of settings, and its `ask` rules open an interactive approval dialog when the run has UI — the one thing core mode cannot do. Installing the extension is the recommended path; core `tools.permissions` remains for settings-integrated use.
+The same engine ships as a plain extension with zero core surface: [`examples/extensions/permission-policies.ts`](packages/coding-agent/examples/extensions/permission-policies.ts). It configures itself from policy files instead of settings — `.pi/permissions.json` (project) overrides everything; `~/.pi/agent/permissions.json` (global) composes with the profile preset under deny > ask > allow — and its `ask` rules open an interactive approval dialog when the run has UI (interactive and RPC modes), the one thing core mode cannot do. Installing the extension is the recommended path; core `tools.permissions` remains for settings-integrated use.
 
 ### Cache economics
 
