@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- Changed inherited `prepareNextTurn` and `prepareNextTurnWithContext` to run only after `shouldStopAfterTurn` and queued-message checks determine that the agent loop will start another assistant turn. They no longer run after final or terminating turns; move end-of-run work to `agent_end` handling ([#6879](https://github.com/earendil-works/pi/issues/6879)).
+
 ### Added
 
 - Added optional per-tool `timeoutMs`: past the deadline the agent loop aborts the tool's signal and records a terminal timeout error result, and the run continues; tools without a deadline behave as before ([#8](https://github.com/R-Dson/pi/issues/8)).
