@@ -461,9 +461,10 @@ export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = un
 	/** Optional guideline bullets appended to the default system prompt Guidelines section when this tool is active. */
 	promptGuidelines?: string[];
 	/**
-	 * Capability this tool exercises (e.g. "filesystem.read"), used by permission
-	 * policy evaluation when `tools.permissions.mode` is "policy". Undefined for
-	 * tools without a fixed capability; such tools match only permission rules
+	 * Capability this tool exercises (e.g. "filesystem.read"), reported on
+	 * `ToolInfo` so extensions can match tools by capability (see the
+	 * permission-policies and read-only-mode examples). Undefined for tools
+	 * without a fixed capability; such tools match only permission rules
 	 * that do not specify a `capability`.
 	 */
 	capability?: ToolCapability;

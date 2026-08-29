@@ -47,7 +47,6 @@ export {
 	evaluatePermissionLayered,
 	type PermissionDecision,
 	type PermissionRule,
-	type ProfileConfig,
 	resolveProfileConfig,
 	TOOL_CAPABILITIES,
 	type ToolCapability,

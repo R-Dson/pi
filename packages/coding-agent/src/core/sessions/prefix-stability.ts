@@ -58,7 +58,7 @@ export type PrefixInvalidationExpectation = Exclude<
 >;
 
 /** Wire-rewrite cause tags reported through the packages/ai `onWireRewrite` seam (issue #56). */
-export const PROVIDER_WIRE_REWRITE_CAUSES = ["provider-deferred-tool-load", "provider-auth-mode"] as const;
+const PROVIDER_WIRE_REWRITE_CAUSES = ["provider-deferred-tool-load", "provider-auth-mode"] as const;
 
 export type ProviderWireRewriteCause = (typeof PROVIDER_WIRE_REWRITE_CAUSES)[number];
 

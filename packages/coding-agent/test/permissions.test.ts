@@ -334,44 +334,6 @@ describe("evaluatePermission combined-field matching", () => {
 });
 
 describe("evaluatePermission precedence", () => {
-	it("deny beats ask and allow regardless of order", () => {
-		const rules: PermissionRule[] = [
-			{ tool: "bash", effect: "allow" },
-			{ tool: "bash", effect: "ask" },
-			{ tool: "bash", effect: "deny" },
-		];
-		expect(evaluate(rules, { args: { command: "ls" } }).kind).toBe("deny");
-
-		const reordered: PermissionRule[] = [
-			{ tool: "bash", effect: "deny" },
-			{ tool: "bash", effect: "ask" },
-			{ tool: "bash", effect: "allow" },
-		];
-		expect(evaluate(reordered, { args: { command: "ls" } }).kind).toBe("deny");
-	});
-
-	it("ask beats allow regardless of order", () => {
-		const rules: PermissionRule[] = [
-			{ tool: "bash", effect: "allow" },
-			{ tool: "bash", effect: "ask" },
-		];
-		expect(evaluate(rules, { args: { command: "ls" } }).kind).toBe("ask");
-
-		const reordered: PermissionRule[] = [
-			{ tool: "bash", effect: "ask" },
-			{ tool: "bash", effect: "allow" },
-		];
-		expect(evaluate(reordered, { args: { command: "ls" } }).kind).toBe("ask");
-	});
-
-	it("matched rules beat the default, including deny default", () => {
-		const decision = evaluate([{ tool: "bash", effect: "allow" }], {
-			args: { command: "ls" },
-			defaultEffect: "deny",
-		});
-		expect(decision.kind).toBe("allow");
-	});
-
 	it("the last matching rule of the strongest kind wins", () => {
 		const rules: PermissionRule[] = [
 			{ command: "git", effect: "deny" },

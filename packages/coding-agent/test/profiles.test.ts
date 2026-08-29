@@ -8,7 +8,7 @@ import {
 	type ToolProfile,
 } from "../src/core/tools/permissions.ts";
 
-const REVIEW_RULES = resolveProfileConfig("review").permissionRules;
+const REVIEW_RULES = resolveProfileConfig("review");
 
 function evaluateLayered(
 	rules: PermissionRule[],
@@ -30,39 +30,35 @@ function evaluateLayered(
 
 describe("resolveProfileConfig", () => {
 	it("resolves code (the default) to no rules", () => {
-		expect(resolveProfileConfig("code")).toEqual({ permissionRules: [] });
-		expect(resolveProfileConfig(undefined)).toEqual({ permissionRules: [] });
+		expect(resolveProfileConfig("code")).toEqual([]);
+		expect(resolveProfileConfig(undefined)).toEqual([]);
 	});
 
 	it("treats an unknown profile as code", () => {
-		expect(resolveProfileConfig("lite" as unknown as ToolProfile)).toEqual({ permissionRules: [] });
+		expect(resolveProfileConfig("lite" as unknown as ToolProfile)).toEqual([]);
 	});
 
 	it("resolves review to read-only rules: allow reads, deny+hide writes and process execution", () => {
-		expect(resolveProfileConfig("review")).toEqual({
-			permissionRules: [
-				{ capability: "filesystem.read", effect: "allow" },
-				{ capability: "filesystem.write", effect: "deny", hide: true },
-				{ capability: "process.execute", effect: "deny", hide: true },
-			],
-		});
+		expect(resolveProfileConfig("review")).toEqual([
+			{ capability: "filesystem.read", effect: "allow" },
+			{ capability: "filesystem.write", effect: "deny", hide: true },
+			{ capability: "process.execute", effect: "deny", hide: true },
+		]);
 	});
 
 	it("resolves minimal to static deny+hide rules for the non-core builtins", () => {
-		expect(resolveProfileConfig("minimal")).toEqual({
-			permissionRules: [
-				{ tool: "bash", effect: "deny", hide: true },
-				{ tool: "powershell", effect: "deny", hide: true },
-				{ tool: "edit", effect: "deny", hide: true },
-				{ tool: "write", effect: "deny", hide: true },
-			],
-		});
+		expect(resolveProfileConfig("minimal")).toEqual([
+			{ tool: "bash", effect: "deny", hide: true },
+			{ tool: "powershell", effect: "deny", hide: true },
+			{ tool: "edit", effect: "deny", hide: true },
+			{ tool: "write", effect: "deny", hide: true },
+		]);
 	});
 
 	it("returns a fresh rule list per call so callers cannot corrupt the preset", () => {
-		const rules = resolveProfileConfig("review").permissionRules;
+		const rules = resolveProfileConfig("review");
 		rules.push({ tool: "tamper", effect: "deny" });
-		expect(resolveProfileConfig("review").permissionRules).toHaveLength(3);
+		expect(resolveProfileConfig("review")).toHaveLength(3);
 	});
 });
 

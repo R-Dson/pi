@@ -50,6 +50,8 @@ interface InstallOptions {
 	tools?: ToolInfo[];
 	confirmAnswer?: boolean;
 	hasUI?: boolean;
+	/** Active list as another extension or the SDK left it before session_start. */
+	initialActive?: string[];
 }
 
 function install(cwd: string, options: InstallOptions = {}) {
@@ -58,6 +60,7 @@ function install(cwd: string, options: InstallOptions = {}) {
 	let active: string[] | undefined;
 	let confirmPrompt: string | undefined;
 	const tools = options.tools ?? [makeTool("read", "filesystem.read"), makeTool("bash", "process.execute")];
+	const initialActive = options.initialActive ?? tools.map((tool) => tool.name);
 
 	const ctx = {
 		cwd,
@@ -76,6 +79,7 @@ function install(cwd: string, options: InstallOptions = {}) {
 	const pi = {
 		on: (event: string, handler: Handler) => handlers.set(event, handler),
 		getAllTools: () => tools,
+		getActiveTools: () => active ?? initialActive,
 		setActiveTools: (names: string[]) => {
 			active = names;
 		},
@@ -184,6 +188,33 @@ describe("permission-policies example", () => {
 		});
 
 		sessionStart("startup");
+		expect(active()).toEqual(["read", "bash"]);
+	});
+
+	it("preserves another extension's narrower active set instead of broadening it", () => {
+		const cwd = projectWithPolicy(`{}`);
+		const { active, sessionStart } = install(cwd, {
+			tools: [makeTool("read", "filesystem.read"), makeTool("bash", "process.execute")],
+			// Someone deactivated bash before this extension loaded; no hide
+			// rule exists, so visibility must subtract nothing and add nothing.
+			initialActive: ["read"],
+		});
+
+		sessionStart("startup");
+		expect(active()).toEqual(["read"]);
+	});
+
+	it("restores a tool after its hide rule disappears on reload", () => {
+		const dir = projectWithPolicy(`{ "rules": [{ "tool": "bash", "effect": "deny", "hide": true }] }`);
+		const { active, sessionStart } = install(dir, {
+			tools: [makeTool("read", "filesystem.read"), makeTool("bash", "process.execute")],
+		});
+
+		sessionStart("startup");
+		expect(active()).toEqual(["read"]);
+
+		writeFileSync(join(dir, ".pi", "permissions.json"), `{}`);
+		sessionStart("reload");
 		expect(active()).toEqual(["read", "bash"]);
 	});
 

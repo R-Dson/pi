@@ -9,13 +9,9 @@ import type { AgentMessage, StreamFn } from "@earendil-works/pi-agent-core";
 import type { RetryCallbacks, RetryPolicy } from "@earendil-works/pi-ai";
 import { contentText } from "@earendil-works/pi-ai";
 import type { Context, Model, SimpleStreamOptions, Usage } from "@earendil-works/pi-ai/compat";
-import {
-	convertToLlm,
-	createBranchSummaryMessage,
-	createCompactionSummaryMessage,
-	createCustomMessage,
-} from "../messages.ts";
+import { convertToLlm } from "../messages.ts";
 import type { ReadonlySessionManager, SessionEntry } from "../session-manager.ts";
+import { sessionEntryToContextMessages } from "../sessions/projector.ts";
 import { INTERRUPTED_TOOL_RESULT_TEXT } from "../sessions/recovery.ts";
 import {
 	completeSummarization,
@@ -168,33 +164,16 @@ export function collectEntriesForBranchSummary(
 // ============================================================================
 
 /**
- * Extract AgentMessage from a session entry.
- * Similar to getMessageFromEntry in compaction.ts but also handles compaction entries.
- * Tool results are included: the replay sends structured messages, and a strict
- * provider (Anthropic) rejects a tool_use whose tool_result never arrives.
+ * Extract the conversation message for a session entry by delegating to the
+ * projector's conversion, so the replay mirrors the regular context projection
+ * exactly — including its hardening (null-content messages, empty summaries)
+ * and its entry-type filtering. Tool results are included: the replay sends
+ * structured messages, and a strict provider (Anthropic) rejects a tool_use
+ * whose tool_result never arrives.
  */
 function getMessageFromEntry(entry: SessionEntry): AgentMessage | undefined {
-	switch (entry.type) {
-		case "message":
-			return entry.message;
-
-		case "custom_message":
-			return createCustomMessage(entry.customType, entry.content, entry.display, entry.details, entry.timestamp);
-
-		case "branch_summary":
-			return createBranchSummaryMessage(entry.summary, entry.fromId, entry.timestamp);
-
-		case "compaction":
-			return createCompactionSummaryMessage(entry.summary, entry.tokensBefore, entry.timestamp);
-
-		// These don't contribute to conversation content
-		case "thinking_level_change":
-		case "model_change":
-		case "custom":
-		case "label":
-		case "session_info":
-			return undefined;
-	}
+	const [message] = sessionEntryToContextMessages(entry);
+	return message;
 }
 
 /** A replay unit: messages that must enter (or leave) the budget window together. */
