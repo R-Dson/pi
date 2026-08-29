@@ -71,8 +71,14 @@ node -e 'const [maj,min]=process.versions.node.split(".").map(Number);process.ex
   die 1 "Node.js >= 22.19 required, found $(node -p 'process.versions.node' 2>/dev/null || echo unknown). See https://nodejs.org."
 
 # --- Prefix ------------------------------------------------------------------
+# npm's global prefix when its bin dir is writable, else ~/.local — except a
+# version-managed prefix (mise/nvm/asdf/volta/fnm): globals installed there
+# vanish when the version manager switches or upgrades node, so ~/.local wins.
 
 npm_global_prefix="$(npm prefix -g 2>/dev/null || true)"
+case "$npm_global_prefix" in
+  */.local/share/mise/*|*/.nvm/*|*/.asdf/*|*/.volta/*|*/.fnm/*) npm_global_prefix="" ;;
+esac
 prefix="${PI_INSTALL_PREFIX:-}"
 if [ -z "$prefix" ]; then
   prefix="$HOME/.local"
