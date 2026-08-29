@@ -5,9 +5,9 @@
  * `~` expansion and the evaluation cwd — caller-supplied, defaulting to the
  * process working directory — for relative-path resolution). The rule evaluator
  * decides whether a tool call is allowed, requires approval, or is denied,
- * based on an ordered rule list. Execution-time enforcement lives in
- * AgentSession's beforeToolCall hook (opt-in via `tools.permissions.mode:
- * "policy"`).
+ * based on an ordered rule list. Core performs no enforcement: the consumer is
+ * the permission-policies extension (see examples/extensions/), which evaluates
+ * `tool_call` events and reshapes the active tool list from these decisions.
  *
  * Matching semantics:
  * - A rule matches when every field specified on the rule matches the call.
@@ -47,18 +47,14 @@
  * returned reason names the matched rule (index plus fields) so blocked tool
  * results can explain themselves to the model.
  *
- * Visibility: a deny rule with `hide: true` additionally removes matching tools
- * from the model-visible tool list in policy mode. Visibility is evaluated with
+ * Visibility: a deny rule with `hide: true` tells the consumer to remove
+ * matching tools from the model-visible tool list. Visibility is evaluated with
  * the tool's definition and NO call args, so rules whose matchers need a
  * `path`/`command` value never hide a tool (they still apply at call time).
- * Hidden tools stay registered internally; a stale model call to one fails in
- * the agent loop with a terminal "Tool <name> not found" error result before
- * the policy check runs.
  *
  * Profiles (`code`/`review`/`minimal`) resolve to ordinary base-layer rules
  * (see `resolveProfileConfig`); user rules override them through layered
- * evaluation (see `evaluatePermissionLayered`). Profiles apply only in policy
- * mode — legacy mode ignores them entirely.
+ * evaluation (see `evaluatePermissionLayered`).
  */
 
 import { homedir } from "node:os";
@@ -105,10 +101,11 @@ export interface PermissionRule {
 	/** What to do when the rule matches. */
 	effect: "allow" | "ask" | "deny";
 	/**
-	 * Deny-only: also remove matching tools from the model-visible tool list in
-	 * policy mode. Meaningless on allow/ask rules (ignored by the evaluator).
-	 * Visibility is evaluated with no call args, so rules whose matchers need a
-	 * `path`/`command` value never hide a tool — they still apply at call time.
+	 * Deny-only: also tells the consumer to remove matching tools from the
+	 * model-visible tool list. Meaningless on allow/ask rules (ignored by the
+	 * evaluator). Visibility is evaluated with no call args, so rules whose
+	 * matchers need a `path`/`command` value never hide a tool — they still
+	 * apply at call time.
 	 */
 	hide?: boolean;
 }
@@ -121,8 +118,9 @@ export type PermissionDecision = {
 	/** Whether a rule matched; false means the default effect decided. */
 	matched: boolean;
 	/**
-	 * True only when the winning rule is a deny rule with `hide: true`. Used by
-	 * policy-mode visibility filtering; `hide` on allow/ask rules has no effect.
+	 * True only when the winning rule is a deny rule with `hide: true`. Tells
+	 * the consumer to drop the tool from the model-visible list; `hide` on
+	 * allow/ask rules has no effect.
 	 */
 	hidden: boolean;
 };
@@ -182,7 +180,7 @@ function describeRule(rule: PermissionRule, index: number): string {
 
 /**
  * Tool profile: a named preset that resolves to ordinary permission rules
- * (see `resolveProfileConfig`). Profiles apply only in policy mode.
+ * (see `resolveProfileConfig`).
  */
 export type ToolProfile = "code" | "review" | "minimal";
 

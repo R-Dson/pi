@@ -1,12 +1,12 @@
 /**
  * Permission Policies Extension
  *
- * The fork's permission engine as a plain extension: the same rule semantics
- * as the core `tools.permissions` policy mode — token-boundary command
+ * The fork's permission engine as a plain extension: token-boundary command
  * matching, normalized path matching, deny > ask > allow precedence,
- * code/review/minimal profiles, and hide-from-the-model — with zero core
- * surface. Install by copying this file into ~/.pi/agent/extensions/ (global)
- * or a project's .pi/extensions/ (trusted projects only).
+ * code/review/minimal profiles, and hide-from-the-model, with zero core
+ * surface beyond the exported evaluator. Install by copying this file into
+ * ~/.pi/agent/extensions/ (global) or a project's .pi/extensions/ (trusted
+ * projects only).
  *
  * Configuration lives in policy files instead of settings.json (extensions
  * cannot read pi settings). Precedence, exactly as the evaluator computes it:
@@ -155,8 +155,8 @@ export default function permissionPolicies(pi: ExtensionAPI) {
 			baseRules: config.baseRules,
 			rules: config.rules,
 			defaultEffect: "allow",
-			// Match core policy mode: relative path rules resolve against the
-			// session cwd, not the process working directory.
+			// Relative path rules resolve against the session cwd, not the
+			// process working directory.
 			cwd: ctx.cwd,
 		});
 		if (decision.kind === "allow") return;
