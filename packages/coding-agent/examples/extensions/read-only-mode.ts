@@ -7,11 +7,11 @@
  * relay to the user.
  *
  * Built on pi's public extension API — the same `setActiveTools`,
- * `getAllTools`, and `tool_call` seams the fork's opt-in permission policies
- * use in core. Capability matching needs the fork's `ToolInfo.capability`;
- * on upstream pi the same file runs with the builtin-name fallback. Copy it
- * into ~/.pi/agent/extensions/ (global) or a project's .pi/extensions/
- * (trusted projects only) to use it; no settings are involved.
+ * `getAllTools`, and `tool_call` seams the permission-policies example uses.
+ * Capability matching needs the fork's `ToolInfo.capability`; on upstream pi
+ * the same file runs with the builtin-name fallback. Copy it into
+ * ~/.pi/agent/extensions/ (global) or a project's .pi/extensions/ (trusted
+ * projects only) to use it; no settings are involved.
  *
  * Limitations that come with staying on the public API: tools without
  * capability metadata and without a known name (some MCP or custom tools) are
@@ -34,11 +34,17 @@ function isBlockedTool(tool: Pick<ToolInfo, "name" | "capability">): boolean {
 
 export default function (pi: ExtensionAPI) {
 	pi.on("session_start", () => {
-		const visible = pi
-			.getAllTools()
-			.filter((tool) => !isBlockedTool(tool))
-			.map((tool) => tool.name);
-		pi.setActiveTools(visible);
+		// Subtract, never broaden: filter the current active list so a narrower
+		// set another extension installed survives. The blocked set is static,
+		// so unlike permission-policies there is nothing to remember for a
+		// later restore.
+		const blocked = new Set(
+			pi
+				.getAllTools()
+				.filter(isBlockedTool)
+				.map((tool) => tool.name),
+		);
+		pi.setActiveTools(pi.getActiveTools().filter((name) => !blocked.has(name)));
 	});
 
 	pi.on("tool_call", async (event: ToolCallEvent) => {

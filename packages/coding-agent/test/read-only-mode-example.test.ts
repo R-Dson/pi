@@ -22,19 +22,22 @@ function makeTool(name: string, capability?: string): ToolInfo {
 	};
 }
 
-function install(tools: ToolInfo[]) {
+function install(tools: ToolInfo[], initialActive?: string[]) {
 	const handlers = new Map<string, Handler>();
-	let active: string[] = [];
+	let active: string[] | undefined;
+	const initial = initialActive ?? tools.map((tool) => tool.name);
 	const pi = {
 		on: (event: string, handler: Handler) => handlers.set(event, handler),
 		getAllTools: () => tools,
+		getActiveTools: () => active ?? initial,
 		setActiveTools: (names: string[]) => {
 			active = names;
 		},
 	} as unknown as ExtensionAPI;
 	readOnlyMode(pi);
 	return {
-		active: () => active,
+		// Live array once the extension has run; empty before, which no test asserts.
+		active: () => active ?? [],
 		sessionStart: (reason: SessionStartEvent["reason"]) =>
 			handlers.get("session_start")?.({ type: "session_start", reason } as never),
 		toolCall: async (toolName: string) =>
@@ -67,6 +70,18 @@ describe("read-only-mode example", () => {
 		expect(active()).toEqual(["read"]);
 		active().push("bash");
 		sessionStart("reload");
+		expect(active()).toEqual(["read"]);
+	});
+
+	it("preserves a narrower active set instead of broadening it", () => {
+		const { active, sessionStart } = install(
+			[makeTool("read", "filesystem.read"), makeTool("grep"), makeTool("bash", "process.execute")],
+			// Someone deactivated bash AND grep before this extension loaded;
+			// the filter must subtract, not reactivate every non-blocked tool.
+			["read"],
+		);
+
+		sessionStart("startup");
 		expect(active()).toEqual(["read"]);
 	});
 

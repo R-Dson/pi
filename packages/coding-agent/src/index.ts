@@ -327,7 +327,6 @@ export {
 	type PowerShellToolDetails,
 	type PowerShellToolInput,
 	type PowerShellToolOptions,
-	type ProfileConfig,
 	type ReadOperations,
 	type ReadToolDetails,
 	type ReadToolInput,
