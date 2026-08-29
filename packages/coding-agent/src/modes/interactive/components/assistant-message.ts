@@ -1,5 +1,13 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
-import { Container, Markdown, type MarkdownTheme, Spacer, Text, truncateToWidth } from "@earendil-works/pi-tui";
+import {
+	Container,
+	Markdown,
+	type MarkdownTheme,
+	Spacer,
+	Text,
+	truncateToWidth,
+	visibleWidth,
+} from "@earendil-works/pi-tui";
 import type { MarkdownTransformer } from "../../../core/extensions/types.ts";
 import { getMarkdownTheme, theme } from "../theme/theme.ts";
 import { keyHint } from "./keybinding-hints.ts";
@@ -9,10 +17,26 @@ const OSC133_ZONE_START = "\x1b]133;A\x07";
 const OSC133_ZONE_END = "\x1b]133;B\x07";
 const OSC133_ZONE_FINAL = "\x1b]133;C\x07";
 
-const THINKING_PREVIEW_MAX_CHARS = 120;
+const THINKING_PREVIEW_MAX_WIDTH = 120;
 
 function hasVisibleThinking(content: AssistantMessage["content"][number]): boolean {
 	return content.type === "thinking" && content.thinking.trim().length > 0;
+}
+
+/**
+ * Count maximal runs of consecutive visible thinking blocks: the clock
+ * measures a run, and providers may deliver several adjacent thinking blocks
+ * as one visual run.
+ */
+function countThinkingRuns(content: AssistantMessage["content"]): number {
+	let runs = 0;
+	let inRun = false;
+	for (const block of content) {
+		const isThinking = hasVisibleThinking(block);
+		if (isThinking && !inRun) runs++;
+		inRun = isThinking;
+	}
+	return runs;
 }
 
 /**
@@ -38,14 +62,27 @@ function hasStreamedContentAfterNewestThinking(content: AssistantMessage["conten
 }
 
 /**
- * Collapse a thinking run into a single-line TAIL preview (whitespace
- * flattened, ellipsis at the start when truncated): the end of the trace is
- * what the model is thinking right now, the opening words rarely are.
+ * Collapse a thinking run into a single-line TAIL preview: the end of the
+ * trace is what the model is thinking right now, the opening words rarely
+ * are. Built from code points and budgeted by display columns, so wide
+ * characters cannot wrap the line and surrogate pairs stay whole.
  */
 function thinkingPreviewText(text: string): string {
 	const collapsed = text.replace(/\s+/g, " ").trim();
-	const head = truncateToWidth(collapsed, THINKING_PREVIEW_MAX_CHARS, "");
-	return collapsed.length > head.length ? `…${collapsed.slice(-(head.length - 1))}` : collapsed;
+	const head = truncateToWidth(collapsed, THINKING_PREVIEW_MAX_WIDTH, "");
+	if (collapsed.length <= head.length) {
+		return collapsed;
+	}
+	const chars = Array.from(collapsed);
+	let tail = "";
+	let width = 1; // the leading ellipsis
+	for (let i = chars.length - 1; i >= 0 && width < THINKING_PREVIEW_MAX_WIDTH; i--) {
+		const charWidth = visibleWidth(chars[i]);
+		if (width + charWidth > THINKING_PREVIEW_MAX_WIDTH) break;
+		tail = chars[i] + tail;
+		width += charWidth;
+	}
+	return `…${tail}`;
 }
 
 /**
@@ -65,6 +102,8 @@ export class AssistantMessageComponent extends Container {
 	private thinkingStartedAt: number | undefined;
 	/** Frozen thinking duration; undefined while the newest run is still streaming or when it was never streamed live. */
 	private thinkingDurationMs: number | undefined;
+	/** Visible thinking runs at the last update; growth restarts the clock (a new run began). */
+	private thinkingRunCount = 0;
 
 	constructor(
 		message?: AssistantMessage,
@@ -143,18 +182,25 @@ export class AssistantMessageComponent extends Container {
 			// The newest run has ended once non-thinking content streams after it.
 			const newestRunEnded = hasStreamedContentAfterNewestThinking(message.content);
 			if (isStreaming) {
+				const runs = countThinkingRuns(message.content);
+				if (this.thinkingRunCount > 0 && runs > this.thinkingRunCount) {
+					// New thinking runs arrived since the last update, possibly
+					// batched with the text that ends them: the clock measures
+					// the newest run, so restart it.
+					this.thinkingStartedAt = Date.now();
+					this.thinkingDurationMs = undefined;
+				}
 				this.thinkingStartedAt ??= Date.now();
 				if (newestRunEnded) {
 					// Freeze at the first non-thinking block after the newest run:
 					// post-thinking streaming is not thinking time.
 					this.thinkingDurationMs ??= Math.max(0, Date.now() - this.thinkingStartedAt);
-				} else if (this.thinkingDurationMs !== undefined) {
-					// A newer run reopened the clock: the timer and the eventual
-					// marker measure THIS run, not the span since the first.
-					this.thinkingStartedAt = Date.now();
-					this.thinkingDurationMs = undefined;
 				}
+				this.thinkingRunCount = runs;
 			} else if (this.thinkingStartedAt !== undefined) {
+				// Runs that arrive without streaming carry no clock of their own;
+				// a duration frozen here measures from the last streamed run's
+				// start, so treat it as a lower bound.
 				if (newestRunEnded) {
 					this.thinkingDurationMs ??= Math.max(0, Date.now() - this.thinkingStartedAt);
 				} else if (wasStreaming || this.thinkingDurationMs === undefined) {

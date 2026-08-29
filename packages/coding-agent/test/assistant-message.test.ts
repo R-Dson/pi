@@ -362,6 +362,67 @@ describe("AssistantMessageComponent", () => {
 			}
 		});
 
+		test("a burst update carrying a whole second run and its end still restarts the clock", () => {
+			initTheme("dark");
+			vi.useFakeTimers();
+			vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+			try {
+				const component = new AssistantMessageComponent(undefined, true);
+				component.updateContent(createAssistantMessage([{ type: "thinking", thinking: "run one streamed" }]), true);
+				vi.advanceTimersByTime(3000);
+				component.updateContent(
+					createAssistantMessage([
+						{ type: "thinking", thinking: "run one streamed" },
+						{ type: "text", text: "partial answer" },
+					]),
+					true,
+				);
+				// The next single update delivers the entire second run plus the
+				// text that ends it (batched provider chunk): the marker must
+				// measure the second run, not keep the first run's 3s.
+				component.updateContent(
+					createAssistantMessage([
+						{ type: "thinking", thinking: "run one streamed" },
+						{ type: "text", text: "partial answer" },
+						{ type: "thinking", thinking: "run two arrived whole" },
+						{ type: "text", text: "final answer" },
+					]),
+					true,
+				);
+				component.updateContent(
+					createAssistantMessage([
+						{ type: "thinking", thinking: "run one streamed" },
+						{ type: "text", text: "partial answer" },
+						{ type: "thinking", thinking: "run two arrived whole" },
+						{ type: "text", text: "final answer" },
+					]),
+					false,
+				);
+				const rendered = stripAnsi(component.render(100).join("\n"));
+
+				expect(rendered).toContain("Thought for 1s");
+				expect(rendered).not.toContain("Thought for 3s");
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+
+		test("wide characters keep the tail preview on one line and surrogates stay whole", () => {
+			initTheme("dark");
+
+			const component = new AssistantMessageComponent(undefined, true);
+			component.updateContent(
+				// Narrow head, wide tail: a code-unit slice takes 119 units of the
+				// CJK run (238 columns) and wraps; a width-budgeted tail fits.
+				createAssistantMessage([{ type: "thinking", thinking: `${"x".repeat(150)}${"中".repeat(60)}` }]),
+				true,
+			);
+			const lines = component.render(200).map(stripAnsi);
+
+			const cjkLines = lines.filter((line) => line.includes("中"));
+			expect(cjkLines).toHaveLength(1);
+		});
+
 		test("folds to a one-line duration marker when the message finishes", () => {
 			initTheme("dark");
 			vi.useFakeTimers();
