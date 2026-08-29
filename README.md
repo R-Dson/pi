@@ -19,7 +19,7 @@ From this repo's GitHub Releases. Nothing is published to npmjs.org. Needs Node.
 curl -fsSL https://raw.githubusercontent.com/R-Dson/pi/main/scripts/install-fork.sh | sh
 ```
 
-Re-running the install upgrades in place. Pin a version with `| sh -s 0.84.2-fork.2`.
+Re-running the install upgrades in place. Pin a version with `| sh -s 0.84.4-fork.4`.
 
 Alternatives:
 
