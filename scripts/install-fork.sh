@@ -180,6 +180,14 @@ else
   url="https://github.com/${repo}/releases/latest/download/pi-fork.tgz"
 fi
 
+# Refuse to clobber a binary npm does not own (a wrapper script, a manually
+# placed file): npm would fail with EEXIST anyway, so fail first with the fix.
+if [ -e "$bin_dir/pi" ] && [ ! -L "$bin_dir/pi" ] &&
+  ! npm ls -g --prefix "$prefix" --depth=0 "$package" >/dev/null 2>&1; then
+  die 1 "$bin_dir/pi exists and was not installed by npm under this prefix. Move it aside first (it is yours, not this installer's):
+  mv \"$bin_dir/pi\" \"${bin_dir}/pi.bak\""
+fi
+
 # Keep the .tgz suffix: npm infers tarball-vs-directory from the file name.
 tmpdir="$(mktemp -d)"
 trap 'rm -rf "$tmpdir"' EXIT
