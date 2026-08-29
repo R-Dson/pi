@@ -1,5 +1,5 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
-import { setKeybindings } from "@earendil-works/pi-tui";
+import { setKeybindings, visibleWidth } from "@earendil-works/pi-tui";
 import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
 import { KeybindingsManager } from "../src/core/keybindings.ts";
 import { AssistantMessageComponent } from "../src/modes/interactive/components/assistant-message.ts";
@@ -278,8 +278,26 @@ describe("AssistantMessageComponent", () => {
 
 			// The head is far beyond the preview window, so only tail-following
 			// can surface the final branch sentence.
-			expect(rendered).toMatch(/Thinking\.\.\. \d+\.\ds …/);
+			expect(rendered).toMatch(/Thinking\.\.\. \d+\.\ds/);
+			expect(rendered).toContain("…");
 			expect(rendered).toContain("now validating the final branch");
+		});
+
+		test("the live preview is a multi-line block showing the tail with newlines preserved", () => {
+			initTheme("dark");
+
+			const lines = Array.from({ length: 12 }, (_, i) => `reasoning step number ${i + 1} of the plan`);
+			const component = new AssistantMessageComponent(undefined, true);
+			component.updateContent(createAssistantMessage([{ type: "thinking", thinking: lines.join("\n") }]), true);
+			const rendered = stripAnsi(component.render(100).join("\n"));
+
+			expect(rendered).toContain("Thinking...");
+			// The block keeps the last lines whole; earlier ones are folded away
+			// behind the ellipsis marker.
+			expect(rendered).toContain("reasoning step number 12 of the plan");
+			expect(rendered).toContain("reasoning step number 11 of the plan");
+			expect(rendered).not.toContain("reasoning step number 1 of the plan");
+			expect(rendered).toContain("…");
 		});
 
 		test("replaces the preview when a newer thinking run arrives", () => {
@@ -407,39 +425,23 @@ describe("AssistantMessageComponent", () => {
 			}
 		});
 
-		test("wide characters keep the tail preview on one line and surrogates stay whole", () => {
+		test("wide characters wrap within the render width and surrogates stay whole", () => {
 			initTheme("dark");
 
 			const component = new AssistantMessageComponent(undefined, true);
 			component.updateContent(
-				// Narrow head, wide tail: a code-unit slice takes 119 units of the
-				// CJK run (238 columns) and wraps; a width-budgeted tail fits.
-				// The astral emoji pins that the code-point walk never splits a
-				// surrogate pair at the ellipsis boundary.
+				// Narrow head, wide tail, astral emoji: the block must wrap by
+				// display columns (no line wider than the render width) and the
+				// surrogate pair must never be split at a boundary.
 				createAssistantMessage([{ type: "thinking", thinking: `${"x".repeat(150)}${"中".repeat(59)}\u{1F600}` }]),
 				true,
 			);
 			const lines = component.render(200).map(stripAnsi);
 
-			const cjkLines = lines.filter((line) => line.includes("中"));
-			expect(cjkLines).toHaveLength(1);
-			expect(cjkLines[0]).toContain("😀");
-		});
-
-		test("a preview that overflows the width budget by a little still gets the leading ellipsis", () => {
-			initTheme("dark");
-
-			const component = new AssistantMessageComponent(undefined, true);
-			component.updateContent(
-				// 123 columns: only 3 over budget. A length-based fit check sees
-				// the truncated head (plus its 4-unit ANSI reset suffix) as "no
-				// overflow" and returns the full 123 columns untruncated.
-				createAssistantMessage([{ type: "thinking", thinking: "a".repeat(123) }]),
-				true,
-			);
-			const rendered = stripAnsi(component.render(200).join("\n"));
-
-			expect(rendered).toContain("…");
+			for (const line of lines) {
+				expect(visibleWidth(line)).toBeLessThanOrEqual(200);
+			}
+			expect(lines.some((line) => line.includes("😀"))).toBe(true);
 		});
 
 		test("a whitespace-only thinking block between visible blocks does not restart the timer", () => {
@@ -601,19 +603,6 @@ describe("AssistantMessageComponent", () => {
 
 			expect(rendered).toContain("Thinking...");
 			expect(rendered).not.toContain("reloaded reasoning");
-		});
-
-		test("ellipsizes the live preview after 120 characters, keeping the tail", () => {
-			initTheme("dark");
-
-			const words = Array.from({ length: 60 }, (_, i) => `w${String(i).padStart(2, "0")}`);
-			const component = new AssistantMessageComponent(undefined, true);
-			component.updateContent(createAssistantMessage([{ type: "thinking", thinking: words.join(" ") }]), true);
-			const rendered = stripAnsi(component.render(200).join("\n"));
-
-			expect(rendered).toContain("w59");
-			expect(rendered).not.toContain("w00");
-			expect(rendered).toContain("…");
 		});
 
 		test("updates the preview in place as the newest run grows", () => {

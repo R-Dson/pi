@@ -1,15 +1,17 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
-import { Container, Markdown, type MarkdownTheme, Spacer, Text, visibleWidth } from "@earendil-works/pi-tui";
+import { Container, Markdown, type MarkdownTheme, Spacer, Text } from "@earendil-works/pi-tui";
 import type { MarkdownTransformer } from "../../../core/extensions/types.ts";
 import { getMarkdownTheme, theme } from "../theme/theme.ts";
 import { keyHint } from "./keybinding-hints.ts";
 import { createMarkdownTransform } from "./markdown-transform.ts";
+import { truncateToVisualLines } from "./visual-truncate.ts";
 
 const OSC133_ZONE_START = "\x1b]133;A\x07";
 const OSC133_ZONE_END = "\x1b]133;B\x07";
 const OSC133_ZONE_FINAL = "\x1b]133;C\x07";
 
-const THINKING_PREVIEW_MAX_WIDTH = 120;
+/** Lines of thinking tail shown under the live preview header. */
+const THINKING_PREVIEW_LINES = 4;
 
 function hasVisibleThinking(content: AssistantMessage["content"][number]): boolean {
 	return content.type === "thinking" && content.thinking.trim().length > 0;
@@ -57,29 +59,6 @@ function hasStreamedContentAfterNewestThinking(content: AssistantMessage["conten
 		}
 	}
 	return newestThinking !== -1 && content.slice(newestThinking + 1).some(isStreamedNonThinking);
-}
-
-/**
- * Collapse a thinking run into a single-line TAIL preview: the end of the
- * trace is what the model is thinking right now, the opening words rarely
- * are. Built from code points and budgeted by display columns, so wide
- * characters cannot wrap the line and surrogate pairs stay whole.
- */
-function thinkingPreviewText(text: string): string {
-	const collapsed = text.replace(/\s+/g, " ").trim();
-	if (visibleWidth(collapsed) <= THINKING_PREVIEW_MAX_WIDTH) {
-		return collapsed;
-	}
-	const chars = Array.from(collapsed);
-	let tail = "";
-	let width = 1; // the leading ellipsis
-	for (let i = chars.length - 1; i >= 0 && width < THINKING_PREVIEW_MAX_WIDTH; i--) {
-		const charWidth = visibleWidth(chars[i]);
-		if (width + charWidth > THINKING_PREVIEW_MAX_WIDTH) break;
-		tail = chars[i] + tail;
-		width += charWidth;
-	}
-	return `…${tail}`;
 }
 
 /**
@@ -265,26 +244,64 @@ export class AssistantMessageComponent extends Container {
 					// Live preview only while the newest run is still the trailing
 					// streaming content; once non-thinking blocks follow it (or the
 					// message finished), collapse to the one-line marker. The timer
-					// recomputes on every message_update (token) render, which flows
+					// recomputes on every message_update render, which flows
 					// continuously while thinking; no separate tick needed.
 					const runEnded = message.content.slice(i + 1).some(isStreamedNonThinking);
-					let line: string;
+					const expandHint = `${theme.fg("muted", "(")}${keyHint("app.thinking.toggle", "to expand thinking")}${theme.fg("muted", ")")}`;
 					if (this.isStreaming && !runEnded) {
 						const elapsedS =
 							this.thinkingStartedAt !== undefined
 								? Math.max(0, (Date.now() - this.thinkingStartedAt) / 1000)
 								: 0;
-						line = `${this.hiddenThinkingLabel} ${elapsedS.toFixed(1)}s ${thinkingPreviewText(thinkingBlocks.join("\n\n"))}`;
+						// Header line, then a tail block of the last visual lines:
+						// completed lines never change as tokens arrive, so the
+						// block reads as steady text with only the newest line
+						// moving — the same trick the bash preview uses.
+						const header = `${this.hiddenThinkingLabel} ${elapsedS.toFixed(1)}s`;
+						this.contentContainer.addChild(
+							new Text(`${theme.italic(theme.fg("thinkingText", header))} ${expandHint}`, this.outputPad, 0),
+						);
+						const previewText = thinkingBlocks
+							.join("\n\n")
+							.replace(/\r\n|\r/g, "\n")
+							.replace(/\n+$/, "");
+						const styledText = previewText
+							.split("\n")
+							.map((line) => theme.italic(theme.fg("thinkingText", line)))
+							.join("\n");
+						let cachedWidth: number | undefined;
+						let cachedLines: string[] | undefined;
+						this.contentContainer.addChild({
+							render: (width: number) => {
+								if (cachedLines === undefined || cachedWidth !== width) {
+									const result = truncateToVisualLines(
+										styledText,
+										THINKING_PREVIEW_LINES,
+										width,
+										this.outputPad,
+									);
+									cachedLines =
+										result.skippedCount > 0
+											? [theme.italic(theme.fg("thinkingText", "…")), ...result.visualLines]
+											: result.visualLines;
+									cachedWidth = width;
+								}
+								return cachedLines ?? [];
+							},
+							invalidate: () => {
+								cachedWidth = undefined;
+								cachedLines = undefined;
+							},
+						});
 					} else {
-						line =
+						const line =
 							this.thinkingDurationMs !== undefined
 								? `Thought for ${Math.max(1, Math.round(this.thinkingDurationMs / 1000))}s`
 								: this.hiddenThinkingLabel;
+						this.contentContainer.addChild(
+							new Text(`${theme.italic(theme.fg("thinkingText", line))} ${expandHint}`, this.outputPad, 0),
+						);
 					}
-					const expandHint = `${theme.fg("muted", "(")}${keyHint("app.thinking.toggle", "to expand thinking")}${theme.fg("muted", ")")}`;
-					this.contentContainer.addChild(
-						new Text(`${theme.italic(theme.fg("thinkingText", line))} ${expandHint}`, this.outputPad, 0),
-					);
 				} else {
 					// Render each run of thinking blocks as one Markdown section.
 					this.contentContainer.addChild(
