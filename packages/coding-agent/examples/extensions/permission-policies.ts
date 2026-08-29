@@ -35,10 +35,14 @@
  * mutated the arguments, and a later one can still rewrite an allowed call.
  * Deny/ask rules are the safe use; real isolation needs containerization.
  *
- * Interaction: each session_start re-applies visibility by re-activating
- * every non-hidden tool, which overrides a narrower active-tool set another
- * extension installed (read-only-mode and this extension both reshape the
- * list; last session_start wins). `/reload` re-reads the policy files.
+ * Interaction: each session_start re-applies visibility by subtracting
+ * hidden tools from the active list — plus anything this extension hid
+ * before, so removing a hide rule and running /reload restores the tool —
+ * which preserves a narrower active-tool set another extension installed.
+ * A tool registered mid-session stays visible until the next session_start
+ * or /reload (there is no tool-registration event to hook), but call-time
+ * deny/ask rules apply to it immediately. `/reload` re-reads the policy
+ * files.
  */
 
 import { readFileSync } from "node:fs";
@@ -111,6 +115,9 @@ function describeDecision(decision: PermissionDecision, config: ResolvedPermissi
 
 export default function permissionPolicies(pi: ExtensionAPI) {
 	let config: ResolvedPermissionConfig | undefined;
+	// Tools hidden at the last applyVisibility call; they left the active
+	// list, so only this memory can bring them back when a hide rule goes.
+	let hiddenByUs: string[] = [];
 
 	const reload = (cwd: string, warn: (message: string) => void) => {
 		config = resolvePermissionConfig(cwd, warn);
@@ -120,19 +127,24 @@ export default function permissionPolicies(pi: ExtensionAPI) {
 		const resolved = config;
 		if (!resolved) return;
 		const tools = pi.getAllTools();
-		const visible = tools
-			.filter((tool) => {
-				const decision = evaluatePermissionLayered({
-					toolName: tool.name,
-					capability: tool.capability,
-					args: {},
-					baseRules: resolved.baseRules,
-					rules: resolved.rules,
-					defaultEffect: "allow",
-				});
-				return !decision.hidden;
-			})
-			.map((tool) => tool.name);
+		// Subtract, never broaden: candidates are the current active list plus
+		// what we hid before. Another extension's narrower active set survives,
+		// and a removed hide rule restores its tool on the next session_start.
+		const candidates = [...new Set([...pi.getActiveTools(), ...hiddenByUs])];
+		const visible: string[] = [];
+		const hidden: string[] = [];
+		for (const name of candidates) {
+			const decision = evaluatePermissionLayered({
+				toolName: name,
+				capability: capabilityOf(tools, name),
+				args: {},
+				baseRules: resolved.baseRules,
+				rules: resolved.rules,
+				defaultEffect: "allow",
+			});
+			(decision.hidden ? hidden : visible).push(name);
+		}
+		hiddenByUs = hidden;
 		pi.setActiveTools(visible);
 	};
 
