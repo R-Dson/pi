@@ -265,6 +265,23 @@ describe("AssistantMessageComponent", () => {
 			expect(rendered).toContain("Considering the first approach");
 		});
 
+		test("follows the tail of a long thinking run with a live timer", () => {
+			initTheme("dark");
+
+			const head = "parsing the input token by token and considering ".repeat(10);
+			const component = new AssistantMessageComponent(undefined, true);
+			component.updateContent(
+				createAssistantMessage([{ type: "thinking", thinking: `${head}now validating the final branch` }]),
+				true,
+			);
+			const rendered = stripAnsi(component.render(100).join("\n"));
+
+			// The head is far beyond the preview window, so only tail-following
+			// can surface the final branch sentence.
+			expect(rendered).toMatch(/Thinking\.\.\. \d+\.\ds …/);
+			expect(rendered).toContain("now validating the final branch");
+		});
+
 		test("replaces the preview when a newer thinking run arrives", () => {
 			initTheme("dark");
 
@@ -304,6 +321,45 @@ describe("AssistantMessageComponent", () => {
 			expect(rendered).toContain("hello");
 			expect(rendered).not.toContain("Thinking...");
 			expect(rendered).not.toContain("Thought for");
+		});
+
+		test("the live timer measures the newest run, not the span since the first", () => {
+			initTheme("dark");
+			vi.useFakeTimers();
+			vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+			try {
+				const component = new AssistantMessageComponent(undefined, true);
+				// Run one streams for 5s, then text arrives and freezes its marker.
+				component.updateContent(
+					createAssistantMessage([{ type: "thinking", thinking: "first thought about parsing" }]),
+					true,
+				);
+				vi.advanceTimersByTime(5000);
+				component.updateContent(
+					createAssistantMessage([
+						{ type: "thinking", thinking: "first thought about parsing" },
+						{ type: "text", text: "partial answer" },
+					]),
+					true,
+				);
+				// Five seconds later a second run starts: its preview timer must
+				// count from this run's start, not from the session's first.
+				vi.advanceTimersByTime(5000);
+				component.updateContent(
+					createAssistantMessage([
+						{ type: "thinking", thinking: "first thought about parsing" },
+						{ type: "text", text: "partial answer" },
+						{ type: "thinking", thinking: "now verifying the result" },
+					]),
+					true,
+				);
+				const rendered = stripAnsi(component.render(100).join("\n"));
+
+				expect(rendered).toContain("Thinking... 0.0s");
+				expect(rendered).not.toContain("Thinking... 10.0s");
+			} finally {
+				vi.useRealTimers();
+			}
 		});
 
 		test("folds to a one-line duration marker when the message finishes", () => {
@@ -437,7 +493,7 @@ describe("AssistantMessageComponent", () => {
 			expect(rendered).not.toContain("reloaded reasoning");
 		});
 
-		test("ellipsizes the live preview after 120 characters", () => {
+		test("ellipsizes the live preview after 120 characters, keeping the tail", () => {
 			initTheme("dark");
 
 			const words = Array.from({ length: 60 }, (_, i) => `w${String(i).padStart(2, "0")}`);
@@ -445,8 +501,8 @@ describe("AssistantMessageComponent", () => {
 			component.updateContent(createAssistantMessage([{ type: "thinking", thinking: words.join(" ") }]), true);
 			const rendered = stripAnsi(component.render(200).join("\n"));
 
-			expect(rendered).toContain("w00");
-			expect(rendered).not.toContain("w40");
+			expect(rendered).toContain("w59");
+			expect(rendered).not.toContain("w00");
 			expect(rendered).toContain("…");
 		});
 

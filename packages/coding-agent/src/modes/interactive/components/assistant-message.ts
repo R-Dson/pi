@@ -38,12 +38,14 @@ function hasStreamedContentAfterNewestThinking(content: AssistantMessage["conten
 }
 
 /**
- * Collapse a thinking run into a single-line preview (whitespace flattened,
- * width-aware ellipsis after THINKING_PREVIEW_MAX_CHARS display columns).
+ * Collapse a thinking run into a single-line TAIL preview (whitespace
+ * flattened, ellipsis at the start when truncated): the end of the trace is
+ * what the model is thinking right now, the opening words rarely are.
  */
 function thinkingPreviewText(text: string): string {
 	const collapsed = text.replace(/\s+/g, " ").trim();
-	return truncateToWidth(collapsed, THINKING_PREVIEW_MAX_CHARS, "…");
+	const head = truncateToWidth(collapsed, THINKING_PREVIEW_MAX_CHARS, "");
+	return collapsed.length > head.length ? `…${collapsed.slice(-(head.length - 1))}` : collapsed;
 }
 
 /**
@@ -146,8 +148,10 @@ export class AssistantMessageComponent extends Container {
 					// Freeze at the first non-thinking block after the newest run:
 					// post-thinking streaming is not thinking time.
 					this.thinkingDurationMs ??= Math.max(0, Date.now() - this.thinkingStartedAt);
-				} else {
-					// A newer run is streaming after earlier content: reopen the clock.
+				} else if (this.thinkingDurationMs !== undefined) {
+					// A newer run reopened the clock: the timer and the eventual
+					// marker measure THIS run, not the span since the first.
+					this.thinkingStartedAt = Date.now();
 					this.thinkingDurationMs = undefined;
 				}
 			} else if (this.thinkingStartedAt !== undefined) {
@@ -217,11 +221,17 @@ export class AssistantMessageComponent extends Container {
 
 					// Live preview only while the newest run is still the trailing
 					// streaming content; once non-thinking blocks follow it (or the
-					// message finished), collapse to the one-line marker.
+					// message finished), collapse to the one-line marker. The timer
+					// recomputes on every message_update (token) render, which flows
+					// continuously while thinking; no separate tick needed.
 					const runEnded = message.content.slice(i + 1).some(isStreamedNonThinking);
 					let line: string;
 					if (this.isStreaming && !runEnded) {
-						line = `${this.hiddenThinkingLabel} ${thinkingPreviewText(thinkingBlocks.join("\n\n"))}`;
+						const elapsedS =
+							this.thinkingStartedAt !== undefined
+								? Math.max(0, (Date.now() - this.thinkingStartedAt) / 1000)
+								: 0;
+						line = `${this.hiddenThinkingLabel} ${elapsedS.toFixed(1)}s ${thinkingPreviewText(thinkingBlocks.join("\n\n"))}`;
 					} else {
 						line =
 							this.thinkingDurationMs !== undefined
