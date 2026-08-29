@@ -16,7 +16,7 @@ The workflow builds the workspace, verifies the `v<version>` tag does not alread
 
 The standalone tarball carries the coding-agent release bundle — all workspace packages are already inlined into it — plus only the dependencies that resolve from the public npm registry. No `.npmrc` mapping, no PAT.
 
-The install script is the zero-friction path — it verifies `npm` and `curl`, downloads the tarball to a temp file with `curl`, and installs it with `npm install -g --ignore-scripts` (works on every npm version). When you pass an explicit version older than the installed `pi`, it prints a downgrade warning naming both versions before installing (warning only — downgrades stay possible; there is no tty to prompt on under `curl | sh`):
+The install script is the zero-friction path. It runs preflight checks (curl, npm, Node >= 22.19), picks npm's global prefix when its bin directory is writable and falls back to `~/.local` otherwise (pass `--prefix DIR` or `PI_INSTALL_PREFIX` to choose explicitly), reports any existing `pi` on PATH — a mise-managed or no-fork-suffix (upstream) install gets a warning naming which binary will shadow which — and warns before a downgrade of the install it replaces (warning only; there are no prompts, since `curl | sh` gives no tty guarantee). The tarball downloads to a temp file with `curl` and installs with `npm install -g --ignore-scripts` (works on every npm version), then verifies the installed binary and tells you when PATH resolves `pi` somewhere else. `--uninstall` removes the fork from the install prefix:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/R-Dson/pi/main/scripts/install-fork.sh | sh
