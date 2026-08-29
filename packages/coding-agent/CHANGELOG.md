@@ -23,6 +23,7 @@
 
 ### Fixed
 
+- Fixed branch-summary replay entries bypassing the projector's conversion hardening: the branch summarizer now converts session entries through the same `sessionEntryToContextMessages` the regular context path uses, so null-content messages replay as empty content and branch summaries with empty summaries are skipped instead of diverging from what a regular request would send.
 - Fixed auto-discovered extensions and skills enumerating in filesystem readdir order: collections now sort by resolved path so a restarted session replays an identical tool list and skills section instead of busting the provider prompt cache. Settings-declared order, package manifests, and builtin tool order are unchanged; the first request after upgrading may miss the cache once ([#49](https://github.com/R-Dson/pi/issues/49)).
 
 ### Removed
