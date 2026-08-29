@@ -5,22 +5,6 @@ import type { Settings } from "../../src/core/settings-manager.ts";
 import type { PermissionRule, ToolProfile } from "../../src/core/tools/permissions.ts";
 import { createHarness, getAssistantTexts, type Harness } from "./harness.ts";
 
-function getToolResult(harness: Harness): ToolResultMessage {
-	const toolResult = harness.session.messages.find((message) => message.role === "toolResult") as
-		| ToolResultMessage
-		| undefined;
-	expect(toolResult).toBeDefined();
-	return toolResult as ToolResultMessage;
-}
-
-function getToolResultText(harness: Harness): string {
-	const toolResult = getToolResult(harness);
-	return toolResult.content
-		.filter((part): part is { type: "text"; text: string } => part.type === "text")
-		.map((part) => part.text)
-		.join("\n");
-}
-
 /**
  * Settings as a v0.84.3-fork.3 settings file would carry them: the
  * `tools.permissions` keys are untyped JSON at runtime and unknown to the
@@ -30,33 +14,6 @@ function stalePolicySettings(rules: PermissionRule[], profile?: ToolProfile): Pa
 	return {
 		tools: { permissions: { mode: "policy", rules, ...(profile ? { profile } : {}) } },
 	} as unknown as Partial<Settings>;
-}
-
-/**
- * Runs one prompt whose first model call records the model-visible tool list
- * (the tools array sent to the provider) and then finishes the turn.
- */
-async function captureVisibleTools(harness: Harness): Promise<string[]> {
-	let visibleTools: string[] = [];
-	harness.setResponses([
-		(context) => {
-			visibleTools = (context.tools ?? []).map((tool) => tool.name);
-			return fauxAssistantMessage("done");
-		},
-	]);
-	await harness.session.prompt("list your tools");
-	expect(getAssistantTexts(harness)).toContain("done");
-	return visibleTools;
-}
-
-async function runBashToolCall(harness: Harness, toolCallId: string): Promise<void> {
-	harness.setResponses([
-		fauxAssistantMessage([fauxToolCall("bash", { command: "printf permission-probe" }, { id: toolCallId })], {
-			stopReason: "toolUse",
-		}),
-		fauxAssistantMessage("done"),
-	]);
-	await harness.session.prompt("run the bash tool");
 }
 
 /**
@@ -79,10 +36,27 @@ describe("core ignores tools.permissions settings", () => {
 		});
 		harnesses.push(harness);
 
-		await runBashToolCall(harness, "call_deny_ignored");
+		harness.setResponses([
+			fauxAssistantMessage(
+				[fauxToolCall("bash", { command: "printf permission-probe" }, { id: "call_deny_ignored" })],
+				{
+					stopReason: "toolUse",
+				},
+			),
+			fauxAssistantMessage("done"),
+		]);
+		await harness.session.prompt("run the bash tool");
 
-		expect(getToolResult(harness).isError ?? false).toBe(false);
-		expect(getToolResultText(harness)).toContain("permission-probe");
+		const toolResult = harness.session.messages.find((message) => message.role === "toolResult") as
+			| ToolResultMessage
+			| undefined;
+		expect(toolResult).toBeDefined();
+		expect(toolResult?.isError ?? false).toBe(false);
+		const text = (toolResult?.content ?? [])
+			.filter((part): part is { type: "text"; text: string } => part.type === "text")
+			.map((part) => part.text)
+			.join("\n");
+		expect(text).toContain("permission-probe");
 		expect(getAssistantTexts(harness)).toContain("done");
 	});
 
@@ -92,6 +66,16 @@ describe("core ignores tools.permissions settings", () => {
 		});
 		harnesses.push(harness);
 
-		expect(await captureVisibleTools(harness)).toEqual(["read", "bash", "edit", "write"]);
+		let visibleTools: string[] = [];
+		harness.setResponses([
+			(context) => {
+				visibleTools = (context.tools ?? []).map((tool) => tool.name);
+				return fauxAssistantMessage("done");
+			},
+		]);
+		await harness.session.prompt("list your tools");
+
+		expect(getAssistantTexts(harness)).toContain("done");
+		expect(visibleTools).toEqual(["read", "bash", "edit", "write"]);
 	});
 });

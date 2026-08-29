@@ -64,7 +64,7 @@ interface PermissionFile {
 }
 
 /** Layered configuration resolved from the global and project policy files. */
-export interface ResolvedPermissionConfig {
+interface ResolvedPermissionConfig {
 	profile: ToolProfile;
 	/**
 	 * Base layer: profile preset plus the global rules. They compose under
@@ -100,7 +100,7 @@ export function resolvePermissionConfig(cwd: string, warn: (message: string) => 
 	const projectFile = readPermissionFile(projectPath, warn);
 
 	const profile = projectFile.profile ?? globalFile.profile ?? "code";
-	const baseRules = [...resolveProfileConfig(profile).permissionRules, ...(globalFile.rules ?? [])];
+	const baseRules = [...resolveProfileConfig(profile), ...(globalFile.rules ?? [])];
 	return { profile, baseRules, rules: projectFile.rules ?? [], globalPath, projectPath };
 }
 

@@ -184,15 +184,6 @@ function describeRule(rule: PermissionRule, index: number): string {
  */
 export type ToolProfile = "code" | "review" | "minimal";
 
-/** A profile preset resolved to plain configuration. */
-export interface ProfileConfig {
-	/**
-	 * Base-layer permission rules. Any matching user rule overrides them (see
-	 * `evaluatePermissionLayered`); non-matching profile rules still apply.
-	 */
-	permissionRules: PermissionRule[];
-}
-
 /**
  * Static profile presets. Kept as plain rule lists — no runtime cleverness:
  * - code (default): all tools, default-allow.
@@ -204,30 +195,29 @@ export interface ProfileConfig {
  *   cannot express "everything except" under deny > ask > allow, and custom/extension
  *   tools have no static name list, so they stay visible.
  */
-const PROFILE_PRESETS: Record<ToolProfile, ProfileConfig> = {
-	code: { permissionRules: [] },
-	review: {
-		permissionRules: [
-			{ capability: "filesystem.read", effect: "allow" },
-			{ capability: "filesystem.write", effect: "deny", hide: true },
-			{ capability: "process.execute", effect: "deny", hide: true },
-		],
-	},
-	minimal: {
-		permissionRules: [
-			{ tool: "bash", effect: "deny", hide: true },
-			{ tool: "powershell", effect: "deny", hide: true },
-			{ tool: "edit", effect: "deny", hide: true },
-			{ tool: "write", effect: "deny", hide: true },
-		],
-	},
+const PROFILE_PRESETS: Record<ToolProfile, PermissionRule[]> = {
+	code: [],
+	review: [
+		{ capability: "filesystem.read", effect: "allow" },
+		{ capability: "filesystem.write", effect: "deny", hide: true },
+		{ capability: "process.execute", effect: "deny", hide: true },
+	],
+	minimal: [
+		{ tool: "bash", effect: "deny", hide: true },
+		{ tool: "powershell", effect: "deny", hide: true },
+		{ tool: "edit", effect: "deny", hide: true },
+		{ tool: "write", effect: "deny", hide: true },
+	],
 };
 
-/** Resolve a profile name to its preset. Undefined and unknown values resolve to `code`. */
-export function resolveProfileConfig(profile: ToolProfile | undefined): ProfileConfig {
+/**
+ * Resolve a profile name to its base-layer rule list. Undefined and unknown
+ * values resolve to `code`. Fresh list per call so callers cannot corrupt the
+ * shared preset.
+ */
+export function resolveProfileConfig(profile: ToolProfile | undefined): PermissionRule[] {
 	const preset = PROFILE_PRESETS[profile ?? "code"] ?? PROFILE_PRESETS.code;
-	// Fresh list per call so callers cannot corrupt the shared preset.
-	return { permissionRules: [...preset.permissionRules] };
+	return [...preset];
 }
 
 /**

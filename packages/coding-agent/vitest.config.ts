@@ -22,6 +22,13 @@ export default mergeConfig(
 		},
 		resolve: {
 			alias: [
+				// Examples and some tests import the package by its own name;
+				// without this alias they resolve the stale dist/ build instead
+				// of the sources under test.
+				{
+					find: /^@earendil-works\/pi-coding-agent$/,
+					replacement: fileURLToPath(new URL("./src/index.ts", import.meta.url)),
+				},
 				{
 					find: /^@earendil-works\/pi-client$/,
 					replacement: fileURLToPath(new URL("../client/src/index.ts", import.meta.url)),
