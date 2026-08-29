@@ -40,7 +40,7 @@ Usage: install.sh [version]     install latest release, or a pinned version
        install.sh --uninstall   remove the fork from the install prefix
 Env:   PI_INSTALL_PREFIX=DIR    install under DIR (bin in DIR/bin)
 EOF
-  exit "${1:-0}"
+  exit 0
 }
 
 die() {
@@ -95,24 +95,26 @@ if [ "$want_uninstall" = 1 ]; then
   exit 0
 fi
 
+# Refuse to clobber a binary npm does not own (a wrapper script, a symlink, a
+# manually placed file): npm would fail with EEXIST anyway, so fail first with
+# the fix. Runs before anything executes the existing binary.
+if [ -e "$bin_dir/pi" ] &&
+  ! npm ls -g --prefix "$prefix" --depth=0 "$package" >/dev/null 2>&1; then
+  die 1 "$bin_dir/pi exists and was not installed by npm under this prefix. Move it aside first (it is yours, not this installer's):
+  mv \"$bin_dir/pi\" \"${bin_dir}/pi.bak\""
+fi
+
 # --- Downgrade warning -------------------------------------------------------
 # Advisory only, against the install this run replaces. The latest path needs
 # no check: releases/latest always serves the newest complete release.
 
 if [ -n "$version" ] && [ -x "$bin_dir/pi" ]; then
   installed="$("$bin_dir/pi" --version 2>/dev/null | tail -n 1 || true)"
-  if [ -n "$installed" ] && semver_gt "$installed" "$version"; then
+  [ -n "$installed" ] || installed="(version unknown)"
+  if semver_gt "$installed" "$version"; then
     echo "warning: downgrade requested: pi ${installed} is installed, but version ${version} was asked for." >&2
-    echo "  To keep ${installed}, re-run with: sh -s ${installed} (or omit the version to track the latest release)." >&2
+    echo "  To keep ${installed}, re-run this script with version ${installed} (or omit the version to track the latest release)." >&2
   fi
-fi
-
-# Refuse to clobber a binary npm does not own (a wrapper script, a manually
-# placed file): npm would fail with EEXIST anyway, so fail first with the fix.
-if [ -e "$bin_dir/pi" ] && [ ! -L "$bin_dir/pi" ] &&
-  ! npm ls -g --prefix "$prefix" --depth=0 "$package" >/dev/null 2>&1; then
-  die 1 "$bin_dir/pi exists and was not installed by npm under this prefix. Move it aside first (it is yours, not this installer's):
-  mv \"$bin_dir/pi\" \"${bin_dir}/pi.bak\""
 fi
 
 # --- Install -----------------------------------------------------------------
@@ -139,7 +141,9 @@ fi
 # --- Report ------------------------------------------------------------------
 
 [ -x "$bin_dir/pi" ] || die 1 "install finished but $bin_dir/pi is missing; check the npm output above."
-echo "Installed pi $("$bin_dir/pi" --version 2>/dev/null | tail -n 1 || echo '(version unknown)') at $bin_dir/pi"
+installed="$("$bin_dir/pi" --version 2>/dev/null | tail -n 1 || true)"
+[ -n "$installed" ] || installed="(version unknown)"
+echo "Installed pi ${installed} at $bin_dir/pi"
 
 active_path="$(command -v pi 2>/dev/null || true)"
 if [ "$active_path" = "$bin_dir/pi" ]; then
