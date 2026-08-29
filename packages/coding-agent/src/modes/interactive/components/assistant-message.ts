@@ -1,13 +1,5 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
-import {
-	Container,
-	Markdown,
-	type MarkdownTheme,
-	Spacer,
-	Text,
-	truncateToWidth,
-	visibleWidth,
-} from "@earendil-works/pi-tui";
+import { Container, Markdown, type MarkdownTheme, Spacer, Text, visibleWidth } from "@earendil-works/pi-tui";
 import type { MarkdownTransformer } from "../../../core/extensions/types.ts";
 import { getMarkdownTheme, theme } from "../theme/theme.ts";
 import { keyHint } from "./keybinding-hints.ts";
@@ -26,15 +18,21 @@ function hasVisibleThinking(content: AssistantMessage["content"][number]): boole
 /**
  * Count maximal runs of consecutive visible thinking blocks: the clock
  * measures a run, and providers may deliver several adjacent thinking blocks
- * as one visual run.
+ * as one visual run. Invisible (whitespace-only) blocks render as part of the
+ * surrounding run, so they keep the run open.
  */
 function countThinkingRuns(content: AssistantMessage["content"]): number {
 	let runs = 0;
 	let inRun = false;
 	for (const block of content) {
-		const isThinking = hasVisibleThinking(block);
-		if (isThinking && !inRun) runs++;
-		inRun = isThinking;
+		if (block.type !== "thinking") {
+			inRun = false;
+			continue;
+		}
+		if (hasVisibleThinking(block)) {
+			if (!inRun) runs++;
+			inRun = true;
+		}
 	}
 	return runs;
 }
@@ -69,8 +67,7 @@ function hasStreamedContentAfterNewestThinking(content: AssistantMessage["conten
  */
 function thinkingPreviewText(text: string): string {
 	const collapsed = text.replace(/\s+/g, " ").trim();
-	const head = truncateToWidth(collapsed, THINKING_PREVIEW_MAX_WIDTH, "");
-	if (collapsed.length <= head.length) {
+	if (visibleWidth(collapsed) <= THINKING_PREVIEW_MAX_WIDTH) {
 		return collapsed;
 	}
 	const chars = Array.from(collapsed);

@@ -414,13 +414,62 @@ describe("AssistantMessageComponent", () => {
 			component.updateContent(
 				// Narrow head, wide tail: a code-unit slice takes 119 units of the
 				// CJK run (238 columns) and wraps; a width-budgeted tail fits.
-				createAssistantMessage([{ type: "thinking", thinking: `${"x".repeat(150)}${"中".repeat(60)}` }]),
+				// The astral emoji pins that the code-point walk never splits a
+				// surrogate pair at the ellipsis boundary.
+				createAssistantMessage([{ type: "thinking", thinking: `${"x".repeat(150)}${"中".repeat(59)}\u{1F600}` }]),
 				true,
 			);
 			const lines = component.render(200).map(stripAnsi);
 
 			const cjkLines = lines.filter((line) => line.includes("中"));
 			expect(cjkLines).toHaveLength(1);
+			expect(cjkLines[0]).toContain("😀");
+		});
+
+		test("a preview that overflows the width budget by a little still gets the leading ellipsis", () => {
+			initTheme("dark");
+
+			const component = new AssistantMessageComponent(undefined, true);
+			component.updateContent(
+				// 123 columns: only 3 over budget. A length-based fit check sees
+				// the truncated head (plus its 4-unit ANSI reset suffix) as "no
+				// overflow" and returns the full 123 columns untruncated.
+				createAssistantMessage([{ type: "thinking", thinking: "a".repeat(123) }]),
+				true,
+			);
+			const rendered = stripAnsi(component.render(200).join("\n"));
+
+			expect(rendered).toContain("…");
+		});
+
+		test("a whitespace-only thinking block between visible blocks does not restart the timer", () => {
+			initTheme("dark");
+			vi.useFakeTimers();
+			vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+			try {
+				const component = new AssistantMessageComponent(undefined, true);
+				component.updateContent(
+					createAssistantMessage([{ type: "thinking", thinking: "real reasoning starts here" }]),
+					true,
+				);
+				vi.advanceTimersByTime(4000);
+				// An invisible block between visible ones: the render merges all
+				// three into one preview, so the run count must not grow either.
+				component.updateContent(
+					createAssistantMessage([
+						{ type: "thinking", thinking: "real reasoning starts here" },
+						{ type: "thinking", thinking: "   " },
+						{ type: "thinking", thinking: "and continues" },
+					]),
+					true,
+				);
+				const rendered = stripAnsi(component.render(100).join("\n"));
+
+				expect(rendered).toContain("Thinking... 4.0s");
+				expect(rendered).not.toContain("Thinking... 0.0s");
+			} finally {
+				vi.useRealTimers();
+			}
 		});
 
 		test("folds to a one-line duration marker when the message finishes", () => {
