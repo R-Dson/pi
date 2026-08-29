@@ -149,7 +149,7 @@ jobs:
             echo
             echo '```sh'
             echo "npm install -g https://github.com/R-Dson/pi/releases/latest/download/pi-fork.tgz"
-            echo "curl -fsSL https://raw.githubusercontent.com/R-Dson/pi/main/scripts/install-fork.sh | sh"
+            echo "curl -fsSL https://raw.githubusercontent.com/R-Dson/pi/main/scripts/install.sh | sh"
             echo '```'
             echo
             echo "Install instructions: [\`docs/fork/install-from-github.md\`](docs/fork/install-from-github.md)"

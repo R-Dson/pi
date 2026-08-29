@@ -15,11 +15,11 @@ const FORK_REGISTRY_SCOPE = "@r-dson/";
 // mapping resolves @r-dson to npm.pkg.github.com (docs/fork/install-from-github.md).
 export const FORK_REGISTRY_PACKAGE_NAME = "@r-dson/pi-coding-agent";
 const UPSTREAM_PACKAGE_NAME = "@earendil-works/pi-coding-agent";
-// Same asset install-fork.sh downloads; npm fetches public GitHub release
+// Same asset install.sh downloads; npm fetches public GitHub release
 // assets and npmjs dependencies without authentication.
 export const FORK_STANDALONE_TARBALL_URL = "https://github.com/R-Dson/pi/releases/latest/download/pi-fork.tgz";
 export const FORK_INSTALL_COMMAND =
-	"curl -fsSL https://raw.githubusercontent.com/R-Dson/pi/main/scripts/install-fork.sh | sh";
+	"curl -fsSL https://raw.githubusercontent.com/R-Dson/pi/main/scripts/install.sh | sh";
 
 export type SelfUpdateInstallKind = "fork-standalone" | "fork-registry" | "upstream-package" | "other";
 

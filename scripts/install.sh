@@ -2,9 +2,9 @@
 # Installs the pi fork from GitHub Releases; no registry configuration or PAT needed.
 #
 # Usage:
-#   install-fork.sh [version]        install latest release, or a pinned version
-#   install-fork.sh --uninstall      remove the fork from the install prefix
-#   install-fork.sh --prefix DIR     install under DIR (bin in DIR/bin); same as PI_INSTALL_PREFIX
+#   install.sh [version]        install latest release, or a pinned version
+#   install.sh --uninstall      remove the fork from the install prefix
+#   install.sh --prefix DIR     install under DIR (bin in DIR/bin); same as PI_INSTALL_PREFIX
 #
 # Design rules (see docs/fork/upstream-integration.md): POSIX sh + curl + npm
 # only; no interactive prompts (the script runs under `curl | sh` with no tty
