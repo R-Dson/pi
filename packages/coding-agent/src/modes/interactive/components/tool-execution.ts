@@ -223,6 +223,23 @@ export class ToolExecutionComponent extends Container {
 		}
 	}
 
+	/**
+	 * Teardown for components dropped without a result (chat rebuilds mid-run):
+	 * stops the elapsed ticker and any renderer-owned interval (bash's elapsed
+	 * ticker lives in the shared renderer state) so nothing keeps firing
+	 * requestRender after the component left the tree.
+	 */
+	destroy(): void {
+		if (this.elapsedInterval) {
+			clearInterval(this.elapsedInterval);
+			this.elapsedInterval = undefined;
+		}
+		const rendererInterval = (this.rendererState as { interval?: ReturnType<typeof setInterval> } | null)?.interval;
+		if (rendererInterval) {
+			clearInterval(rendererInterval);
+		}
+	}
+
 	setExpanded(expanded: boolean): void {
 		this.expanded = expanded;
 		this.updateDisplay();

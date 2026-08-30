@@ -47,6 +47,8 @@ export interface GrepToolDetails {
 	truncation?: TruncationResult;
 	matchLimitReached?: number;
 	linesTruncated?: boolean;
+	/** True match count as collected by execute; context lines and notices excluded. */
+	matchCount?: number;
 }
 
 /**
@@ -98,14 +100,20 @@ function formatGrepResult(
 	options: ToolRenderResultOptions,
 	theme: Theme,
 	showImages: boolean,
+	isError: boolean,
 ): string {
 	const output = getTextOutput(result, showImages).trim();
 	let text = "";
 	if (output && output !== "No matches found") {
-		const lines = output.split("\n");
 		// Count-first: the match total leads so the result can be gauged before
-		// reading any match line. The no-match message is not a match.
-		text += `\n${theme.fg("muted", `${lines.length} matches`)}`;
+		// reading any match line. execute's true count (context lines and the
+		// no-match message excluded) wins; without details, count output lines
+		// minus the trailing notices block. Errors carry no count.
+		if (!isError) {
+			const count = result.details?.matchCount ?? output.replace(/\n\n\[[^\]]*\]$/, "").split("\n").length;
+			text += `\n${theme.fg("muted", `${count} matches`)}`;
+		}
+		const lines = output.split("\n");
 		const maxLines = options.expanded ? lines.length : 15;
 		const displayLines = lines.slice(0, maxLines);
 		const remaining = lines.length - maxLines;
@@ -363,10 +371,11 @@ export function createGrepToolDefinition(
 								details.linesTruncated = true;
 							}
 							if (notices.length > 0) output += `\n\n[${notices.join(". ")}]`;
+							details.matchCount = matchCount;
 							settle(() =>
 								resolve({
 									content: [{ type: "text", text: output }],
-									details: Object.keys(details).length > 0 ? details : undefined,
+									details,
 								}),
 							);
 						});
@@ -383,7 +392,7 @@ export function createGrepToolDefinition(
 		},
 		renderResult(result, options, theme, context) {
 			const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
-			text.setText(formatGrepResult(result as any, options, theme, context.showImages));
+			text.setText(formatGrepResult(result as any, options, theme, context.showImages, context.isError));
 			return text;
 		},
 	};

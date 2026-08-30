@@ -6,7 +6,7 @@
 
 import type { TUI } from "@earendil-works/pi-tui";
 import { setKeybindings } from "@earendil-works/pi-tui";
-import { beforeAll, describe, expect, test, vi } from "vitest";
+import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
 import { KeybindingsManager } from "../src/core/keybindings.ts";
 import { ToolExecutionComponent } from "../src/modes/interactive/components/tool-execution.ts";
 import { initTheme } from "../src/modes/interactive/theme/theme.ts";
@@ -16,8 +16,8 @@ function createFakeTui(): TUI {
 	return { requestRender: () => {} } as unknown as TUI;
 }
 
-function createComponent(toolName: string): ToolExecutionComponent {
-	return new ToolExecutionComponent(toolName, "call_1", {}, {}, undefined, createFakeTui(), "/repo");
+function createComponent(toolName: string, args: Record<string, unknown> = {}): ToolExecutionComponent {
+	return new ToolExecutionComponent(toolName, "call_1", args, {}, undefined, createFakeTui(), "/repo");
 }
 
 function renderText(component: ToolExecutionComponent, width = 100): string {
@@ -30,9 +30,12 @@ describe("tool preview summaries", () => {
 		// Expand hints resolve keys through the global manager.
 		setKeybindings(new KeybindingsManager());
 	});
+	afterAll(() => {
+		setKeybindings(new KeybindingsManager());
+	});
 
 	test("read collapsed result shows a line-count summary with the expand hint", () => {
-		const component = createComponent("read");
+		const component = createComponent("read", { file_path: "/repo/main.ts" });
 		component.updateResult({
 			content: [{ type: "text", text: "line one\nline two\nline three" }],
 			isError: false,
@@ -42,6 +45,61 @@ describe("tool preview summaries", () => {
 
 		expect(rendered).toContain("3 lines");
 		expect(rendered).toContain("ctrl+o");
+	});
+
+	test("an empty read counts zero lines", () => {
+		const component = createComponent("read", { file_path: "/repo/empty.txt" });
+		component.updateResult({ content: [{ type: "text", text: "" }], isError: false });
+
+		expect(renderText(component)).toContain("0 lines");
+	});
+
+	test("an image-only read stays silent instead of counting zero lines", () => {
+		const component = createComponent("read", { file_path: "/repo/shot.png" });
+		component.updateResult({
+			content: [{ type: "image", data: "aGk=", mimeType: "image/png" }],
+			isError: false,
+		});
+
+		expect(renderText(component)).not.toContain("0 lines");
+	});
+
+	test("grep results carrying a matchCount in details use it over line counting", () => {
+		const component = createComponent("grep");
+		component.updateResult({
+			content: [{ type: "text", text: "src/a.ts:1:first match" }],
+			details: { matchCount: 5 },
+			isError: false,
+		});
+
+		expect(renderText(component)).toContain("5 matches");
+	});
+
+	test("grep count excludes the trailing notices block", () => {
+		const component = createComponent("grep");
+		component.updateResult({
+			content: [
+				{
+					type: "text",
+					text: "src/a.ts:1:first match\nsrc/b.ts:9:second match\n\n[100 matches limit reached. Use limit=200 for more]",
+				},
+			],
+			isError: false,
+		});
+
+		const rendered = renderText(component);
+		expect(rendered).toContain("2 matches");
+		expect(rendered).not.toContain("4 matches");
+	});
+
+	test("grep error results carry no match count", () => {
+		const component = createComponent("grep");
+		component.updateResult({
+			content: [{ type: "text", text: "Path not found: /repo/missing" }],
+			isError: true,
+		});
+
+		expect(renderText(component)).not.toContain("matches");
 	});
 
 	test("grep collapsed result leads with the match count", () => {
@@ -83,6 +141,21 @@ describe("tool preview summaries", () => {
 
 			component.updateResult({ content: [{ type: "text", text: "done" }], isError: false });
 			expect(renderText(component)).not.toContain("Elapsed");
+			expect(vi.getTimerCount()).toBe(0);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	test("destroy clears the ticker without needing a result", () => {
+		vi.useFakeTimers();
+		try {
+			const component = createComponent("grep");
+			component.markExecutionStarted();
+			expect(vi.getTimerCount()).toBe(1);
+
+			component.destroy();
+
 			expect(vi.getTimerCount()).toBe(0);
 		} finally {
 			vi.useRealTimers();

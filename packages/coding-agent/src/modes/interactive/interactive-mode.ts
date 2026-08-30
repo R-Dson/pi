@@ -3845,6 +3845,11 @@ export class InteractiveMode {
 	}
 
 	private rebuildChatFromMessages(): void {
+		// Running tools are replaced by the rebuild; stop their tickers first
+		// so no orphaned interval keeps firing requestRender.
+		for (const component of this.pendingTools.values()) {
+			component.destroy();
+		}
 		this.chatContainer.clear();
 		this.renderSessionEntries(this.sessionManager.buildContextEntries());
 	}
