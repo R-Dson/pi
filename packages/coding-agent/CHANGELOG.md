@@ -21,7 +21,7 @@
 - Added fork-aware self-update channels: the running install's package name picks the update source — the fork's standalone tarball, the fork's GitHub-Packages registry, or upstream npmjs with a channel notice — so no update path replaces the fork with upstream ([#29](https://github.com/R-Dson/pi/issues/29)).
 - Added counts-first collapsed tool summaries: `read` renders `N lines (ctrl+o to expand)` on success instead of nothing, and `grep` leads with `N matches` ahead of its match preview.
 - Added an elapsed-seconds line to running tool rows: any tool without a result yet ticks `Elapsed Ns` once per second, so slow tools visibly work; tools that stream partials take over with their own status from the first partial.
-- Added a live preview of the newest thinking run while thinking is hidden: first ~120 display columns while streaming, collapsing to a one-line duration marker when the message finishes ([#30](https://github.com/R-Dson/pi/issues/30)).
+- Added a live preview of the newest thinking run while thinking is hidden: a header line with a live elapsed timer over a block of the last few visual lines of the run (newlines preserved, wrapped at the render width, ellipsis marking folded-away content), collapsing to a one-line duration marker when the run ends or the message finishes ([#30](https://github.com/R-Dson/pi/issues/30)).
 
 ### Fixed
 
