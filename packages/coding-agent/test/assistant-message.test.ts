@@ -1,5 +1,5 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
-import { setKeybindings } from "@earendil-works/pi-tui";
+import { setKeybindings, visibleWidth } from "@earendil-works/pi-tui";
 import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
 import { KeybindingsManager } from "../src/core/keybindings.ts";
 import { AssistantMessageComponent } from "../src/modes/interactive/components/assistant-message.ts";
@@ -265,6 +265,41 @@ describe("AssistantMessageComponent", () => {
 			expect(rendered).toContain("Considering the first approach");
 		});
 
+		test("follows the tail of a long thinking run with a live timer", () => {
+			initTheme("dark");
+
+			const head = "parsing the input token by token and considering ".repeat(10);
+			const component = new AssistantMessageComponent(undefined, true);
+			component.updateContent(
+				createAssistantMessage([{ type: "thinking", thinking: `${head}now validating the final branch` }]),
+				true,
+			);
+			const rendered = stripAnsi(component.render(100).join("\n"));
+
+			// The head is far beyond the preview window, so only tail-following
+			// can surface the final branch sentence.
+			expect(rendered).toMatch(/Thinking\.\.\. \d+\.\ds/);
+			expect(rendered).toContain("…");
+			expect(rendered).toContain("now validating the final branch");
+		});
+
+		test("the live preview is a multi-line block showing the tail with newlines preserved", () => {
+			initTheme("dark");
+
+			const lines = Array.from({ length: 12 }, (_, i) => `reasoning step number ${i + 1} of the plan`);
+			const component = new AssistantMessageComponent(undefined, true);
+			component.updateContent(createAssistantMessage([{ type: "thinking", thinking: lines.join("\n") }]), true);
+			const rendered = stripAnsi(component.render(100).join("\n"));
+
+			expect(rendered).toContain("Thinking...");
+			// The block keeps the last lines whole; earlier ones are folded away
+			// behind the ellipsis marker.
+			expect(rendered).toContain("reasoning step number 12 of the plan");
+			expect(rendered).toContain("reasoning step number 11 of the plan");
+			expect(rendered).not.toContain("reasoning step number 1 of the plan");
+			expect(rendered).toContain("…");
+		});
+
 		test("replaces the preview when a newer thinking run arrives", () => {
 			initTheme("dark");
 
@@ -304,6 +339,139 @@ describe("AssistantMessageComponent", () => {
 			expect(rendered).toContain("hello");
 			expect(rendered).not.toContain("Thinking...");
 			expect(rendered).not.toContain("Thought for");
+		});
+
+		test("the live timer measures the newest run, not the span since the first", () => {
+			initTheme("dark");
+			vi.useFakeTimers();
+			vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+			try {
+				const component = new AssistantMessageComponent(undefined, true);
+				// Run one streams for 5s, then text arrives and freezes its marker.
+				component.updateContent(
+					createAssistantMessage([{ type: "thinking", thinking: "first thought about parsing" }]),
+					true,
+				);
+				vi.advanceTimersByTime(5000);
+				component.updateContent(
+					createAssistantMessage([
+						{ type: "thinking", thinking: "first thought about parsing" },
+						{ type: "text", text: "partial answer" },
+					]),
+					true,
+				);
+				// Five seconds later a second run starts: its preview timer must
+				// count from this run's start, not from the session's first.
+				vi.advanceTimersByTime(5000);
+				component.updateContent(
+					createAssistantMessage([
+						{ type: "thinking", thinking: "first thought about parsing" },
+						{ type: "text", text: "partial answer" },
+						{ type: "thinking", thinking: "now verifying the result" },
+					]),
+					true,
+				);
+				const rendered = stripAnsi(component.render(100).join("\n"));
+
+				expect(rendered).toContain("Thinking... 0.0s");
+				expect(rendered).not.toContain("Thinking... 10.0s");
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+
+		test("a burst update carrying an entire second run and its end still restarts the clock", () => {
+			initTheme("dark");
+			vi.useFakeTimers();
+			vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+			try {
+				const component = new AssistantMessageComponent(undefined, true);
+				component.updateContent(createAssistantMessage([{ type: "thinking", thinking: "run one streamed" }]), true);
+				vi.advanceTimersByTime(3000);
+				component.updateContent(
+					createAssistantMessage([
+						{ type: "thinking", thinking: "run one streamed" },
+						{ type: "text", text: "partial answer" },
+					]),
+					true,
+				);
+				// The next single update delivers the entire second run plus the
+				// text that ends it (batched provider chunk): the marker must
+				// measure the second run, not keep the first run's 3s.
+				component.updateContent(
+					createAssistantMessage([
+						{ type: "thinking", thinking: "run one streamed" },
+						{ type: "text", text: "partial answer" },
+						{ type: "thinking", thinking: "run two arrived whole" },
+						{ type: "text", text: "final answer" },
+					]),
+					true,
+				);
+				component.updateContent(
+					createAssistantMessage([
+						{ type: "thinking", thinking: "run one streamed" },
+						{ type: "text", text: "partial answer" },
+						{ type: "thinking", thinking: "run two arrived whole" },
+						{ type: "text", text: "final answer" },
+					]),
+					false,
+				);
+				const rendered = stripAnsi(component.render(100).join("\n"));
+
+				expect(rendered).toContain("Thought for 1s");
+				expect(rendered).not.toContain("Thought for 3s");
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+
+		test("wide characters wrap within the render width and surrogates stay whole", () => {
+			initTheme("dark");
+
+			const component = new AssistantMessageComponent(undefined, true);
+			component.updateContent(
+				// Narrow head, wide tail, astral emoji: the block must wrap by
+				// display columns (no line wider than the render width) and the
+				// surrogate pair must never be split at a boundary.
+				createAssistantMessage([{ type: "thinking", thinking: `${"x".repeat(150)}${"中".repeat(59)}\u{1F600}` }]),
+				true,
+			);
+			const lines = component.render(200).map(stripAnsi);
+
+			for (const line of lines) {
+				expect(visibleWidth(line)).toBeLessThanOrEqual(200);
+			}
+			expect(lines.some((line) => line.includes("😀"))).toBe(true);
+		});
+
+		test("a whitespace-only thinking block between visible blocks does not restart the timer", () => {
+			initTheme("dark");
+			vi.useFakeTimers();
+			vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+			try {
+				const component = new AssistantMessageComponent(undefined, true);
+				component.updateContent(
+					createAssistantMessage([{ type: "thinking", thinking: "real reasoning starts here" }]),
+					true,
+				);
+				vi.advanceTimersByTime(4000);
+				// An invisible block between visible ones: the render merges all
+				// three into one preview, so the run count must not grow either.
+				component.updateContent(
+					createAssistantMessage([
+						{ type: "thinking", thinking: "real reasoning starts here" },
+						{ type: "thinking", thinking: "   " },
+						{ type: "thinking", thinking: "and continues" },
+					]),
+					true,
+				);
+				const rendered = stripAnsi(component.render(100).join("\n"));
+
+				expect(rendered).toContain("Thinking... 4.0s");
+				expect(rendered).not.toContain("Thinking... 0.0s");
+			} finally {
+				vi.useRealTimers();
+			}
 		});
 
 		test("folds to a one-line duration marker when the message finishes", () => {
@@ -435,19 +603,6 @@ describe("AssistantMessageComponent", () => {
 
 			expect(rendered).toContain("Thinking...");
 			expect(rendered).not.toContain("reloaded reasoning");
-		});
-
-		test("ellipsizes the live preview after 120 characters", () => {
-			initTheme("dark");
-
-			const words = Array.from({ length: 60 }, (_, i) => `w${String(i).padStart(2, "0")}`);
-			const component = new AssistantMessageComponent(undefined, true);
-			component.updateContent(createAssistantMessage([{ type: "thinking", thinking: words.join(" ") }]), true);
-			const rendered = stripAnsi(component.render(200).join("\n"));
-
-			expect(rendered).toContain("w00");
-			expect(rendered).not.toContain("w40");
-			expect(rendered).toContain("…");
 		});
 
 		test("updates the preview in place as the newest run grows", () => {

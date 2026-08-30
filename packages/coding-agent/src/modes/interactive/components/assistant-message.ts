@@ -1,18 +1,42 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
-import { Container, Markdown, type MarkdownTheme, Spacer, Text, truncateToWidth } from "@earendil-works/pi-tui";
+import { Container, Markdown, type MarkdownTheme, Spacer, Text } from "@earendil-works/pi-tui";
 import type { MarkdownTransformer } from "../../../core/extensions/types.ts";
 import { getMarkdownTheme, theme } from "../theme/theme.ts";
 import { keyHint } from "./keybinding-hints.ts";
 import { createMarkdownTransform } from "./markdown-transform.ts";
+import { truncateToVisualLines } from "./visual-truncate.ts";
 
 const OSC133_ZONE_START = "\x1b]133;A\x07";
 const OSC133_ZONE_END = "\x1b]133;B\x07";
 const OSC133_ZONE_FINAL = "\x1b]133;C\x07";
 
-const THINKING_PREVIEW_MAX_CHARS = 120;
+/** Lines of thinking tail shown under the live preview header. */
+const THINKING_PREVIEW_LINES = 4;
 
 function hasVisibleThinking(content: AssistantMessage["content"][number]): boolean {
 	return content.type === "thinking" && content.thinking.trim().length > 0;
+}
+
+/**
+ * Count maximal runs of consecutive visible thinking blocks: the clock
+ * measures a run, and providers may deliver several adjacent thinking blocks
+ * as one visual run. Invisible (whitespace-only) blocks render as part of the
+ * surrounding run, so they keep the run open.
+ */
+function countThinkingRuns(content: AssistantMessage["content"]): number {
+	let runs = 0;
+	let inRun = false;
+	for (const block of content) {
+		if (block.type !== "thinking") {
+			inRun = false;
+			continue;
+		}
+		if (hasVisibleThinking(block)) {
+			if (!inRun) runs++;
+			inRun = true;
+		}
+	}
+	return runs;
 }
 
 /**
@@ -38,15 +62,6 @@ function hasStreamedContentAfterNewestThinking(content: AssistantMessage["conten
 }
 
 /**
- * Collapse a thinking run into a single-line preview (whitespace flattened,
- * width-aware ellipsis after THINKING_PREVIEW_MAX_CHARS display columns).
- */
-function thinkingPreviewText(text: string): string {
-	const collapsed = text.replace(/\s+/g, " ").trim();
-	return truncateToWidth(collapsed, THINKING_PREVIEW_MAX_CHARS, "…");
-}
-
-/**
  * Component that renders a complete assistant message
  */
 export class AssistantMessageComponent extends Container {
@@ -59,10 +74,12 @@ export class AssistantMessageComponent extends Container {
 	private lastMessage?: AssistantMessage;
 	private hasToolCalls = false;
 	private isStreaming = false;
-	/** When hidden thinking was first seen while streaming; used for the finished duration marker. */
+	/** When the newest thinking run was first seen while streaming; run-count growth resets it. */
 	private thinkingStartedAt: number | undefined;
 	/** Frozen thinking duration; undefined while the newest run is still streaming or when it was never streamed live. */
 	private thinkingDurationMs: number | undefined;
+	/** Visible thinking runs at the last update; growth restarts the clock (a new run began). */
+	private thinkingRunCount = 0;
 
 	constructor(
 		message?: AssistantMessage,
@@ -141,16 +158,25 @@ export class AssistantMessageComponent extends Container {
 			// The newest run has ended once non-thinking content streams after it.
 			const newestRunEnded = hasStreamedContentAfterNewestThinking(message.content);
 			if (isStreaming) {
+				const runs = countThinkingRuns(message.content);
+				if (this.thinkingRunCount > 0 && runs > this.thinkingRunCount) {
+					// New thinking runs arrived since the last update, possibly
+					// batched with the text that ends them: the clock measures
+					// the newest run, so restart it.
+					this.thinkingStartedAt = Date.now();
+					this.thinkingDurationMs = undefined;
+				}
 				this.thinkingStartedAt ??= Date.now();
 				if (newestRunEnded) {
 					// Freeze at the first non-thinking block after the newest run:
 					// post-thinking streaming is not thinking time.
 					this.thinkingDurationMs ??= Math.max(0, Date.now() - this.thinkingStartedAt);
-				} else {
-					// A newer run is streaming after earlier content: reopen the clock.
-					this.thinkingDurationMs = undefined;
 				}
+				this.thinkingRunCount = runs;
 			} else if (this.thinkingStartedAt !== undefined) {
+				// Runs that arrive without streaming carry no clock of their own;
+				// a duration frozen here measures from the last streamed run's
+				// start, so treat it as a lower bound.
 				if (newestRunEnded) {
 					this.thinkingDurationMs ??= Math.max(0, Date.now() - this.thinkingStartedAt);
 				} else if (wasStreaming || this.thinkingDurationMs === undefined) {
@@ -217,21 +243,65 @@ export class AssistantMessageComponent extends Container {
 
 					// Live preview only while the newest run is still the trailing
 					// streaming content; once non-thinking blocks follow it (or the
-					// message finished), collapse to the one-line marker.
+					// message finished), collapse to the one-line marker. The timer
+					// recomputes on every message_update render, which flows
+					// continuously while thinking; no separate tick needed.
 					const runEnded = message.content.slice(i + 1).some(isStreamedNonThinking);
-					let line: string;
+					const expandHint = `${theme.fg("muted", "(")}${keyHint("app.thinking.toggle", "to expand thinking")}${theme.fg("muted", ")")}`;
 					if (this.isStreaming && !runEnded) {
-						line = `${this.hiddenThinkingLabel} ${thinkingPreviewText(thinkingBlocks.join("\n\n"))}`;
+						const elapsedS =
+							this.thinkingStartedAt !== undefined
+								? Math.max(0, (Date.now() - this.thinkingStartedAt) / 1000)
+								: 0;
+						// Header line, then a tail block of the last visual lines:
+						// completed lines never change as tokens arrive, so the
+						// block reads as steady text with only the newest line
+						// moving — the same trick the bash preview uses.
+						const header = `${this.hiddenThinkingLabel} ${elapsedS.toFixed(1)}s`;
+						this.contentContainer.addChild(
+							new Text(`${theme.italic(theme.fg("thinkingText", header))} ${expandHint}`, this.outputPad, 0),
+						);
+						const previewText = thinkingBlocks
+							.join("\n\n")
+							.replace(/\r\n|\r/g, "\n")
+							.replace(/\n+$/, "");
+						const styledText = previewText
+							.split("\n")
+							.map((line) => theme.italic(theme.fg("thinkingText", line)))
+							.join("\n");
+						let cachedWidth: number | undefined;
+						let cachedLines: string[] | undefined;
+						this.contentContainer.addChild({
+							render: (width: number) => {
+								if (cachedLines === undefined || cachedWidth !== width) {
+									const result = truncateToVisualLines(
+										styledText,
+										THINKING_PREVIEW_LINES,
+										width,
+										this.outputPad,
+									);
+									cachedLines =
+										result.skippedCount > 0
+											? [theme.italic(theme.fg("thinkingText", "…")), ...result.visualLines]
+											: result.visualLines;
+									cachedWidth = width;
+								}
+								return cachedLines ?? [];
+							},
+							invalidate: () => {
+								cachedWidth = undefined;
+								cachedLines = undefined;
+							},
+						});
 					} else {
-						line =
+						const line =
 							this.thinkingDurationMs !== undefined
 								? `Thought for ${Math.max(1, Math.round(this.thinkingDurationMs / 1000))}s`
 								: this.hiddenThinkingLabel;
+						this.contentContainer.addChild(
+							new Text(`${theme.italic(theme.fg("thinkingText", line))} ${expandHint}`, this.outputPad, 0),
+						);
 					}
-					const expandHint = `${theme.fg("muted", "(")}${keyHint("app.thinking.toggle", "to expand thinking")}${theme.fg("muted", ")")}`;
-					this.contentContainer.addChild(
-						new Text(`${theme.italic(theme.fg("thinkingText", line))} ${expandHint}`, this.outputPad, 0),
-					);
 				} else {
 					// Render each run of thinking blocks as one Markdown section.
 					this.contentContainer.addChild(
