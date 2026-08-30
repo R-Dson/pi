@@ -1,5 +1,5 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
-import { Container, Markdown, type MarkdownTheme, Spacer, Text } from "@earendil-works/pi-tui";
+import { Container, Markdown, type MarkdownTheme, type RgbColor, Spacer, Text } from "@earendil-works/pi-tui";
 import type { MarkdownTransformer } from "../../../core/extensions/types.ts";
 import { getMarkdownTheme, theme } from "../theme/theme.ts";
 import { keyHint } from "./keybinding-hints.ts";
@@ -12,6 +12,64 @@ const OSC133_ZONE_FINAL = "\x1b]133;C\x07";
 
 /** Lines of thinking tail shown under the live preview header. */
 const THINKING_PREVIEW_LINES = 4;
+
+/**
+ * Terminal background (OSC 11) for the preview fade; undefined until the
+ * terminal answers the startup query (or never, on terminals that ignore it).
+ */
+let previewFadeBackground: RgbColor | undefined;
+
+/** Interactive startup reports the terminal's actual background color here. */
+export function setThinkingPreviewFadeBackground(rgb: RgbColor | undefined): void {
+	previewFadeBackground = rgb;
+}
+
+function hexToRgb(hex: string): RgbColor | undefined {
+	if (!/^#[0-9a-f]{6}$/i.test(hex)) {
+		return undefined;
+	}
+	return {
+		r: parseInt(hex.slice(1, 3), 16),
+		g: parseInt(hex.slice(3, 5), 16),
+		b: parseInt(hex.slice(5, 7), 16),
+	};
+}
+
+/** The thinking gray as RGB, when the theme defines it as hex. */
+function thinkingGrayRgb(): RgbColor | undefined {
+	const value = theme.fgValue("thinkingText");
+	return typeof value === "string" ? hexToRgb(value) : undefined;
+}
+
+/**
+ * Color each word of the visible tail between the terminal background (oldest,
+ * dissolving into it exactly) and the thinking gray (newest). Position-keyed
+ * per word, so existing words darken continuously as newer text arrives —
+ * a fade, not a flip.
+ */
+function fadeTailLines(lines: string[], gray: RgbColor, background: RgbColor): string[] {
+	const total = lines.reduce((sum, line) => sum + line.length, 0) || 1;
+	let offset = 0;
+	return lines.map((line) =>
+		line
+			.split(/(\s+)/)
+			.filter((token) => token.length > 0)
+			.map((token) => {
+				if (/^\s+$/.test(token)) {
+					offset += token.length;
+					return token;
+				}
+				// 0 at the oldest visible word, 1 at the newest.
+				const position = (offset + token.length / 2) / total;
+				const r = Math.round(background.r + (gray.r - background.r) * position);
+				const g = Math.round(background.g + (gray.g - background.g) * position);
+				const b = Math.round(background.b + (gray.b - background.b) * position);
+				offset += token.length;
+				return theme.italic(`\x1b[38;2;${r};${g};${b}m${token}\x1b[39m`);
+			})
+			.join(""),
+	);
+}
 
 function hasVisibleThinking(content: AssistantMessage["content"][number]): boolean {
 	return content.type === "thinking" && content.thinking.trim().length > 0;
@@ -265,10 +323,21 @@ export class AssistantMessageComponent extends Container {
 							.join("\n\n")
 							.replace(/\r\n|\r/g, "\n")
 							.replace(/\n+$/, "");
-						const styledText = previewText
-							.split("\n")
-							.map((line) => theme.italic(theme.fg("thinkingText", line)))
-							.join("\n");
+						// Fade path: when the terminal answered the OSC 11 background
+						// query and the theme's gray is a hex value, the visible tail
+						// gets per-word colors interpolated between the background and
+						// the gray — the oldest visible word dissolves into the
+						// background exactly. Position-keyed per word, so words darken
+						// continuously as newer text arrives. Without an endpoint the
+						// block stays uniformly gray, styled before wrapping.
+						const fadeGray = thinkingGrayRgb();
+						const useFade = previewFadeBackground !== undefined && fadeGray !== undefined;
+						const styledText = useFade
+							? previewText
+							: previewText
+									.split("\n")
+									.map((line) => theme.italic(theme.fg("thinkingText", line)))
+									.join("\n");
 						let cachedWidth: number | undefined;
 						let cachedLines: string[] | undefined;
 						this.contentContainer.addChild({
@@ -280,10 +349,14 @@ export class AssistantMessageComponent extends Container {
 										width,
 										this.outputPad,
 									);
+									let bodyLines = result.visualLines;
+									if (useFade && fadeGray && previewFadeBackground) {
+										bodyLines = fadeTailLines(bodyLines, fadeGray, previewFadeBackground);
+									}
 									cachedLines =
 										result.skippedCount > 0
-											? [theme.italic(theme.fg("thinkingText", "…")), ...result.visualLines]
-											: result.visualLines;
+											? [theme.italic(theme.fg("thinkingText", "…")), ...bodyLines]
+											: bodyLines;
 									cachedWidth = width;
 								}
 								return cachedLines ?? [];

@@ -2,7 +2,10 @@ import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { setKeybindings, visibleWidth } from "@earendil-works/pi-tui";
 import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
 import { KeybindingsManager } from "../src/core/keybindings.ts";
-import { AssistantMessageComponent } from "../src/modes/interactive/components/assistant-message.ts";
+import {
+	AssistantMessageComponent,
+	setThinkingPreviewFadeBackground,
+} from "../src/modes/interactive/components/assistant-message.ts";
 import { UserMessageComponent } from "../src/modes/interactive/components/user-message.ts";
 import { initTheme } from "../src/modes/interactive/theme/theme.ts";
 import { stripAnsi } from "../src/utils/ansi.ts";
@@ -249,6 +252,53 @@ describe("AssistantMessageComponent", () => {
 		afterAll(() => {
 			// Restore a fresh manager so later suites do not inherit this one.
 			setKeybindings(new KeybindingsManager());
+			// No terminal background endpoint leaks into later suites.
+			setThinkingPreviewFadeBackground(undefined);
+		});
+
+		test("words fade from thinking gray to the terminal background across the tail", () => {
+			initTheme("dark");
+
+			// Dark theme's thinking gray is #808080; a black terminal background
+			// makes the gradient run from near-black (oldest) to near-gray (newest).
+			setThinkingPreviewFadeBackground({ r: 0, g: 0, b: 0 });
+			const lines = Array.from({ length: 8 }, (_, i) => `reasoning step ${i + 1} of the plan`);
+			const component = new AssistantMessageComponent(undefined, true);
+			component.updateContent(createAssistantMessage([{ type: "thinking", thinking: lines.join("\n") }]), true);
+			const raw = component.render(100).join("\n");
+
+			const wordColors = [...raw.matchAll(/\x1b\[38;2;(\d+);(\d+);(\d+)m/g)].map((m) => ({
+				r: Number(m[1]),
+				g: Number(m[2]),
+				b: Number(m[3]),
+			}));
+			expect(wordColors.length).toBeGreaterThan(4);
+			// Oldest visible word sits near the background, newest near the gray.
+			const oldest = wordColors[0];
+			const newest = wordColors[wordColors.length - 1];
+			expect(oldest.r).toBeLessThanOrEqual(32);
+			expect(newest.r).toBeGreaterThanOrEqual(96);
+			// Strictly rising across the tail (uniform channels for this fixture).
+			for (let i = 1; i < wordColors.length; i++) {
+				expect(wordColors[i].r).toBeGreaterThan(wordColors[i - 1].r);
+			}
+			// Content survives the per-word coloring intact.
+			expect(stripAnsi(raw)).toContain("reasoning step 8 of the plan");
+		});
+
+		test("without a terminal background the preview stays uniform", () => {
+			initTheme("dark");
+
+			setThinkingPreviewFadeBackground(undefined);
+			const component = new AssistantMessageComponent(undefined, true);
+			component.updateContent(
+				createAssistantMessage([{ type: "thinking", thinking: "reasoning without an endpoint" }]),
+				true,
+			);
+			const raw = component.render(100).join("\n");
+
+			expect(raw).not.toContain("38;2;");
+			expect(stripAnsi(raw)).toContain("reasoning without an endpoint");
 		});
 
 		test("shows a live preview of the newest thinking run while streaming", () => {

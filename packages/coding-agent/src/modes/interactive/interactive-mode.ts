@@ -113,7 +113,7 @@ import { killTrackedDetachedChildren } from "../../utils/shell.ts";
 import { loadAllHighlightLanguages } from "../../utils/syntax-highlight.ts";
 import { ensureTool, type ToolStatus } from "../../utils/tools-manager.ts";
 import { ArminComponent } from "./components/armin.ts";
-import { AssistantMessageComponent } from "./components/assistant-message.ts";
+import { AssistantMessageComponent, setThinkingPreviewFadeBackground } from "./components/assistant-message.ts";
 import { BashExecutionComponent } from "./components/bash-execution.ts";
 import { BranchSummaryMessageComponent } from "./components/branch-summary-message.ts";
 import { CompactionSummaryMessageComponent } from "./components/compaction-summary-message.ts";
@@ -1055,6 +1055,17 @@ export class InteractiveMode {
 
 		// Initialize available provider count for footer display
 		await this.updateAvailableProviderCount();
+
+		// Ask the terminal for its actual background (OSC 11) so the hidden
+		// thinking preview can fade its oldest words into it; terminals that
+		// do not answer within the timeout keep the uniform gray preview.
+		try {
+			void this.ui.queryTerminalBackgroundColor({ timeoutMs: 300 }).then((rgb) => {
+				setThinkingPreviewFadeBackground(rgb ?? undefined);
+			});
+		} catch {
+			// Query unsupported before the TUI is live; the preview stays uniform.
+		}
 
 		// Flush the completed startup state before loading the remaining syntax grammars.
 		this.ui.renderNow();
