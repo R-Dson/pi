@@ -74,7 +74,7 @@ export class AssistantMessageComponent extends Container {
 	private lastMessage?: AssistantMessage;
 	private hasToolCalls = false;
 	private isStreaming = false;
-	/** When hidden thinking was first seen while streaming; used for the finished duration marker. */
+	/** When the newest thinking run was first seen while streaming; run-count growth resets it. */
 	private thinkingStartedAt: number | undefined;
 	/** Frozen thinking duration; undefined while the newest run is still streaming or when it was never streamed live. */
 	private thinkingDurationMs: number | undefined;

@@ -380,7 +380,7 @@ describe("AssistantMessageComponent", () => {
 			}
 		});
 
-		test("a burst update carrying a whole second run and its end still restarts the clock", () => {
+		test("a burst update carrying an entire second run and its end still restarts the clock", () => {
 			initTheme("dark");
 			vi.useFakeTimers();
 			vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
