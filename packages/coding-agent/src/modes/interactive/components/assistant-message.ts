@@ -244,8 +244,8 @@ export class AssistantMessageComponent extends Container {
 					// Live preview only while the newest run is still the trailing
 					// streaming content; once non-thinking blocks follow it (or the
 					// message finished), collapse to the one-line marker. The timer
-					// recomputes on every message_update render and counts whole
-					// seconds while streaming (a ticking tenth adds motion noise).
+					// recomputes on every message_update render, which flows
+					// continuously while thinking; no separate tick needed.
 					const runEnded = message.content.slice(i + 1).some(isStreamedNonThinking);
 					const expandHint = `${theme.fg("muted", "(")}${keyHint("app.thinking.toggle", "to expand thinking")}${theme.fg("muted", ")")}`;
 					if (this.isStreaming && !runEnded) {
@@ -257,7 +257,7 @@ export class AssistantMessageComponent extends Container {
 						// completed lines never change as tokens arrive, so the
 						// block reads as steady text with only the newest line
 						// moving — the same trick the bash preview uses.
-						const header = `${this.hiddenThinkingLabel} ${Math.floor(elapsedS)}s`;
+						const header = `${this.hiddenThinkingLabel} ${elapsedS.toFixed(1)}s`;
 						this.contentContainer.addChild(
 							new Text(`${theme.italic(theme.fg("thinkingText", header))} ${expandHint}`, this.outputPad, 0),
 						);
@@ -265,18 +265,9 @@ export class AssistantMessageComponent extends Container {
 							.join("\n\n")
 							.replace(/\r\n|\r/g, "\n")
 							.replace(/\n+$/, "");
-						// Static fade: older lines recede to the thinking-gray, the
-						// newest logical line stays at full text color, so freshly
-						// written text reads as fading in as it scrolls up — no
-						// animation, no repaint churn. (thinkingText and muted are
-						// the same color in the dark theme; text is the brighter pair.)
-						const logicalLines = previewText.split("\n");
-						const styledText = logicalLines
-							.map((line, index) =>
-								index === logicalLines.length - 1
-									? theme.italic(theme.fg("text", line))
-									: theme.italic(theme.fg("thinkingText", line)),
-							)
+						const styledText = previewText
+							.split("\n")
+							.map((line) => theme.italic(theme.fg("thinkingText", line)))
 							.join("\n");
 						let cachedWidth: number | undefined;
 						let cachedLines: string[] | undefined;
