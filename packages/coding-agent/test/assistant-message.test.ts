@@ -278,7 +278,7 @@ describe("AssistantMessageComponent", () => {
 
 			// The head is far beyond the preview window, so only tail-following
 			// can surface the final branch sentence.
-			expect(rendered).toMatch(/Thinking\.\.\. \d+\.\ds/);
+			expect(rendered).toMatch(/Thinking\.\.\. \d+s/);
 			expect(rendered).toContain("…");
 			expect(rendered).toContain("now validating the final branch");
 		});
@@ -373,7 +373,7 @@ describe("AssistantMessageComponent", () => {
 				);
 				const rendered = stripAnsi(component.render(100).join("\n"));
 
-				expect(rendered).toContain("Thinking... 0.0s");
+				expect(rendered).toContain("Thinking... 0s");
 				expect(rendered).not.toContain("Thinking... 10.0s");
 			} finally {
 				vi.useRealTimers();
@@ -467,8 +467,8 @@ describe("AssistantMessageComponent", () => {
 				);
 				const rendered = stripAnsi(component.render(100).join("\n"));
 
-				expect(rendered).toContain("Thinking... 4.0s");
-				expect(rendered).not.toContain("Thinking... 0.0s");
+				expect(rendered).toContain("Thinking... 4s");
+				expect(rendered).not.toContain("Thinking... 0s");
 			} finally {
 				vi.useRealTimers();
 			}
