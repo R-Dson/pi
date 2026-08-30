@@ -35,6 +35,8 @@ export class ToolExecutionComponent extends Container {
 	private cwd: string;
 	private executionStarted = false;
 	private argsComplete = false;
+	private executionStartedAt: number | undefined;
+	private elapsedInterval: ReturnType<typeof setInterval> | undefined;
 	private result?: {
 		content: Array<{ type: string; text?: string; data?: string; mimeType?: string }>;
 		isError: boolean;
@@ -162,6 +164,14 @@ export class ToolExecutionComponent extends Container {
 
 	markExecutionStarted(): void {
 		this.executionStarted = true;
+		if (this.executionStartedAt === undefined) {
+			this.executionStartedAt = Date.now();
+		}
+		// Tick the running row once per second so a slow tool visibly works
+		// instead of sitting silent. Cleared when any result (including a
+		// streaming partial) arrives; tools with their own elapsed line, like
+		// bash, take over from their first partial.
+		this.elapsedInterval ??= setInterval(() => this.ui.requestRender(), 1000);
 		this.updateDisplay();
 		this.ui.requestRender();
 	}
@@ -182,6 +192,10 @@ export class ToolExecutionComponent extends Container {
 	): void {
 		this.result = result;
 		this.isPartial = isPartial;
+		if (this.elapsedInterval) {
+			clearInterval(this.elapsedInterval);
+			this.elapsedInterval = undefined;
+		}
 		this.updateDisplay();
 		this.maybeConvertImagesForKitty();
 	}
@@ -255,10 +269,22 @@ export class ToolExecutionComponent extends Container {
 					lines.push(...imageComponent.render(width));
 				}
 			}
+			this.appendElapsedLine(lines);
 			return lines;
 		}
 
-		return super.render(width);
+		const lines = super.render(width);
+		this.appendElapsedLine(lines);
+		return lines;
+	}
+
+	/** Elapsed line for a running row with no result yet; nothing once any result lands. */
+	private appendElapsedLine(lines: string[]): void {
+		if (this.elapsedInterval === undefined || this.executionStartedAt === undefined) {
+			return;
+		}
+		const elapsedS = Math.max(0, Math.floor((Date.now() - this.executionStartedAt) / 1000));
+		lines.push(theme.fg("muted", `Elapsed ${elapsedS}s`));
 	}
 
 	private updateDisplay(): void {

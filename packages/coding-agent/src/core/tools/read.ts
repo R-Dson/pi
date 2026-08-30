@@ -176,15 +176,18 @@ function formatReadResult(
 	_cwd: string,
 	isError: boolean,
 ): string {
-	if (!options.expanded && !isError) {
-		return "";
-	}
-
 	const rawPath = str(args?.file_path ?? args?.path);
 	const output = getTextOutput(result, showImages);
 	const lang = !isError && rawPath ? getLanguageFromPath(rawPath) : undefined;
 	const renderedLines = lang ? highlightCode(replaceTabs(output), lang) : output.split("\n");
 	const lines = trimTrailingEmptyLines(renderedLines);
+
+	if (!options.expanded && !isError) {
+		// Counts-first summary: the transcript says how much came back without
+		// an expansion, the same shape the grep result and Claude Code use.
+		return `\n${theme.fg("muted", `${lines.length} lines (`)}${keyHint("app.tools.expand", "to expand")}${theme.fg("muted", ")")}`;
+	}
+
 	const maxLines = options.expanded ? lines.length : 10;
 	const displayLines = lines.slice(0, maxLines);
 	const remaining = lines.length - maxLines;

@@ -101,8 +101,11 @@ function formatGrepResult(
 ): string {
 	const output = getTextOutput(result, showImages).trim();
 	let text = "";
-	if (output) {
+	if (output && output !== "No matches found") {
 		const lines = output.split("\n");
+		// Count-first: the match total leads so the result can be gauged before
+		// reading any match line. The no-match message is not a match.
+		text += `\n${theme.fg("muted", `${lines.length} matches`)}`;
 		const maxLines = options.expanded ? lines.length : 15;
 		const displayLines = lines.slice(0, maxLines);
 		const remaining = lines.length - maxLines;
