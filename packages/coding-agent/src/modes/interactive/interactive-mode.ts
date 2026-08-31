@@ -474,6 +474,8 @@ export class InteractiveMode {
 	private streamingComponent: AssistantMessageComponent | undefined = undefined;
 	/** Set when the previous assistant message ended at a tool call: the next one renders its opening thinking headerless. */
 	private nextAssistantContinuesAfterToolCall = false;
+	/** Rebuild-path twin of nextAssistantContinuesAfterToolCall (addMessageToChat is shared with the streaming path, which uses its own flag). */
+	private rebuildContinuesAfterToolCall = false;
 	private streamingMessage: AssistantMessage | undefined = undefined;
 
 	// Tool execution tracking: toolCallId -> component
@@ -3188,6 +3190,10 @@ export class InteractiveMode {
 					this.addMessageToChat(event.message);
 					this.ui.requestRender();
 				} else if (event.message.role === "user") {
+					// A new user turn ends any pending continuation: a tool call
+					// interrupted before its result must not suppress the next
+					// turn's opening header.
+					this.nextAssistantContinuesAfterToolCall = false;
 					this.addMessageToChat(event.message);
 					this.updatePendingMessagesDisplay();
 					this.ui.requestRender();
@@ -3589,7 +3595,7 @@ export class InteractiveMode {
 				break;
 			}
 			case "user": {
-				rebuildContinuesAfterToolCall = false;
+				this.rebuildContinuesAfterToolCall = false;
 				const textContent = this.getUserMessageText(message);
 				if (textContent) {
 					if (this.chatContainer.children.length > 0) {
@@ -3638,10 +3644,10 @@ export class InteractiveMode {
 					this.hiddenThinkingLabel,
 					this.outputPad,
 					this.getMarkdownTransformers(),
-					rebuildContinuesAfterToolCall,
+					this.rebuildContinuesAfterToolCall,
 				);
 				this.chatContainer.addChild(assistantComponent);
-				rebuildContinuesAfterToolCall = message.stopReason === "toolUse";
+				this.rebuildContinuesAfterToolCall = message.stopReason === "toolUse";
 				break;
 			}
 			case "toolResult": {
@@ -3674,7 +3680,7 @@ export class InteractiveMode {
 		// Rebuild-time continuation tracking: an assistant message that ended at a
 		// tool call makes the next assistant message's opening thinking run render
 		// headerless (matches the streaming path's nextAssistantContinuesAfterToolCall).
-		const rebuildContinuesAfterToolCall = false;
+		this.rebuildContinuesAfterToolCall = false;
 		for (const item of items) {
 			if (isCustomSessionEntry(item)) {
 				this.addCustomEntryToChat(item);

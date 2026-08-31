@@ -37,6 +37,19 @@ function createAssistantMessage(
 	};
 }
 
+/**
+ * Lines of the rendered tail block: everything after the header line, minus
+ * any named trailing block. The header is styled truecolor in truecolor
+ * environments, so fade assertions must not match it.
+ */
+function tailBlockLines(raw: string, excludedTexts: string[] = []): string[] {
+	const lines = raw.split("\n");
+	const headerIndex = lines.findIndex((line) => line.includes("Thinking..."));
+	return lines
+		.slice(headerIndex === -1 ? 0 : headerIndex + 1)
+		.filter((line) => !excludedTexts.some((text) => line.includes(text)));
+}
+
 describe("AssistantMessageComponent", () => {
 	test("adds OSC 133 zone markers to assistant messages without tool calls", () => {
 		initTheme("dark");
@@ -267,7 +280,11 @@ describe("AssistantMessageComponent", () => {
 			component.updateContent(createAssistantMessage([{ type: "thinking", thinking: lines.join("\n") }]), true);
 			const raw = component.render(100).join("\n");
 
-			const wordColors = [...raw.matchAll(/\x1b\[38;2;(\d+);(\d+);(\d+)m/g)].map((m) => ({
+			const wordColors = [
+				...tailBlockLines(raw)
+					.join("\n")
+					.matchAll(/\x1b\[38;2;(\d+);(\d+);(\d+)m/g),
+			].map((m) => ({
 				r: Number(m[1]),
 				g: Number(m[2]),
 				b: Number(m[3]),
@@ -297,7 +314,12 @@ describe("AssistantMessageComponent", () => {
 			);
 			const raw = component.render(100).join("\n");
 
-			expect(raw).not.toContain("38;2;");
+			// The uniform path wraps each tail line in a single sequence; the fade
+			// path wraps each word, so more sequences than lines means per-word
+			// coloring leaked in without a terminal background.
+			const tail = tailBlockLines(raw);
+			const sequences = tail.join("\n").match(/\x1b\[38;2;/g)?.length ?? 0;
+			expect(sequences).toBeLessThanOrEqual(tail.filter((line) => stripAnsi(line).trim() !== "").length);
 			expect(stripAnsi(raw)).toContain("reasoning without an endpoint");
 		});
 
@@ -573,7 +595,13 @@ describe("AssistantMessageComponent", () => {
 			const raw = component.render(100).join("\n");
 
 			expect(stripAnsi(raw)).toContain("Thinking...");
-			const wordColors = [...raw.matchAll(/\x1b\[38;2;(\d+);(\d+);(\d+)m/g)].map((m) => Number(m[1]));
+			// Tail block only: the header above and the answer block below are
+			// styled independently of the fade.
+			const wordColors = [
+				...tailBlockLines(raw, ["the answer"])
+					.join("\n")
+					.matchAll(/\x1b\[38;2;(\d+);(\d+);(\d+)m/g),
+			].map((m) => Number(m[1]));
 			expect(wordColors.length).toBeGreaterThan(4);
 			expect(wordColors[0]).toBeLessThanOrEqual(32);
 			expect(wordColors[wordColors.length - 1]).toBeGreaterThanOrEqual(96);
