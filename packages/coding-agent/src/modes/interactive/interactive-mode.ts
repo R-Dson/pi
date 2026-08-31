@@ -113,7 +113,7 @@ import { killTrackedDetachedChildren } from "../../utils/shell.ts";
 import { loadAllHighlightLanguages } from "../../utils/syntax-highlight.ts";
 import { ensureTool, type ToolStatus } from "../../utils/tools-manager.ts";
 import { ArminComponent } from "./components/armin.ts";
-import { AssistantMessageComponent } from "./components/assistant-message.ts";
+import { AssistantMessageComponent, setThinkingPreviewFadeBackground } from "./components/assistant-message.ts";
 import { BashExecutionComponent } from "./components/bash-execution.ts";
 import { BranchSummaryMessageComponent } from "./components/branch-summary-message.ts";
 import { CompactionSummaryMessageComponent } from "./components/compaction-summary-message.ts";
@@ -472,6 +472,8 @@ export class InteractiveMode {
 
 	// Streaming message tracking
 	private streamingComponent: AssistantMessageComponent | undefined = undefined;
+	/** Set when the previous assistant message ended at a tool call: the next one renders its opening thinking headerless. */
+	private nextAssistantContinuesAfterToolCall = false;
 	private streamingMessage: AssistantMessage | undefined = undefined;
 
 	// Tool execution tracking: toolCallId -> component
@@ -1055,6 +1057,17 @@ export class InteractiveMode {
 
 		// Initialize available provider count for footer display
 		await this.updateAvailableProviderCount();
+
+		// Ask the terminal for its actual background (OSC 11) so the hidden
+		// thinking preview can fade its oldest words into it; terminals that
+		// do not answer within the timeout keep the uniform gray preview.
+		try {
+			void this.ui.queryTerminalBackgroundColor({ timeoutMs: 300 }).then((rgb) => {
+				setThinkingPreviewFadeBackground(rgb ?? undefined);
+			});
+		} catch {
+			// Query unsupported before the TUI is live; the preview stays uniform.
+		}
 
 		// Flush the completed startup state before loading the remaining syntax grammars.
 		this.ui.renderNow();
@@ -3175,6 +3188,10 @@ export class InteractiveMode {
 					this.addMessageToChat(event.message);
 					this.ui.requestRender();
 				} else if (event.message.role === "user") {
+					// A new user turn ends any pending continuation: a tool call
+					// interrupted before its result must not suppress the next
+					// turn's opening header.
+					this.nextAssistantContinuesAfterToolCall = false;
 					this.addMessageToChat(event.message);
 					this.updatePendingMessagesDisplay();
 					this.ui.requestRender();
@@ -3186,7 +3203,9 @@ export class InteractiveMode {
 						this.hiddenThinkingLabel,
 						this.outputPad,
 						this.getMarkdownTransformers(),
+						this.nextAssistantContinuesAfterToolCall,
 					);
+					this.nextAssistantContinuesAfterToolCall = false;
 					this.streamingMessage = event.message;
 					this.chatContainer.addChild(this.streamingComponent);
 					this.streamingComponent.updateContent(this.streamingMessage, true);
@@ -3233,6 +3252,7 @@ export class InteractiveMode {
 				if (event.message.role === "user") break;
 				if (this.streamingComponent && event.message.role === "assistant") {
 					this.streamingMessage = event.message;
+					this.nextAssistantContinuesAfterToolCall = this.streamingMessage.stopReason === "toolUse";
 					let errorMessage: string | undefined;
 					if (this.streamingMessage.stopReason === "aborted") {
 						const retryAttempt = this.session.retryAttempt;
@@ -3573,6 +3593,7 @@ export class InteractiveMode {
 				break;
 			}
 			case "user": {
+				this.nextAssistantContinuesAfterToolCall = false;
 				const textContent = this.getUserMessageText(message);
 				if (textContent) {
 					if (this.chatContainer.children.length > 0) {
@@ -3621,8 +3642,10 @@ export class InteractiveMode {
 					this.hiddenThinkingLabel,
 					this.outputPad,
 					this.getMarkdownTransformers(),
+					this.nextAssistantContinuesAfterToolCall,
 				);
 				this.chatContainer.addChild(assistantComponent);
+				this.nextAssistantContinuesAfterToolCall = message.stopReason === "toolUse";
 				break;
 			}
 			case "toolResult": {
@@ -3652,6 +3675,8 @@ export class InteractiveMode {
 			this.updateEditorBorderColor();
 		}
 
+		// Rebuilds start fresh: no message before the first one continued a tool call.
+		this.nextAssistantContinuesAfterToolCall = false;
 		for (const item of items) {
 			if (isCustomSessionEntry(item)) {
 				this.addCustomEntryToChat(item);

@@ -2,7 +2,10 @@ import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { setKeybindings, visibleWidth } from "@earendil-works/pi-tui";
 import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
 import { KeybindingsManager } from "../src/core/keybindings.ts";
-import { AssistantMessageComponent } from "../src/modes/interactive/components/assistant-message.ts";
+import {
+	AssistantMessageComponent,
+	setThinkingPreviewFadeBackground,
+} from "../src/modes/interactive/components/assistant-message.ts";
 import { UserMessageComponent } from "../src/modes/interactive/components/user-message.ts";
 import { initTheme } from "../src/modes/interactive/theme/theme.ts";
 import { stripAnsi } from "../src/utils/ansi.ts";
@@ -32,6 +35,19 @@ function createAssistantMessage(
 		stopReason: overrides.stopReason ?? "stop",
 		timestamp: Date.now(),
 	};
+}
+
+/**
+ * Lines of the rendered tail block: everything after the header line, minus
+ * any named trailing block. The header is styled truecolor in truecolor
+ * environments, so fade assertions must not match it.
+ */
+function tailBlockLines(raw: string, excludedTexts: string[] = []): string[] {
+	const lines = raw.split("\n");
+	const headerIndex = lines.findIndex((line) => line.includes("Thinking..."));
+	return lines
+		.slice(headerIndex === -1 ? 0 : headerIndex + 1)
+		.filter((line) => !excludedTexts.some((text) => line.includes(text)));
 }
 
 describe("AssistantMessageComponent", () => {
@@ -249,6 +265,62 @@ describe("AssistantMessageComponent", () => {
 		afterAll(() => {
 			// Restore a fresh manager so later suites do not inherit this one.
 			setKeybindings(new KeybindingsManager());
+			// No terminal background endpoint leaks into later suites.
+			setThinkingPreviewFadeBackground(undefined);
+		});
+
+		test("words fade from thinking gray to the terminal background across the tail", () => {
+			initTheme("dark");
+
+			// Dark theme's thinking gray is #808080; a black terminal background
+			// makes the gradient run from near-black (oldest) to near-gray (newest).
+			setThinkingPreviewFadeBackground({ r: 0, g: 0, b: 0 });
+			const lines = Array.from({ length: 8 }, (_, i) => `reasoning step ${i + 1} of the plan`);
+			const component = new AssistantMessageComponent(undefined, true);
+			component.updateContent(createAssistantMessage([{ type: "thinking", thinking: lines.join("\n") }]), true);
+			const raw = component.render(100).join("\n");
+
+			const wordColors = [
+				...tailBlockLines(raw)
+					.join("\n")
+					.matchAll(/\x1b\[38;2;(\d+);(\d+);(\d+)m/g),
+			].map((m) => ({
+				r: Number(m[1]),
+				g: Number(m[2]),
+				b: Number(m[3]),
+			}));
+			expect(wordColors.length).toBeGreaterThan(4);
+			// Oldest visible word sits near the background, newest near the gray.
+			const oldest = wordColors[0];
+			const newest = wordColors[wordColors.length - 1];
+			expect(oldest.r).toBeLessThanOrEqual(32);
+			expect(newest.r).toBeGreaterThanOrEqual(96);
+			// Never darkens toward the newest word (adjacent words may round equal).
+			for (let i = 1; i < wordColors.length; i++) {
+				expect(wordColors[i].r).toBeGreaterThanOrEqual(wordColors[i - 1].r);
+			}
+			// Content survives the per-word coloring intact.
+			expect(stripAnsi(raw)).toContain("reasoning step 8 of the plan");
+		});
+
+		test("without a terminal background the preview stays uniform", () => {
+			initTheme("dark");
+
+			setThinkingPreviewFadeBackground(undefined);
+			const component = new AssistantMessageComponent(undefined, true);
+			component.updateContent(
+				createAssistantMessage([{ type: "thinking", thinking: "reasoning without an endpoint" }]),
+				true,
+			);
+			const raw = component.render(100).join("\n");
+
+			// The uniform path wraps each tail line in a single sequence; the fade
+			// path wraps each word, so more sequences than lines means per-word
+			// coloring leaked in without a terminal background.
+			const tail = tailBlockLines(raw);
+			const sequences = tail.join("\n").match(/\x1b\[38;2;/g)?.length ?? 0;
+			expect(sequences).toBeLessThanOrEqual(tail.filter((line) => stripAnsi(line).trim() !== "").length);
+			expect(stripAnsi(raw)).toContain("reasoning without an endpoint");
 		});
 
 		test("shows a live preview of the newest thinking run while streaming", () => {
@@ -268,7 +340,7 @@ describe("AssistantMessageComponent", () => {
 		test("follows the tail of a long thinking run with a live timer", () => {
 			initTheme("dark");
 
-			const head = "parsing the input token by token and considering ".repeat(10);
+			const head = "parsing the input token by token and considering ".repeat(20);
 			const component = new AssistantMessageComponent(undefined, true);
 			component.updateContent(
 				createAssistantMessage([{ type: "thinking", thinking: `${head}now validating the final branch` }]),
@@ -279,7 +351,6 @@ describe("AssistantMessageComponent", () => {
 			// The head is far beyond the preview window, so only tail-following
 			// can surface the final branch sentence.
 			expect(rendered).toMatch(/Thinking\.\.\. \d+\.\ds/);
-			expect(rendered).toContain("…");
 			expect(rendered).toContain("now validating the final branch");
 		});
 
@@ -292,12 +363,11 @@ describe("AssistantMessageComponent", () => {
 			const rendered = stripAnsi(component.render(100).join("\n"));
 
 			expect(rendered).toContain("Thinking...");
-			// The block keeps the last lines whole; earlier ones are folded away
-			// behind the ellipsis marker.
+			// The block keeps the last lines whole; earlier ones fold away with
+			// no marker line — the fade itself signals older content above.
 			expect(rendered).toContain("reasoning step number 12 of the plan");
 			expect(rendered).toContain("reasoning step number 11 of the plan");
 			expect(rendered).not.toContain("reasoning step number 1 of the plan");
-			expect(rendered).toContain("…");
 		});
 
 		test("replaces the preview when a newer thinking run arrives", () => {
@@ -500,12 +570,60 @@ describe("AssistantMessageComponent", () => {
 
 				expect(rendered).toContain("Thought for 3s");
 				expect(rendered).toContain("ctrl+t to expand");
+				// Older runs are gone; the newest run's tail stays under the marker.
 				expect(rendered).not.toContain("first thought about parsing");
-				expect(rendered).not.toContain("now verifying the result");
+				expect(rendered).toContain("now verifying the result");
 				expect(rendered.match(/Thought for/g)).toHaveLength(1);
 			} finally {
 				vi.useRealTimers();
 			}
+		});
+
+		test("the finished block keeps the fade into the terminal background", () => {
+			initTheme("dark");
+
+			setThinkingPreviewFadeBackground({ r: 0, g: 0, b: 0 });
+			const lines = Array.from({ length: 8 }, (_, i) => `reasoning step ${i + 1} of the plan`);
+			const component = new AssistantMessageComponent(undefined, true);
+			component.updateContent(
+				createAssistantMessage([
+					{ type: "thinking", thinking: lines.join("\n") },
+					{ type: "text", text: "the answer" },
+				]),
+				false,
+			);
+			const raw = component.render(100).join("\n");
+
+			expect(stripAnsi(raw)).toContain("Thinking...");
+			// Tail block only: the header above and the answer block below are
+			// styled independently of the fade.
+			const wordColors = [
+				...tailBlockLines(raw, ["the answer"])
+					.join("\n")
+					.matchAll(/\x1b\[38;2;(\d+);(\d+);(\d+)m/g),
+			].map((m) => Number(m[1]));
+			expect(wordColors.length).toBeGreaterThan(4);
+			expect(wordColors[0]).toBeLessThanOrEqual(32);
+			expect(wordColors[wordColors.length - 1]).toBeGreaterThanOrEqual(96);
+		});
+
+		test("a rebuilt message shows the label with the tail block, not just the label", () => {
+			initTheme("dark");
+
+			const lines = Array.from({ length: 8 }, (_, i) => `reasoning step ${i + 1} of the plan`);
+			const component = new AssistantMessageComponent(
+				createAssistantMessage([
+					{ type: "thinking", thinking: lines.join("\n") },
+					{ type: "text", text: "done" },
+				]),
+				true,
+			);
+			const rendered = stripAnsi(component.render(100).join("\n"));
+
+			expect(rendered).toContain("Thinking...");
+			expect(rendered).toContain("reasoning step 8 of the plan");
+			expect(rendered).not.toContain("reasoning step 1 of the plan");
+			expect(rendered).toContain("done");
 		});
 
 		test("freezes the duration and collapses the preview once text streams after the newest run", () => {
@@ -534,7 +652,8 @@ describe("AssistantMessageComponent", () => {
 				rendered = stripAnsi(component.render(100).join("\n"));
 				expect(rendered).toContain("Thought for 2s");
 				expect(rendered).not.toContain("Thinking...");
-				expect(rendered).not.toContain("pondering the approach");
+				// The tail block stays under the marker once the run ended.
+				expect(rendered).toContain("pondering the approach");
 				expect(rendered).toContain("par");
 
 				// The text-streaming window is not thinking time.
@@ -581,12 +700,58 @@ describe("AssistantMessageComponent", () => {
 				);
 				const rendered = stripAnsi(component.render(100).join("\n"));
 
-				expect(rendered).toContain("Thought for 1s");
+				// A run ended by a tool call keeps only its tail: the next
+				// assistant message's run carries the next header.
+				expect(rendered).not.toContain("Thought for");
 				expect(rendered).not.toContain("Thinking...");
-				expect(rendered).not.toContain("planning the edit");
+				expect(rendered).not.toContain("ctrl+t");
+				expect(rendered).toContain("planning the edit");
 			} finally {
 				vi.useRealTimers();
 			}
+		});
+
+		test("a continuation message after a tool call opens its thinking headerless", () => {
+			initTheme("dark");
+
+			const component = new AssistantMessageComponent(undefined, true, undefined, "Thinking...", 1, [], true);
+			component.updateContent(
+				createAssistantMessage([
+					{ type: "thinking", thinking: "confirmed the intermediate result" },
+					{ type: "text", text: "the answer" },
+				]),
+				false,
+			);
+			const rendered = stripAnsi(component.render(100).join("\n"));
+
+			// No header, no expand hint: only the tail, then the answer text.
+			expect(rendered).not.toContain("Thought for");
+			expect(rendered).not.toContain("Thinking...");
+			expect(rendered).not.toContain("ctrl+t");
+			expect(rendered).toContain("confirmed the intermediate result");
+			expect(rendered).toContain("the answer");
+		});
+
+		test("a run ended by text keeps its header even with a tool call later", () => {
+			initTheme("dark");
+
+			const component = new AssistantMessageComponent(undefined, true);
+			component.updateContent(
+				createAssistantMessage([
+					{ type: "thinking", thinking: "planning the edit" },
+					{ type: "text", text: "partial answer" },
+					{ type: "toolCall", id: "tool-1", name: "read", arguments: { path: "file.txt" } },
+				]),
+				false,
+			);
+			const rendered = stripAnsi(component.render(100).join("\n"));
+
+			// Never streamed live, so the header is the static label — the pin is
+			// that a header exists at all (not suppressed by the trailing tool call).
+			expect(rendered).toContain("Thinking...");
+			expect(rendered).toContain("ctrl+t");
+			expect(rendered).toContain("planning the edit");
+			expect(rendered).toContain("partial answer");
 		});
 
 		test("falls back to the static label for finished messages that were never streamed", () => {
@@ -602,7 +767,7 @@ describe("AssistantMessageComponent", () => {
 			const rendered = stripAnsi(component.render(100).join("\n"));
 
 			expect(rendered).toContain("Thinking...");
-			expect(rendered).not.toContain("reloaded reasoning");
+			expect(rendered).toContain("reloaded reasoning");
 		});
 
 		test("updates the preview in place as the newest run grows", () => {
