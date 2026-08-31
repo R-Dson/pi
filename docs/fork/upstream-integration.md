@@ -189,7 +189,7 @@ Removal set today: the core `tools.permissions` policy mode (removed 2026-08-29,
 
 ## Upstream Sync Procedure
 
-1. Merge upstream `main` into fork `main` as a dedicated `upstream-sync:` commit; never mix fork feature changes into a sync commit.
+1. Merge upstream `main` into fork `main` as a dedicated `upstream-sync:` commit; never mix fork feature changes into a sync commit. Push the sync to `main` directly — never through a PR: the repo allows squash merges only, and a squashed sync PR would drop the upstream merge parents, resetting the merge-base for every later sync.
 2. Rebase or merge stacked fork branches onto the updated fork `main` afterwards.
 3. Run `npm run check` and `./test.sh` from the repo root; fix fallout before continuing.
 4. If a sync invalidated an assumption recorded in the table above, update that row and the associated test in the same change.
