@@ -19,7 +19,6 @@ cp permission-gate.ts ~/.pi/agent/extensions/
 | Extension | Description |
 |-----------|-------------|
 | `permission-gate.ts` | Prompts for confirmation before dangerous bash commands (rm -rf, sudo, etc.) |
-| `permission-policies.ts` | The fork's full permission engine as an extension: layered policy files, profiles, hide, and interactive `ask` approval — zero core surface |
 | `read-only-mode.ts` | Review pass: hides write/process tools from the model and blocks regressions, using capability metadata with a builtin-name fallback |
 | `project-trust.ts` | Demonstrates the `project_trust` event for user/global and CLI extensions |
 | `protected-paths.ts` | Blocks writes to protected paths (.env, .git/, node_modules/) |

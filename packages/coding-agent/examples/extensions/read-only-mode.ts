@@ -7,11 +7,11 @@
  * relay to the user.
  *
  * Built on pi's public extension API — the same `setActiveTools`,
- * `getAllTools`, and `tool_call` seams the permission-policies example uses.
- * Capability matching needs the fork's `ToolInfo.capability`; on upstream pi
- * the same file runs with the builtin-name fallback. Copy it into
- * ~/.pi/agent/extensions/ (global) or a project's .pi/extensions/ (trusted
- * projects only) to use it; no settings are involved.
+ * `getAllTools`, and `tool_call` seams the built-in permission-policies
+ * extension uses. Capability matching needs the fork's `ToolInfo.capability`;
+ * on upstream pi the same file runs with the builtin-name fallback. Copy it
+ * into ~/.pi/agent/extensions/ (global) or a project's .pi/extensions/
+ * (trusted projects only) to use it; no settings are involved.
  *
  * Limitations that come with staying on the public API: tools without
  * capability metadata and without a known name (some MCP or custom tools) are

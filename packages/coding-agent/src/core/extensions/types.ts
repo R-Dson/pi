@@ -462,10 +462,10 @@ export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = un
 	promptGuidelines?: string[];
 	/**
 	 * Capability this tool exercises (e.g. "filesystem.read"), reported on
-	 * `ToolInfo` so extensions can match tools by capability (see the
-	 * permission-policies and read-only-mode examples). Undefined for tools
-	 * without a fixed capability; such tools match only permission rules
-	 * that do not specify a `capability`.
+	 * `ToolInfo` so extensions can match tools by capability (see the built-in
+	 * permission-policies extension and the read-only-mode example). Undefined
+	 * for tools without a fixed capability; such tools match only permission
+	 * rules that do not specify a `capability`.
 	 */
 	capability?: ToolCapability;
 	/** Parameter schema (TypeBox) */

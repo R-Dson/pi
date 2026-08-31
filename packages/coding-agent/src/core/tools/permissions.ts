@@ -6,7 +6,7 @@
  * process working directory — for relative-path resolution). The rule evaluator
  * decides whether a tool call is allowed, requires approval, or is denied,
  * based on an ordered rule list. Core performs no enforcement: the consumer is
- * the permission-policies extension (see examples/extensions/), which evaluates
+ * the built-in permission-policies extension (src/extensions/), which evaluates
  * `tool_call` events and reshapes the active tool list from these decisions.
  *
  * Matching semantics:
