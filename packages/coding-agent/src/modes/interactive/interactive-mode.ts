@@ -474,8 +474,6 @@ export class InteractiveMode {
 	private streamingComponent: AssistantMessageComponent | undefined = undefined;
 	/** Set when the previous assistant message ended at a tool call: the next one renders its opening thinking headerless. */
 	private nextAssistantContinuesAfterToolCall = false;
-	/** Rebuild-path twin of nextAssistantContinuesAfterToolCall (addMessageToChat is shared with the streaming path, which uses its own flag). */
-	private rebuildContinuesAfterToolCall = false;
 	private streamingMessage: AssistantMessage | undefined = undefined;
 
 	// Tool execution tracking: toolCallId -> component
@@ -3595,7 +3593,7 @@ export class InteractiveMode {
 				break;
 			}
 			case "user": {
-				this.rebuildContinuesAfterToolCall = false;
+				this.nextAssistantContinuesAfterToolCall = false;
 				const textContent = this.getUserMessageText(message);
 				if (textContent) {
 					if (this.chatContainer.children.length > 0) {
@@ -3644,10 +3642,10 @@ export class InteractiveMode {
 					this.hiddenThinkingLabel,
 					this.outputPad,
 					this.getMarkdownTransformers(),
-					this.rebuildContinuesAfterToolCall,
+					this.nextAssistantContinuesAfterToolCall,
 				);
 				this.chatContainer.addChild(assistantComponent);
-				this.rebuildContinuesAfterToolCall = message.stopReason === "toolUse";
+				this.nextAssistantContinuesAfterToolCall = message.stopReason === "toolUse";
 				break;
 			}
 			case "toolResult": {
@@ -3677,10 +3675,8 @@ export class InteractiveMode {
 			this.updateEditorBorderColor();
 		}
 
-		// Rebuild-time continuation tracking: an assistant message that ended at a
-		// tool call makes the next assistant message's opening thinking run render
-		// headerless (matches the streaming path's nextAssistantContinuesAfterToolCall).
-		this.rebuildContinuesAfterToolCall = false;
+		// Rebuilds start fresh: no message before the first one continued a tool call.
+		this.nextAssistantContinuesAfterToolCall = false;
 		for (const item of items) {
 			if (isCustomSessionEntry(item)) {
 				this.addCustomEntryToChat(item);
