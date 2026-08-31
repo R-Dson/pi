@@ -6,6 +6,10 @@
 
 - Added an optional `onWireRewrite` observer to stream options: the Anthropic adapter reports wire-only rewrites the request context cannot reveal — `"provider-deferred-tool-load"` when a request first anchors a deferred tool load at its tool-result marker, and `"provider-auth-mode"` when the auth mode changes between requests. Transition tracking is keyed on the callback, so pass one stable function across a session's requests; interleaved sessions do not cross-report ([#56](https://github.com/R-Dson/pi/issues/56)).
 
+### Changed
+
+- Changed `getSupportedThinkingLevels` to offer `xhigh` for reasoning models that ship no `thinkingLevelMap` (their level vocabulary is uncurated): OpenAI-style adapters send the unmapped level raw, so a provider that does not support it rejects the request with an actionable error; the Anthropic and Bedrock adapters map it to effort `high`, the Google adapter rejects it client-side (`Unsupported Google thinking level mapping`), and zai models without `supportsReasoningEffort` send no effort at all. Models with a map — including maps that omit the `xhigh` key — are unchanged, and `max` stays opt-in ([earendil-works/pi#4344](https://github.com/earendil-works/pi/issues/4344)).
+
 ## [0.84.4] - 2026-08-28
 
 ### Added
