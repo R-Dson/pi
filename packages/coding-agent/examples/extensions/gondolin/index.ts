@@ -305,10 +305,13 @@ async function executeGondolinGrep(
 		notices.push(`${formatSize(DEFAULT_MAX_BYTES)} limit reached`);
 	}
 	if (notices.length > 0) output += `\n\n[${notices.join(". ")}]`;
+	// The true match count feeds the collapsed "N matches" summary; the
+	// fallback would count context lines and notices as matches.
+	details.matchCount = matchCount;
 
 	return {
 		content: [{ type: "text", text: output }],
-		details: Object.keys(details).length > 0 ? details : undefined,
+		details,
 	};
 }
 
