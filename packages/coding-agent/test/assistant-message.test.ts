@@ -672,12 +672,37 @@ describe("AssistantMessageComponent", () => {
 				);
 				const rendered = stripAnsi(component.render(100).join("\n"));
 
-				expect(rendered).toContain("Thought for 1s");
+				// A run ended by a tool call keeps only its tail: the next
+				// assistant message's run carries the next header.
+				expect(rendered).not.toContain("Thought for");
 				expect(rendered).not.toContain("Thinking...");
+				expect(rendered).not.toContain("ctrl+t");
 				expect(rendered).toContain("planning the edit");
 			} finally {
 				vi.useRealTimers();
 			}
+		});
+
+		test("a run ended by text keeps its header even with a tool call later", () => {
+			initTheme("dark");
+
+			const component = new AssistantMessageComponent(undefined, true);
+			component.updateContent(
+				createAssistantMessage([
+					{ type: "thinking", thinking: "planning the edit" },
+					{ type: "text", text: "partial answer" },
+					{ type: "toolCall", id: "tool-1", name: "read", arguments: { path: "file.txt" } },
+				]),
+				false,
+			);
+			const rendered = stripAnsi(component.render(100).join("\n"));
+
+			// Never streamed live, so the header is the static label — the pin is
+			// that a header exists at all (not suppressed by the trailing tool call).
+			expect(rendered).toContain("Thinking...");
+			expect(rendered).toContain("ctrl+t");
+			expect(rendered).toContain("planning the edit");
+			expect(rendered).toContain("partial answer");
 		});
 
 		test("falls back to the static label for finished messages that were never streamed", () => {

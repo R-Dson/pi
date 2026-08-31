@@ -349,24 +349,32 @@ export class AssistantMessageComponent extends Container {
 					// header: completed lines never change as tokens arrive, so the
 					// block reads as steady text with only the newest line moving —
 					// the same trick the bash preview uses.
-					const runEnded = message.content.slice(i + 1).some(isStreamedNonThinking);
-					const expandHint = `${theme.fg("muted", "(")}${keyHint("app.thinking.toggle", "to expand thinking")}${theme.fg("muted", ")")}`;
-					let header: string;
-					if (this.isStreaming && !runEnded) {
-						const elapsedS =
-							this.thinkingStartedAt !== undefined
-								? Math.max(0, (Date.now() - this.thinkingStartedAt) / 1000)
-								: 0;
-						header = `${this.hiddenThinkingLabel} ${elapsedS.toFixed(1)}s`;
-					} else {
-						header =
-							this.thinkingDurationMs !== undefined
-								? `Thought for ${Math.max(1, Math.round(this.thinkingDurationMs / 1000))}s`
-								: this.hiddenThinkingLabel;
+					const runEnder = message.content.slice(i + 1).find(isStreamedNonThinking);
+					const runEnded = runEnder !== undefined;
+					// A run ended by a tool call renders only its tail: the next
+					// assistant message (the continuation after the tool result)
+					// carries the next header, so suppressing this one avoids a
+					// header per tool-call interruption.
+					const suppressHeader = runEnder?.type === "toolCall";
+					if (!suppressHeader) {
+						const expandHint = `${theme.fg("muted", "(")}${keyHint("app.thinking.toggle", "to expand thinking")}${theme.fg("muted", ")")}`;
+						let header: string;
+						if (this.isStreaming && !runEnded) {
+							const elapsedS =
+								this.thinkingStartedAt !== undefined
+									? Math.max(0, (Date.now() - this.thinkingStartedAt) / 1000)
+									: 0;
+							header = `${this.hiddenThinkingLabel} ${elapsedS.toFixed(1)}s`;
+						} else {
+							header =
+								this.thinkingDurationMs !== undefined
+									? `Thought for ${Math.max(1, Math.round(this.thinkingDurationMs / 1000))}s`
+									: this.hiddenThinkingLabel;
+						}
+						this.contentContainer.addChild(
+							new Text(`${theme.italic(theme.fg("thinkingText", header))} ${expandHint}`, this.outputPad, 0),
+						);
 					}
-					this.contentContainer.addChild(
-						new Text(`${theme.italic(theme.fg("thinkingText", header))} ${expandHint}`, this.outputPad, 0),
-					);
 					this.addThinkingTailBlock(thinkingBlocks.join("\n\n"));
 				} else {
 					// Render each run of thinking blocks as one Markdown section.
