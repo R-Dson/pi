@@ -353,6 +353,7 @@ export class Theme {
 	readonly sourcePath?: string;
 	sourceInfo?: SourceInfo;
 	private fgColors: Map<ThemeColor, string>;
+	private fgRawValues: Map<ThemeColor, string | number> = new Map();
 	private bgColors: Map<ThemeBg, string>;
 	private mode: ColorMode;
 
@@ -376,6 +377,7 @@ export class Theme {
 		};
 		for (const [key, value] of Object.entries(colors) as [ThemeColor, string | number][]) {
 			this.fgColors.set(key, fgAnsi(value, mode));
+			this.fgRawValues.set(key, value);
 		}
 		this.bgColors = new Map();
 		const backgrounds = {
@@ -392,6 +394,13 @@ export class Theme {
 		const ansi = this.fgColors.get(color);
 		if (!ansi) throw new Error(`Unknown theme color: ${color}`);
 		return `${ansi}${text}\x1b[39m`; // Reset only foreground color
+	}
+
+	/** Resolved color value for a foreground color: a `#rrggbb` hex string or a 256-palette index. */
+	fgValue(color: ThemeColor): string | number {
+		const value = this.fgRawValues.get(color);
+		if (value === undefined) throw new Error(`Unknown theme color: ${color}`);
+		return value;
 	}
 
 	bg(color: ThemeBg, text: string): string {
