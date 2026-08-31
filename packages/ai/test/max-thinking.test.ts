@@ -12,7 +12,9 @@ function mockToken(): string {
 }
 
 describe("max thinking level", () => {
-	it("is opt-in for ordinary reasoning models", () => {
+	// earendil-works/pi#4344: without a thinkingLevelMap the level vocabulary is
+	// unknown, so xhigh stays selectable and the provider arbitrates on the wire.
+	it("keeps max opt-in but offers xhigh for reasoning models without a thinkingLevelMap", () => {
 		const model: Model<"openai-completions"> = {
 			id: "ordinary-reasoning",
 			name: "Ordinary Reasoning",
@@ -26,8 +28,28 @@ describe("max thinking level", () => {
 			maxTokens: 4096,
 		};
 
-		expect(getSupportedThinkingLevels(model)).toEqual(["off", "minimal", "low", "medium", "high"]);
-		expect(clampThinkingLevel(model, "max")).toBe("high");
+		expect(getSupportedThinkingLevels(model)).toEqual(["off", "minimal", "low", "medium", "high", "xhigh"]);
+		expect(clampThinkingLevel(model, "xhigh")).toBe("xhigh");
+		expect(clampThinkingLevel(model, "max")).toBe("xhigh");
+	});
+
+	it("keeps a thinkingLevelMap that omits the xhigh key authoritative", () => {
+		const model: Model<"openai-completions"> = {
+			id: "max-only",
+			name: "Max Only",
+			api: "openai-completions",
+			provider: "test",
+			baseUrl: "https://example.com/v1",
+			reasoning: true,
+			thinkingLevelMap: { max: "max" },
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 128000,
+			maxTokens: 4096,
+		};
+
+		expect(getSupportedThinkingLevels(model)).toEqual(["off", "minimal", "low", "medium", "high", "max"]);
+		expect(clampThinkingLevel(model, "xhigh")).toBe("max");
 	});
 
 	it.each(["gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra"] as const)(
