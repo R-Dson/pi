@@ -164,6 +164,49 @@ export class AssistantMessageComponent extends Container {
 		}
 	}
 
+	/**
+	 * Append the width-lazy tail block for a thinking run's text: the last
+	 * THINKING_PREVIEW_LINES visual lines, with an ellipsis line when content
+	 * folded away. Fade path: when the terminal answered the OSC 11 background
+	 * query and the theme's gray is a hex value, the visible tail gets per-word
+	 * colors interpolated between the background and the gray — the oldest
+	 * visible word dissolves into the background exactly. Position-keyed per
+	 * word, so words darken continuously as newer text arrives. Without an
+	 * endpoint the block stays uniformly gray, styled before wrapping.
+	 */
+	private addThinkingTailBlock(rawText: string): void {
+		const previewText = rawText.replace(/\r\n|\r/g, "\n").replace(/\n+$/, "");
+		const fadeGray = thinkingGrayRgb();
+		const useFade = previewFadeBackground !== undefined && fadeGray !== undefined;
+		const styledText = useFade
+			? previewText
+			: previewText
+					.split("\n")
+					.map((line) => theme.italic(theme.fg("thinkingText", line)))
+					.join("\n");
+		let cachedWidth: number | undefined;
+		let cachedLines: string[] | undefined;
+		this.contentContainer.addChild({
+			render: (width: number) => {
+				if (cachedLines === undefined || cachedWidth !== width) {
+					const result = truncateToVisualLines(styledText, THINKING_PREVIEW_LINES, width, this.outputPad);
+					let bodyLines = result.visualLines;
+					if (useFade && fadeGray && previewFadeBackground) {
+						bodyLines = fadeTailLines(bodyLines, fadeGray, previewFadeBackground);
+					}
+					cachedLines =
+						result.skippedCount > 0 ? [theme.italic(theme.fg("thinkingText", "…")), ...bodyLines] : bodyLines;
+					cachedWidth = width;
+				}
+				return cachedLines ?? [];
+			},
+			invalidate: () => {
+				cachedWidth = undefined;
+				cachedLines = undefined;
+			},
+		});
+	}
+
 	override invalidate(): void {
 		super.invalidate();
 		if (this.lastMessage) {
@@ -299,82 +342,32 @@ export class AssistantMessageComponent extends Container {
 						continue;
 					}
 
-					// Live preview only while the newest run is still the trailing
-					// streaming content; once non-thinking blocks follow it (or the
-					// message finished), collapse to the one-line marker. The timer
-					// recomputes on every message_update render, which flows
-					// continuously while thinking; no separate tick needed.
+					// While the newest run is still the trailing streaming content,
+					// a header with a live timer leads; once non-thinking blocks
+					// follow it (or the message finished), the header becomes the
+					// frozen marker. Both states keep the tail block below the
+					// header: completed lines never change as tokens arrive, so the
+					// block reads as steady text with only the newest line moving —
+					// the same trick the bash preview uses.
 					const runEnded = message.content.slice(i + 1).some(isStreamedNonThinking);
 					const expandHint = `${theme.fg("muted", "(")}${keyHint("app.thinking.toggle", "to expand thinking")}${theme.fg("muted", ")")}`;
+					let header: string;
 					if (this.isStreaming && !runEnded) {
 						const elapsedS =
 							this.thinkingStartedAt !== undefined
 								? Math.max(0, (Date.now() - this.thinkingStartedAt) / 1000)
 								: 0;
-						// Header line, then a tail block of the last visual lines:
-						// completed lines never change as tokens arrive, so the
-						// block reads as steady text with only the newest line
-						// moving — the same trick the bash preview uses.
-						const header = `${this.hiddenThinkingLabel} ${elapsedS.toFixed(1)}s`;
-						this.contentContainer.addChild(
-							new Text(`${theme.italic(theme.fg("thinkingText", header))} ${expandHint}`, this.outputPad, 0),
-						);
-						const previewText = thinkingBlocks
-							.join("\n\n")
-							.replace(/\r\n|\r/g, "\n")
-							.replace(/\n+$/, "");
-						// Fade path: when the terminal answered the OSC 11 background
-						// query and the theme's gray is a hex value, the visible tail
-						// gets per-word colors interpolated between the background and
-						// the gray — the oldest visible word dissolves into the
-						// background exactly. Position-keyed per word, so words darken
-						// continuously as newer text arrives. Without an endpoint the
-						// block stays uniformly gray, styled before wrapping.
-						const fadeGray = thinkingGrayRgb();
-						const useFade = previewFadeBackground !== undefined && fadeGray !== undefined;
-						const styledText = useFade
-							? previewText
-							: previewText
-									.split("\n")
-									.map((line) => theme.italic(theme.fg("thinkingText", line)))
-									.join("\n");
-						let cachedWidth: number | undefined;
-						let cachedLines: string[] | undefined;
-						this.contentContainer.addChild({
-							render: (width: number) => {
-								if (cachedLines === undefined || cachedWidth !== width) {
-									const result = truncateToVisualLines(
-										styledText,
-										THINKING_PREVIEW_LINES,
-										width,
-										this.outputPad,
-									);
-									let bodyLines = result.visualLines;
-									if (useFade && fadeGray && previewFadeBackground) {
-										bodyLines = fadeTailLines(bodyLines, fadeGray, previewFadeBackground);
-									}
-									cachedLines =
-										result.skippedCount > 0
-											? [theme.italic(theme.fg("thinkingText", "…")), ...bodyLines]
-											: bodyLines;
-									cachedWidth = width;
-								}
-								return cachedLines ?? [];
-							},
-							invalidate: () => {
-								cachedWidth = undefined;
-								cachedLines = undefined;
-							},
-						});
+						header = `${this.hiddenThinkingLabel} ${elapsedS.toFixed(1)}s`;
 					} else {
-						const line =
+						header =
 							this.thinkingDurationMs !== undefined
 								? `Thought for ${Math.max(1, Math.round(this.thinkingDurationMs / 1000))}s`
 								: this.hiddenThinkingLabel;
-						this.contentContainer.addChild(
-							new Text(`${theme.italic(theme.fg("thinkingText", line))} ${expandHint}`, this.outputPad, 0),
-						);
 					}
+					this.contentContainer.addChild(
+						new Text(`${theme.italic(theme.fg("thinkingText", header))} ${expandHint}`, this.outputPad, 0),
+					);
+					this.addThinkingTailBlock(thinkingBlocks.join("\n\n"));
 				} else {
 					// Render each run of thinking blocks as one Markdown section.
 					this.contentContainer.addChild(

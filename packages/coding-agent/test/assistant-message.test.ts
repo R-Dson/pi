@@ -550,12 +550,54 @@ describe("AssistantMessageComponent", () => {
 
 				expect(rendered).toContain("Thought for 3s");
 				expect(rendered).toContain("ctrl+t to expand");
+				// Older runs are gone; the newest run's tail stays under the marker.
 				expect(rendered).not.toContain("first thought about parsing");
-				expect(rendered).not.toContain("now verifying the result");
+				expect(rendered).toContain("now verifying the result");
 				expect(rendered.match(/Thought for/g)).toHaveLength(1);
 			} finally {
 				vi.useRealTimers();
 			}
+		});
+
+		test("the finished block keeps the fade into the terminal background", () => {
+			initTheme("dark");
+
+			setThinkingPreviewFadeBackground({ r: 0, g: 0, b: 0 });
+			const lines = Array.from({ length: 8 }, (_, i) => `reasoning step ${i + 1} of the plan`);
+			const component = new AssistantMessageComponent(undefined, true);
+			component.updateContent(
+				createAssistantMessage([
+					{ type: "thinking", thinking: lines.join("\n") },
+					{ type: "text", text: "the answer" },
+				]),
+				false,
+			);
+			const raw = component.render(100).join("\n");
+
+			expect(stripAnsi(raw)).toContain("Thinking...");
+			const wordColors = [...raw.matchAll(/\x1b\[38;2;(\d+);(\d+);(\d+)m/g)].map((m) => Number(m[1]));
+			expect(wordColors.length).toBeGreaterThan(4);
+			expect(wordColors[0]).toBeLessThanOrEqual(32);
+			expect(wordColors[wordColors.length - 1]).toBeGreaterThanOrEqual(96);
+		});
+
+		test("a rebuilt message shows the label with the tail block, not just the label", () => {
+			initTheme("dark");
+
+			const lines = Array.from({ length: 8 }, (_, i) => `reasoning step ${i + 1} of the plan`);
+			const component = new AssistantMessageComponent(
+				createAssistantMessage([
+					{ type: "thinking", thinking: lines.join("\n") },
+					{ type: "text", text: "done" },
+				]),
+				true,
+			);
+			const rendered = stripAnsi(component.render(100).join("\n"));
+
+			expect(rendered).toContain("Thinking...");
+			expect(rendered).toContain("reasoning step 8 of the plan");
+			expect(rendered).not.toContain("reasoning step 1 of the plan");
+			expect(rendered).toContain("done");
 		});
 
 		test("freezes the duration and collapses the preview once text streams after the newest run", () => {
@@ -584,7 +626,8 @@ describe("AssistantMessageComponent", () => {
 				rendered = stripAnsi(component.render(100).join("\n"));
 				expect(rendered).toContain("Thought for 2s");
 				expect(rendered).not.toContain("Thinking...");
-				expect(rendered).not.toContain("pondering the approach");
+				// The tail block stays under the marker once the run ended.
+				expect(rendered).toContain("pondering the approach");
 				expect(rendered).toContain("par");
 
 				// The text-streaming window is not thinking time.
@@ -633,7 +676,7 @@ describe("AssistantMessageComponent", () => {
 
 				expect(rendered).toContain("Thought for 1s");
 				expect(rendered).not.toContain("Thinking...");
-				expect(rendered).not.toContain("planning the edit");
+				expect(rendered).toContain("planning the edit");
 			} finally {
 				vi.useRealTimers();
 			}
@@ -652,7 +695,7 @@ describe("AssistantMessageComponent", () => {
 			const rendered = stripAnsi(component.render(100).join("\n"));
 
 			expect(rendered).toContain("Thinking...");
-			expect(rendered).not.toContain("reloaded reasoning");
+			expect(rendered).toContain("reloaded reasoning");
 		});
 
 		test("updates the preview in place as the newest run grows", () => {
