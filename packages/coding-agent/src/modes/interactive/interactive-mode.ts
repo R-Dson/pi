@@ -472,6 +472,8 @@ export class InteractiveMode {
 
 	// Streaming message tracking
 	private streamingComponent: AssistantMessageComponent | undefined = undefined;
+	/** Set when the previous assistant message ended at a tool call: the next one renders its opening thinking headerless. */
+	private nextAssistantContinuesAfterToolCall = false;
 	private streamingMessage: AssistantMessage | undefined = undefined;
 
 	// Tool execution tracking: toolCallId -> component
@@ -3197,7 +3199,9 @@ export class InteractiveMode {
 						this.hiddenThinkingLabel,
 						this.outputPad,
 						this.getMarkdownTransformers(),
+						this.nextAssistantContinuesAfterToolCall,
 					);
+					this.nextAssistantContinuesAfterToolCall = false;
 					this.streamingMessage = event.message;
 					this.chatContainer.addChild(this.streamingComponent);
 					this.streamingComponent.updateContent(this.streamingMessage, true);
@@ -3244,6 +3248,7 @@ export class InteractiveMode {
 				if (event.message.role === "user") break;
 				if (this.streamingComponent && event.message.role === "assistant") {
 					this.streamingMessage = event.message;
+					this.nextAssistantContinuesAfterToolCall = this.streamingMessage.stopReason === "toolUse";
 					let errorMessage: string | undefined;
 					if (this.streamingMessage.stopReason === "aborted") {
 						const retryAttempt = this.session.retryAttempt;
@@ -3584,6 +3589,7 @@ export class InteractiveMode {
 				break;
 			}
 			case "user": {
+				rebuildContinuesAfterToolCall = false;
 				const textContent = this.getUserMessageText(message);
 				if (textContent) {
 					if (this.chatContainer.children.length > 0) {
@@ -3632,8 +3638,10 @@ export class InteractiveMode {
 					this.hiddenThinkingLabel,
 					this.outputPad,
 					this.getMarkdownTransformers(),
+					rebuildContinuesAfterToolCall,
 				);
 				this.chatContainer.addChild(assistantComponent);
+				rebuildContinuesAfterToolCall = message.stopReason === "toolUse";
 				break;
 			}
 			case "toolResult": {
@@ -3663,6 +3671,10 @@ export class InteractiveMode {
 			this.updateEditorBorderColor();
 		}
 
+		// Rebuild-time continuation tracking: an assistant message that ended at a
+		// tool call makes the next assistant message's opening thinking run render
+		// headerless (matches the streaming path's nextAssistantContinuesAfterToolCall).
+		const rebuildContinuesAfterToolCall = false;
 		for (const item of items) {
 			if (isCustomSessionEntry(item)) {
 				this.addCustomEntryToChat(item);

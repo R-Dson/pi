@@ -138,6 +138,8 @@ export class AssistantMessageComponent extends Container {
 	private thinkingDurationMs: number | undefined;
 	/** Visible thinking runs at the last update; growth restarts the clock (a new run began). */
 	private thinkingRunCount = 0;
+	/** Set when this message continues after a tool call: its opening thinking run renders headerless. */
+	private readonly continuesAfterToolCall: boolean;
 
 	constructor(
 		message?: AssistantMessage,
@@ -146,6 +148,8 @@ export class AssistantMessageComponent extends Container {
 		hiddenThinkingLabel = "Thinking...",
 		outputPad = 1,
 		markdownTransformers: readonly MarkdownTransformer[] = [],
+		/** This message continues an assistant turn whose previous message ended at a tool call. */
+		continuesAfterToolCall = false,
 	) {
 		super();
 
@@ -154,6 +158,7 @@ export class AssistantMessageComponent extends Container {
 		this.hiddenThinkingLabel = hiddenThinkingLabel;
 		this.outputPad = outputPad;
 		this.markdownTransformers = markdownTransformers;
+		this.continuesAfterToolCall = continuesAfterToolCall;
 
 		// Container for text/thinking content
 		this.contentContainer = new Container();
@@ -355,7 +360,8 @@ export class AssistantMessageComponent extends Container {
 					// assistant message (the continuation after the tool result)
 					// carries the next header, so suppressing this one avoids a
 					// header per tool-call interruption.
-					const suppressHeader = runEnder?.type === "toolCall";
+					const runOpensMessage = message.content.slice(0, i).every((c) => c.type === "thinking");
+					const suppressHeader = runEnder?.type === "toolCall" || (this.continuesAfterToolCall && runOpensMessage);
 					if (!suppressHeader) {
 						const expandHint = `${theme.fg("muted", "(")}${keyHint("app.thinking.toggle", "to expand thinking")}${theme.fg("muted", ")")}`;
 						let header: string;

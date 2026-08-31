@@ -683,6 +683,27 @@ describe("AssistantMessageComponent", () => {
 			}
 		});
 
+		test("a continuation message after a tool call opens its thinking headerless", () => {
+			initTheme("dark");
+
+			const component = new AssistantMessageComponent(undefined, true, undefined, "Thinking...", 1, [], true);
+			component.updateContent(
+				createAssistantMessage([
+					{ type: "thinking", thinking: "confirmed the intermediate result" },
+					{ type: "text", text: "the answer" },
+				]),
+				false,
+			);
+			const rendered = stripAnsi(component.render(100).join("\n"));
+
+			// No header, no expand hint: only the tail, then the answer text.
+			expect(rendered).not.toContain("Thought for");
+			expect(rendered).not.toContain("Thinking...");
+			expect(rendered).not.toContain("ctrl+t");
+			expect(rendered).toContain("confirmed the intermediate result");
+			expect(rendered).toContain("the answer");
+		});
+
 		test("a run ended by text keeps its header even with a tool call later", () => {
 			initTheme("dark");
 
