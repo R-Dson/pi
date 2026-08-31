@@ -1,14 +1,15 @@
 /**
- * Verify the permission-policies example wires correctly against the public
- * extension API: layered config from policy files, visibility filtering at
- * session_start, and call-time deny/ask enforcement with interactive approval.
+ * Verify the built-in permission-policies extension wires correctly against
+ * the public extension API: activation gating on policy-file existence and
+ * project trust, layered config from policy files, visibility filtering at
+ * session_start, and call-time deny/ask enforcement with interactive
+ * approval.
  */
 
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import permissionPolicies, { resolvePermissionConfig } from "../examples/extensions/permission-policies.ts";
 import type {
 	ExtensionAPI,
 	ExtensionContext,
@@ -17,6 +18,11 @@ import type {
 	ToolInfo,
 } from "../src/core/extensions/index.ts";
 import { createSyntheticSourceInfo } from "../src/core/source-info.ts";
+import { builtInExtensions } from "../src/extensions/index.ts";
+import permissionPolicies, {
+	policyFileExists,
+	resolvePermissionConfig,
+} from "../src/extensions/permission-policies.ts";
 
 type Handler = (event: never, ctx: never) => unknown;
 
@@ -52,6 +58,8 @@ interface InstallOptions {
 	hasUI?: boolean;
 	/** Active list as another extension or the SDK left it before session_start. */
 	initialActive?: string[];
+	/** Trust state reported by the context; defaults to trusted. */
+	isProjectTrusted?: boolean;
 }
 
 function install(cwd: string, options: InstallOptions = {}) {
@@ -65,6 +73,7 @@ function install(cwd: string, options: InstallOptions = {}) {
 	const ctx = {
 		cwd,
 		hasUI: options.hasUI ?? false,
+		isProjectTrusted: () => options.isProjectTrusted ?? true,
 		ui: {
 			notify: (message: string) => {
 				notifications.push(message);
@@ -109,7 +118,76 @@ function projectWithPolicy(policy: string): string {
 	return dir;
 }
 
-describe("permission-policies example", () => {
+function projectWithoutPolicy(): string {
+	const dir = realpathSync(mkdtempSync(join(tmpdir(), "pi-perm-ext-")));
+	tempDirs.push(dir);
+	return dir;
+}
+
+describe("permission-policies builtin", () => {
+	it("is registered as a hidden builtInExtensions entry", () => {
+		const entry = builtInExtensions.find(
+			(extension) => typeof extension === "object" && extension.name === "permission-policies",
+		);
+		expect(entry).toEqual({ name: "permission-policies", factory: permissionPolicies, hidden: true });
+	});
+
+	it("stays inert with no policy file anywhere", async () => {
+		const cwd = projectWithoutPolicy();
+		expect(policyFileExists(cwd, true)).toBe(false);
+
+		const { active, sessionStart, toolCall, notifications } = install(cwd);
+		sessionStart("startup");
+		// No visibility rewrite happened...
+		expect(active()).toBeUndefined();
+		// ...and even a would-be-deniable call proceeds untouched.
+		expect((await toolCall("bash", { command: "git push --force" }))?.block).toBeUndefined();
+		expect(notifications).toEqual([]);
+	});
+
+	it("ignores a project policy file in an untrusted project", async () => {
+		const cwd = projectWithPolicy(`{ "rules": [{ "tool": "bash", "command": "git push", "effect": "deny" }] }`);
+		expect(policyFileExists(cwd, false)).toBe(false);
+
+		const { active, sessionStart, toolCall } = install(cwd, { isProjectTrusted: false });
+		sessionStart("startup");
+		expect(active()).toBeUndefined();
+		expect((await toolCall("bash", { command: "git push --force" }))?.block).toBeUndefined();
+	});
+
+	it("still applies the global policy file in an untrusted project", () => {
+		const globalPath = process.env.PI_PERMISSION_POLICIES_GLOBAL as string;
+		writeFileSync(globalPath, `{ "profile": "review" }`);
+		tempDirs.push(globalPath);
+		const cwd = projectWithPolicy(`{ "rules": [{ "tool": "bash", "effect": "allow" }] }`);
+
+		// Untrusted: the project allow is not read, so the global review
+		// preset's deny+hide decides.
+		const { active, sessionStart } = install(cwd, {
+			tools: [makeTool("read", "filesystem.read"), makeTool("bash", "process.execute")],
+			isProjectTrusted: false,
+		});
+		sessionStart("startup");
+		expect(active()).toEqual(["read"]);
+	});
+
+	it("activates from the global policy file alone", () => {
+		const globalPath = process.env.PI_PERMISSION_POLICIES_GLOBAL as string;
+		writeFileSync(globalPath, `{ "profile": "review" }`);
+		tempDirs.push(globalPath);
+		const cwd = projectWithoutPolicy();
+
+		const { active, sessionStart } = install(cwd, {
+			tools: [
+				makeTool("read", "filesystem.read"),
+				makeTool("edit", "filesystem.write"),
+				makeTool("bash", "process.execute"),
+			],
+		});
+		sessionStart("startup");
+		expect(active()).toEqual(["read"]);
+	});
+
 	it("layers project rules over global rules over the profile preset", () => {
 		const cwd = projectWithPolicy(`{ "rules": [{ "tool": "bash", "command": "git push", "effect": "deny" }] }`);
 		const config = resolvePermissionConfig(cwd, () => {});

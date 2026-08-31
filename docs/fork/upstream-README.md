@@ -59,7 +59,7 @@ All additions default to upstream behavior; the fork ledger records every decisi
 
 - **Session reliability** (`packages/coding-agent/src/core/sessions/`): pure, golden-tested context projector; session validator with `pi --validate-session <path>`; torn-tail recovery read; interrupted-turn repair at resume (dangling tool calls get terminal results, so strict providers accept the next request).
 - **Tool runtime**: optional per-tool `timeoutMs` enforced in the agent loop (`packages/agent`); tool result text bounded (default 200 KB, `tools.maxToolOutputBytes`) with head+tail excerpt and full-output artifact spill under `<sessionDir>/artifacts/<sessionId>/`.
-- **Permissions (opt-in)**: the `permission-policies` example extension enforces allow/ask/deny rules with deny > ask > allow precedence, model-visible tool hiding, and `code` / `review` / `minimal` profiles from `.pi/permissions.json` policy files; the rule evaluator and capability metadata ship as exported library API, and core performs no enforcement.
+- **Permissions (opt-in)**: the built-in `permission-policies` extension (activates only when a policy file exists) enforces allow/ask/deny rules with deny > ask > allow precedence, model-visible tool hiding, and `code` / `review` / `minimal` profiles from `~/.pi/agent/permissions.json` and trusted-project `.pi/permissions.json` policy files; the rule evaluator and capability metadata ship as exported library API, and core performs no enforcement.
 - **Diagnostics**: session stats report tool output volume, truncated bytes, and artifact counts alongside the existing token/cache stats.
 
 ## Permissions & Containerization

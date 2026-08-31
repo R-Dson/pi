@@ -1,12 +1,14 @@
 /**
- * Permission Policies Extension
+ * Permission Policies built-in extension
  *
- * The fork's permission engine as a plain extension: token-boundary command
- * matching, normalized path matching, deny > ask > allow precedence,
+ * The fork's permission engine as a hidden built-in extension: token-boundary
+ * command matching, normalized path matching, deny > ask > allow precedence,
  * code/review/minimal profiles, and hide-from-the-model, with zero core
- * surface beyond the exported evaluator. Install by copying this file into
- * ~/.pi/agent/extensions/ (global) or a project's .pi/extensions/ (trusted
- * projects only).
+ * surface beyond the exported evaluator. It activates only when a policy file
+ * exists — `~/.pi/agent/permissions.json` (global) or `.pi/permissions.json`
+ * (project, trusted projects only) — and otherwise does nothing: no
+ * visibility change, no call-time decisions. Core performs no permission
+ * enforcement; this is still extension territory.
  *
  * Configuration lives in policy files instead of settings.json (extensions
  * cannot read pi settings). Precedence, exactly as the evaluator computes it:
@@ -27,28 +29,35 @@
  *
  * `ask` opens an interactive approval dialog when the run has UI (interactive
  * and RPC modes); in print / json modes it blocks with a reason the model can
- * relay (the dialog is the one thing this extension can do that core policy
+ * relay (the dialog is the one thing this extension can do that a core policy
  * mode cannot).
+ *
+ * The project file counts only in a trusted project: a built-in loads in
+ * every directory, so an untrusted checkout's `.pi/permissions.json` must
+ * not steer enforcement (under the old copy-to-install model the user's
+ * install was the opt-in). Trust granted mid-session starts call-time
+ * enforcement at the next tool call (the lazy reload in the handler
+ * re-checks) and visibility changes at the next session_start or /reload.
  *
  * Ordering: `tool_call` handlers run in extension load order, so rules judge
  * the call as this extension sees it — an earlier-loaded extension may have
  * mutated the arguments, and a later one can still rewrite an allowed call.
  * Deny/ask rules are the safe use; real isolation needs containerization.
  *
- * Interaction: each session_start re-applies visibility by subtracting
- * hidden tools from the active list — plus anything this extension hid
- * before, so removing a hide rule and running /reload restores the tool —
- * which preserves a narrower active-tool set another extension installed.
+ * Interaction: each session_start re-applies visibility by subtracting hidden
+ * tools from the active list — plus anything this extension hid before, so
+ * removing a hide rule and running /reload restores the tool — which
+ * preserves a narrower active-tool set another extension installed.
  * A tool registered mid-session stays visible until the next session_start
  * or /reload (there is no tool-registration event to hook), but call-time
  * deny/ask rules apply to it immediately. `/reload` re-reads the policy
  * files.
  */
 
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { ExtensionAPI, ToolCallEvent, ToolInfo } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, ToolCallEvent, ToolInfo } from "../core/extensions/types.ts";
 import {
 	evaluatePermissionLayered,
 	type PermissionDecision,
@@ -56,7 +65,7 @@ import {
 	resolveProfileConfig,
 	type ToolCapability,
 	type ToolProfile,
-} from "@earendil-works/pi-coding-agent";
+} from "../core/tools/permissions.ts";
 
 interface PermissionFile {
 	profile?: ToolProfile;
@@ -78,6 +87,22 @@ interface ResolvedPermissionConfig {
 	projectPath: string;
 }
 
+function policyPaths(cwd: string): { globalPath: string; projectPath: string } {
+	// Env override is a test seam (same pattern as PI_PACKAGE_DIR); unset in
+	// production, where the global policy always lives in the home directory.
+	const globalPath = process.env.PI_PERMISSION_POLICIES_GLOBAL ?? join(homedir(), ".pi", "agent", "permissions.json");
+	return { globalPath, projectPath: join(cwd, ".pi", "permissions.json") };
+}
+
+/**
+ * Whether any policy file exists that this extension may read: the global
+ * file always, the project file only in a trusted project.
+ */
+export function policyFileExists(cwd: string, projectTrusted: boolean): boolean {
+	const { globalPath, projectPath } = policyPaths(cwd);
+	return existsSync(globalPath) || (projectTrusted && existsSync(projectPath));
+}
+
 function readPermissionFile(path: string, warn: (message: string) => void): PermissionFile {
 	try {
 		return JSON.parse(readFileSync(path, "utf8")) as PermissionFile;
@@ -91,13 +116,14 @@ function readPermissionFile(path: string, warn: (message: string) => void): Perm
 	}
 }
 
-export function resolvePermissionConfig(cwd: string, warn: (message: string) => void): ResolvedPermissionConfig {
-	// Env override is a test seam (same pattern as PI_PACKAGE_DIR); unset in
-	// production, where the global policy always lives in the home directory.
-	const globalPath = process.env.PI_PERMISSION_POLICIES_GLOBAL ?? join(homedir(), ".pi", "agent", "permissions.json");
-	const projectPath = join(cwd, ".pi", "permissions.json");
+export function resolvePermissionConfig(
+	cwd: string,
+	warn: (message: string) => void,
+	projectTrusted = true,
+): ResolvedPermissionConfig {
+	const { globalPath, projectPath } = policyPaths(cwd);
 	const globalFile = readPermissionFile(globalPath, warn);
-	const projectFile = readPermissionFile(projectPath, warn);
+	const projectFile = projectTrusted ? readPermissionFile(projectPath, warn) : {};
 
 	const profile = projectFile.profile ?? globalFile.profile ?? "code";
 	const baseRules = [...resolveProfileConfig(profile), ...(globalFile.rules ?? [])];
@@ -119,8 +145,11 @@ export default function permissionPolicies(pi: ExtensionAPI) {
 	// list, so only this memory can bring them back when a hide rule goes.
 	let hiddenByUs: string[] = [];
 
-	const reload = (cwd: string, warn: (message: string) => void) => {
-		config = resolvePermissionConfig(cwd, warn);
+	const reload = (ctx: ExtensionContext) => {
+		const warn = (message: string) => ctx.ui.notify(message, "warning");
+		config = policyFileExists(ctx.cwd, ctx.isProjectTrusted())
+			? resolvePermissionConfig(ctx.cwd, warn, ctx.isProjectTrusted())
+			: undefined;
 	};
 
 	const applyVisibility = () => {
@@ -151,13 +180,14 @@ export default function permissionPolicies(pi: ExtensionAPI) {
 	// session_start fires for every reason (startup, new, resume, fork, reload),
 	// so config edits apply after /reload and hiding survives session switches.
 	pi.on("session_start", (_event, ctx) => {
-		const warn = (message: string) => ctx.ui.notify(message, "warning");
-		reload(ctx.cwd, warn);
+		reload(ctx);
 		applyVisibility();
 	});
 
 	pi.on("tool_call", async (event: ToolCallEvent, ctx) => {
-		if (!config) reload(ctx.cwd, () => {});
+		// Lazy fallback for sessions whose session_start has not run yet; with
+		// no policy file anywhere this stays undefined and the call proceeds.
+		if (!config) reload(ctx);
 		if (!config) return;
 		const tools = pi.getAllTools();
 		const decision = evaluatePermissionLayered({

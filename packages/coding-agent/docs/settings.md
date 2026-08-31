@@ -241,7 +241,7 @@ An empty array starts with no built-in tools while preserving extension and SDK 
 
 `tools.maxToolOutputBytes` bounds what the model sees, not what the tool did: over the cap the model receives the first ~60% and last ~40% of the budget around a marker reporting the omitted bytes and the artifact path. Built-in tools (`read`, `grep`, `bash`) truncate their own output already, so in practice the cap governs extension tools.
 
-Permission rules are not a setting: the [`permission-policies`](../examples/extensions/permission-policies.ts) extension enforces them from `.pi/permissions.json` policy files, with capability matching, deny > ask > allow precedence, profiles, and interactive `ask` approval.
+Permission rules are not a setting: the built-in `permission-policies` extension enforces them from `~/.pi/agent/permissions.json` (global) and `.pi/permissions.json` (trusted projects) policy files, with capability matching, deny > ask > allow precedence, profiles, and interactive `ask` approval. It activates only when one of those files exists; otherwise it does nothing.
 
 ### Sessions
 
