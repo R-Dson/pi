@@ -166,8 +166,9 @@ export class AssistantMessageComponent extends Container {
 
 	/**
 	 * Append the width-lazy tail block for a thinking run's text: the last
-	 * THINKING_PREVIEW_LINES visual lines, with an ellipsis line when content
-	 * folded away. Fade path: when the terminal answered the OSC 11 background
+	 * THINKING_PREVIEW_LINES visual lines; folded-away content above is
+	 * implied by the fade, no marker line. Fade path: when the terminal
+	 * answered the OSC 11 background
 	 * query and the theme's gray is a hex value, the visible tail gets per-word
 	 * colors interpolated between the background and the gray — the oldest
 	 * visible word dissolves into the background exactly. Position-keyed per
@@ -194,8 +195,7 @@ export class AssistantMessageComponent extends Container {
 					if (useFade && fadeGray && previewFadeBackground) {
 						bodyLines = fadeTailLines(bodyLines, fadeGray, previewFadeBackground);
 					}
-					cachedLines =
-						result.skippedCount > 0 ? [theme.italic(theme.fg("thinkingText", "…")), ...bodyLines] : bodyLines;
+					cachedLines = bodyLines;
 					cachedWidth = width;
 				}
 				return cachedLines ?? [];

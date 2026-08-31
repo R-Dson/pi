@@ -329,7 +329,6 @@ describe("AssistantMessageComponent", () => {
 			// The head is far beyond the preview window, so only tail-following
 			// can surface the final branch sentence.
 			expect(rendered).toMatch(/Thinking\.\.\. \d+\.\ds/);
-			expect(rendered).toContain("…");
 			expect(rendered).toContain("now validating the final branch");
 		});
 
@@ -342,12 +341,11 @@ describe("AssistantMessageComponent", () => {
 			const rendered = stripAnsi(component.render(100).join("\n"));
 
 			expect(rendered).toContain("Thinking...");
-			// The block keeps the last lines whole; earlier ones are folded away
-			// behind the ellipsis marker.
+			// The block keeps the last lines whole; earlier ones fold away with
+			// no marker line — the fade itself signals older content above.
 			expect(rendered).toContain("reasoning step number 12 of the plan");
 			expect(rendered).toContain("reasoning step number 11 of the plan");
 			expect(rendered).not.toContain("reasoning step number 1 of the plan");
-			expect(rendered).toContain("…");
 		});
 
 		test("replaces the preview when a newer thinking run arrives", () => {
