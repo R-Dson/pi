@@ -278,9 +278,9 @@ describe("AssistantMessageComponent", () => {
 			const newest = wordColors[wordColors.length - 1];
 			expect(oldest.r).toBeLessThanOrEqual(32);
 			expect(newest.r).toBeGreaterThanOrEqual(96);
-			// Strictly rising across the tail (uniform channels for this fixture).
+			// Never darkens toward the newest word (adjacent words may round equal).
 			for (let i = 1; i < wordColors.length; i++) {
-				expect(wordColors[i].r).toBeGreaterThan(wordColors[i - 1].r);
+				expect(wordColors[i].r).toBeGreaterThanOrEqual(wordColors[i - 1].r);
 			}
 			// Content survives the per-word coloring intact.
 			expect(stripAnsi(raw)).toContain("reasoning step 8 of the plan");
@@ -318,7 +318,7 @@ describe("AssistantMessageComponent", () => {
 		test("follows the tail of a long thinking run with a live timer", () => {
 			initTheme("dark");
 
-			const head = "parsing the input token by token and considering ".repeat(10);
+			const head = "parsing the input token by token and considering ".repeat(20);
 			const component = new AssistantMessageComponent(undefined, true);
 			component.updateContent(
 				createAssistantMessage([{ type: "thinking", thinking: `${head}now validating the final branch` }]),

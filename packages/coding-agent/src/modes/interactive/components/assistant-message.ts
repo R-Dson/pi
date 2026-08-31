@@ -10,8 +10,8 @@ const OSC133_ZONE_START = "\x1b]133;A\x07";
 const OSC133_ZONE_END = "\x1b]133;B\x07";
 const OSC133_ZONE_FINAL = "\x1b]133;C\x07";
 
-/** Lines of thinking tail shown under the live preview header. */
-const THINKING_PREVIEW_LINES = 4;
+/** Lines of thinking tail shown under the preview header. */
+const THINKING_PREVIEW_LINES = 6;
 
 /**
  * Terminal background (OSC 11) for the preview fade; undefined until the
