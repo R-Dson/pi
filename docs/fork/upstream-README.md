@@ -44,7 +44,7 @@ Releases are published from this repo only (GitHub Releases and GitHub Packages)
 Zero-configuration install from the latest release (needs Node.js >= 22.19 with npm; no PAT, no `.npmrc`):
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/R-Dson/pi/main/scripts/install-fork.sh | sh
+curl -fsSL https://raw.githubusercontent.com/R-Dson/pi/main/scripts/install.sh | sh
 ```
 
 Alternatives:

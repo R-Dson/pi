@@ -553,7 +553,7 @@ if(args.includes("root")) console.log(path.join(prefix,"lib","node_modules"));
 			expect(process.exitCode).toBe(1);
 			const stderr = errorSpy.mock.calls.map(([m]) => String(m)).join("\n");
 			expect(stderr).toContain("refusing to self-update");
-			expect(stderr).toContain("install-fork.sh");
+			expect(stderr).toContain("install.sh");
 		} finally {
 			errorSpy.mockRestore();
 		}
@@ -703,7 +703,7 @@ else fs.writeFileSync(${JSON.stringify(recordPath)},JSON.stringify(args));
 			expect(fetchMock).not.toHaveBeenCalled();
 			const stderr = errorSpy.mock.calls.map(([message]) => String(message)).join("\n");
 			expect(stderr).toContain("upstream package");
-			expect(stderr).toContain("install-fork.sh");
+			expect(stderr).toContain("install.sh");
 			const stdout = logSpy.mock.calls.map(([message]) => String(message)).join("\n");
 			const recordedArgs = JSON.parse(readFileSync(recordPath, "utf-8")) as string[];
 			expect(recordedArgs).toContain(`${PACKAGE_NAME}@latest`);

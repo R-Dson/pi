@@ -16,10 +16,10 @@ Pi is an interactive, self-extensible coding agent. This fork of [earendil-works
 From this repo's GitHub Releases. Nothing is published to npmjs.org. Needs Node.js >= 22.19 with npm.
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/R-Dson/pi/main/scripts/install-fork.sh | sh
+curl -fsSL https://raw.githubusercontent.com/R-Dson/pi/main/scripts/install.sh | sh
 ```
 
-Re-running the install upgrades in place. Pin a version with `| sh -s 0.84.2-fork.2`.
+Re-running the install upgrades in place. Pin a version with `| sh -s 0.84.4-fork.4`. The script checks Node and npm up front, falls back to a `~/.local` prefix when npm's global directory needs root, warns before a downgrade, tells you when PATH resolves `pi` somewhere else, and `--uninstall` removes the fork.
 
 Alternatives:
 

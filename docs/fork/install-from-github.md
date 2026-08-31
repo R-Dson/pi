@@ -16,16 +16,16 @@ The workflow builds the workspace, verifies the `v<version>` tag does not alread
 
 The standalone tarball carries the coding-agent release bundle — all workspace packages are already inlined into it — plus only the dependencies that resolve from the public npm registry. No `.npmrc` mapping, no PAT.
 
-The install script is the zero-friction path — it verifies `npm` and `curl`, downloads the tarball to a temp file with `curl`, and installs it with `npm install -g --ignore-scripts` (works on every npm version). When you pass an explicit version older than the installed `pi`, it prints a downgrade warning naming both versions before installing (warning only — downgrades stay possible; there is no tty to prompt on under `curl | sh`):
+The install script is the zero-friction path. It runs preflight checks (curl, npm, Node >= 22.19), picks npm's global prefix when its bin directory is writable and falls back to `~/.local` otherwise (`PI_INSTALL_PREFIX` chooses explicitly), warns before a downgrade of the install it replaces (warning only; there are no prompts, since `curl | sh` gives no tty guarantee), refuses to overwrite a binary npm did not install, and after installing verifies the binary and tells you when PATH resolves `pi` somewhere else. `--uninstall` removes the fork from the install prefix:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/R-Dson/pi/main/scripts/install-fork.sh | sh
+curl -fsSL https://raw.githubusercontent.com/R-Dson/pi/main/scripts/install.sh | sh
 ```
 
 Pass a release version (with or without the leading `v`) to pin instead of tracking the latest:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/R-Dson/pi/main/scripts/install-fork.sh | sh -s 0.84.2-fork.42
+curl -fsSL https://raw.githubusercontent.com/R-Dson/pi/main/scripts/install.sh | sh -s 0.84.2-fork.42
 ```
 
 The direct npm URL form also works, but npm >= 12 blocks remote-tarball installs by default (`EALLOWREMOTE`), so it needs one opt-in flag:
