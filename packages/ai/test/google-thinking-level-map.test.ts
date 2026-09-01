@@ -16,7 +16,7 @@ const context: Context = {
 	messages: [{ role: "user", content: "Hello", timestamp: 0 }],
 };
 
-function googleModel(id: string, thinkingLevelMap: ThinkingLevelMap): Model<"google-generative-ai"> {
+function googleModel(id: string, thinkingLevelMap?: ThinkingLevelMap): Model<"google-generative-ai"> {
 	return {
 		id,
 		name: id,
@@ -126,9 +126,17 @@ describe("Google thinking level maps", () => {
 		expect(() => resolveGoogleThinkingLevel(invalidModel, "xhigh")).toThrow(
 			"Unsupported Google thinking level mapping for test-google/gemini-3.7-flash: xhigh -> extreme",
 		);
-		expect(() => resolveGoogleThinkingLevel(googleModel("gemini-3.7-flash", {}), "max")).toThrow(
-			"Unsupported Google thinking level mapping for test-google/gemini-3.7-flash: max -> undefined",
-		);
+	});
+
+	it("degrades unmapped xhigh and max to high instead of throwing (#124)", () => {
+		// A mapless model (the catalog's Gemini 2.5-era entries) and a map that
+		// omits the key: xhigh is selectable on both since #104, and the
+		// guaranteed client-side error made every request fail when a persisted
+		// default crossed onto a Google model. Anthropic and Bedrock already
+		// fall back to high for unmapped levels.
+		expect(resolveGoogleThinkingLevel(googleModel("gemini-2.5-flash"), "xhigh")).toBe("high");
+		expect(resolveGoogleThinkingLevel(googleModel("gemini-2.5-flash"), "max")).toBe("high");
+		expect(resolveGoogleThinkingLevel(googleModel("gemini-2.5-flash", { low: "low" }), "xhigh")).toBe("high");
 	});
 
 	it.each(["xhigh", "max"] as const)("maps Google Generative AI %s to a supported level", async (reasoning) => {
