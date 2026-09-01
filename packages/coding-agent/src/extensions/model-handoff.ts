@@ -13,8 +13,9 @@
  * "..." } } }`, machine config dir by default, plus a project file under .pi
  * in trusted projects; tiers merge and the project file wins on a name
  * collision. Inert without any file; fewer than two registry-resolvable tiers
- * in the merged set is also inert, with a warning. The refusal guards landed
- * with #108, returnAfterRun with #109, project config with #110.
+ * in the merged set is also inert (deactivated by subtraction from the active
+ * tool list), with a warning. The refusal guards landed with #108,
+ * returnAfterRun with #109, project config with #110.
  */
 
 import { existsSync, readFileSync } from "node:fs";
@@ -151,9 +152,8 @@ export default function modelHandoff(pi: ExtensionAPI): void {
 		if (`${event.model.provider}/${event.model.id}` !== inFlightTargetKey) pendingReturn = undefined;
 	});
 	// The extension API has no unregister, so deactivation subtracts the tool
-	// from the active list (permission-policies' pattern) and re-registration
-	// must re-add it explicitly: a re-registered name is not new to the
-	// registry, so the refresh does not reactivate it on its own.
+	// from the active list (permission-policies' pattern). toolActive tracks
+	// whether the active list currently contains it by our doing.
 	let toolActive = false;
 
 	// session_start is the only handler with the context (cwd, trust, registry)
@@ -177,7 +177,6 @@ export default function modelHandoff(pi: ExtensionAPI): void {
 			}
 			return;
 		}
-		toolActive = true;
 
 		const tierList = tiers
 			.map(
@@ -262,8 +261,14 @@ export default function modelHandoff(pi: ExtensionAPI): void {
 				return textResult(lines.join("\n"));
 			},
 		});
-		// Reactivate explicitly: after a deactivation subtracted the tool, a
-		// re-registration alone does not bring it back (see toolActive comment).
-		pi.setActiveTools([...new Set([...pi.getActiveTools(), "switch_model"])]);
+		if (!toolActive) {
+			// Reactivate explicitly, but only from OUR deactivation: a
+			// re-registered name is not new to the registry, so the refresh does
+			// not reactivate a subtracted tool on its own, while re-adding
+			// unconditionally would defeat an earlier-loaded extension's removal
+			// (e.g. a permission-policies hide rule on switch_model).
+			pi.setActiveTools([...new Set([...pi.getActiveTools(), "switch_model"])]);
+		}
+		toolActive = true;
 	});
 }
