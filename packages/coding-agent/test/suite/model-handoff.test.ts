@@ -745,7 +745,10 @@ describe("model-handoff call row (#111)", () => {
 		const args = { target: "fast", reason: "mechanical now", brief: "apply the plan" };
 		expect(handoffCallSummary(args, false)).toBe("Handoff -> fast: mechanical now");
 		expect(handoffCallSummary(args, true)).toBe("Handoff -> fast: mechanical now\nBrief: apply the plan");
-		expect(handoffCallSummary({ target: "fast" }, false)).toBe("Handoff -> fast");
+		expect(handoffCallSummary(args, true, "faux/faux-2")).toBe(
+			"Handoff -> fast (faux/faux-2): mechanical now\nBrief: apply the plan",
+		);
+		expect(handoffCallSummary({ target: "fast" }, true)).toBe("Handoff -> fast");
 		expect(handoffCallSummary({}, false)).toBe("Handoff -> ?");
 	});
 });

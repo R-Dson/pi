@@ -91,10 +91,12 @@ function textResult(text: string) {
 export function handoffCallSummary(
 	args: { target?: string; reason?: string; brief?: string },
 	expanded: boolean,
+	modelLabel?: string,
 ): string {
 	const reason = args.reason ? `: ${args.reason}` : "";
+	const label = modelLabel ? ` (${modelLabel})` : "";
 	const brief = expanded && args.brief ? `\nBrief: ${args.brief}` : "";
-	return `Handoff -> ${args.target ?? "?"}${reason}${brief}`;
+	return `Handoff -> ${args.target ?? "?"}${label}${reason}${brief}`;
 }
 
 export default function modelHandoff(pi: ExtensionAPI): void {
@@ -227,9 +229,20 @@ export default function modelHandoff(pi: ExtensionAPI): void {
 			// otherwise race in execute() and both claim the baton.
 			executionMode: "sequential",
 			// The brief stays out of the collapsed row (HTML export renders calls
-			// collapsed, so the brief reaches export through the result text).
-			renderCall: (args, renderTheme, context) =>
-				new Text(renderTheme.fg("toolTitle", handoffCallSummary(args, context.expanded)), 0, 0),
+			// collapsed, so the brief reaches export through the result text). The
+			// model label comes from the current config for the tier, since the
+			// args carry only the tier name.
+			renderCall: (args, renderTheme, context) => {
+				const tier = tiers.find((candidate) => candidate.name === args.target);
+				return new Text(
+					renderTheme.fg(
+						"toolTitle",
+						handoffCallSummary(args, context.expanded, tier ? `${tier.provider}/${tier.modelId}` : undefined),
+					),
+					0,
+					0,
+				);
+			},
 			// Re-resolve through the context on every call: a Model cached at
 			// activation would go stale against the live registry (#108 relies on this).
 			async execute(_toolCallId, params, _signal, _onUpdate, execCtx) {
