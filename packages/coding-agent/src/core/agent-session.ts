@@ -398,6 +398,9 @@ export class AgentSession {
 	// re-registrations announce tool-set-change instead of surfacing as
 	// unexpected invalidations on the next prefix diff.
 	private _lastActiveToolsFingerprint: string | undefined;
+	// The in-flight agent_settled emission, if any: a prompt arriving while the
+	// session already reports idle waits for it before starting its run.
+	private _settleWait: Promise<void> | undefined;
 
 	// Extension system
 	private _extensionRunner!: ExtensionRunner;
@@ -1198,7 +1201,17 @@ export class AgentSession {
 			this._systemPromptOverride = undefined;
 			this._flushPendingBashMessages();
 			this._flushPendingCustomMessages();
-			await this._emitAgentSettled();
+			// A prompt arriving while the settle emission is in flight (idle is
+			// already reported, by contract) waits for it, so it runs on the
+			// post-settle state — e.g. the model a settle handler returned
+			// control to — instead of racing it.
+			const settle = this._emitAgentSettled();
+			this._settleWait = settle;
+			try {
+				await settle;
+			} finally {
+				this._settleWait = undefined;
+			}
 		}
 	}
 
@@ -1289,6 +1302,14 @@ export class AgentSession {
 			if (expandPromptTemplates) {
 				expandedText = this._expandSkillCommand(expandedText);
 				expandedText = expandPromptTemplate(expandedText, [...this.promptTemplates]);
+			}
+
+			// If the settle emission is still running, wait it out first: idle is
+			// already reported during settle handlers (pinned contract), so a
+			// prompt here would otherwise start before settle handlers (e.g. a
+			// model-handoff return) finish.
+			if (this._settleWait) {
+				await this._settleWait;
 			}
 
 			// If streaming, queue via steer() or followUp() based on option
