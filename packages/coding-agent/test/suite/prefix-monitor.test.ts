@@ -184,6 +184,73 @@ describe("runtime prefix-stability monitor (issue #41)", () => {
 		expect(harness.session.getSessionStats().prefixInvalidationsByCause).toEqual({});
 		expect(harness.eventsOfType("prefix_invalidated")).toHaveLength(0);
 	});
+
+	it("attributes a schema-only tool re-registration to tool-set-change without a diagnostic event (#120)", async () => {
+		const harness = await createHarness({
+			extensionFactories: [
+				(pi) => {
+					const register = (value: string) => {
+						pi.registerTool({
+							name: "shape",
+							label: "Shape",
+							description: "Shaped tool",
+							parameters: Type.Object({ v: Type.Literal(value) }),
+							execute: async () => ({ content: [], details: undefined }),
+						});
+					};
+					register("one");
+					// Re-register between runs, like a config reload. A
+					// message_end-timed re-registration was tried first and its
+					// announce did not survive to the next request (observed
+					// empirically); attribution is pinned for the between-runs
+					// timing real re-registrations use.
+					pi.on("agent_settled", () => {
+						register("two");
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		harness.setResponses([fauxAssistantMessage("first reply"), fauxAssistantMessage("second reply")]);
+
+		await harness.session.prompt("first turn");
+		await harness.session.prompt("second turn");
+
+		expect(harness.session.getSessionStats().prefixInvalidationsByCause).toEqual({ "tool-set-change": 1 });
+		expect(harness.eventsOfType("prefix_invalidated")).toHaveLength(0);
+	});
+
+	it("counts nothing when a tool is re-registered with an unchanged schema (#120)", async () => {
+		const harness = await createHarness({
+			extensionFactories: [
+				(pi) => {
+					const register = (description: string) => {
+						pi.registerTool({
+							name: "shape",
+							label: "Shape",
+							description,
+							parameters: Type.Object({ v: Type.Literal("one") }),
+							execute: async () => ({ content: [], details: undefined }),
+						});
+					};
+					register("Shaped tool");
+					// Also covers a description-only change: the monitor never
+					// compares descriptions, so nothing may arm for it.
+					pi.on("agent_settled", () => {
+						register("Shaped tool, reworded");
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		harness.setResponses([fauxAssistantMessage("first reply"), fauxAssistantMessage("second reply")]);
+
+		await harness.session.prompt("first turn");
+		await harness.session.prompt("second turn");
+
+		expect(harness.session.getSessionStats().prefixInvalidationsByCause).toEqual({});
+		expect(harness.eventsOfType("prefix_invalidated")).toHaveLength(0);
+	});
 });
 
 describe("provider wire-rewrite attribution (issue #56)", () => {
@@ -369,68 +436,5 @@ describe("provider wire-rewrite attribution (issue #56)", () => {
 		const events = harness.eventsOfType("prefix_invalidated");
 		expect(events).toHaveLength(1);
 		expect(events[0]).toMatchObject({ cause: "unexpected-history-change", firstDivergenceIndex: 0 });
-	});
-
-	it("attributes a schema-only tool re-registration to tool-set-change without a diagnostic event (#120)", async () => {
-		const harness = await createHarness({
-			extensionFactories: [
-				(pi) => {
-					const register = (value: string) => {
-						pi.registerTool({
-							name: "shape",
-							label: "Shape",
-							description: "Shaped tool",
-							parameters: Type.Object({ v: Type.Literal(value) }),
-							execute: async () => ({ content: [], details: undefined }),
-						});
-					};
-					register("one");
-					// Re-register between runs, like a config reload: an announce
-					// armed mid-stream would be cleared by that request's own
-					// deferred observation (pre-existing monitor timing).
-					pi.on("agent_settled", () => {
-						register("two");
-					});
-				},
-			],
-		});
-		harnesses.push(harness);
-		harness.setResponses([fauxAssistantMessage("first reply"), fauxAssistantMessage("second reply")]);
-
-		await harness.session.prompt("first turn");
-		await harness.session.prompt("second turn");
-
-		expect(harness.session.getSessionStats().prefixInvalidationsByCause).toEqual({ "tool-set-change": 1 });
-		expect(harness.eventsOfType("prefix_invalidated")).toHaveLength(0);
-	});
-
-	it("counts nothing when a tool is re-registered with an unchanged schema (#120)", async () => {
-		const harness = await createHarness({
-			extensionFactories: [
-				(pi) => {
-					const register = () => {
-						pi.registerTool({
-							name: "shape",
-							label: "Shape",
-							description: "Shaped tool",
-							parameters: Type.Object({ v: Type.Literal("one") }),
-							execute: async () => ({ content: [], details: undefined }),
-						});
-					};
-					register();
-					pi.on("agent_settled", () => {
-						register();
-					});
-				},
-			],
-		});
-		harnesses.push(harness);
-		harness.setResponses([fauxAssistantMessage("first reply"), fauxAssistantMessage("second reply")]);
-
-		await harness.session.prompt("first turn");
-		await harness.session.prompt("second turn");
-
-		expect(harness.session.getSessionStats().prefixInvalidationsByCause).toEqual({});
-		expect(harness.eventsOfType("prefix_invalidated")).toHaveLength(0);
 	});
 });
