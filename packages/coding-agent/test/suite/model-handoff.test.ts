@@ -1,7 +1,7 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
-import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai/compat";
+import { fauxAssistantMessage, fauxToolCall, registerFauxProvider } from "@earendil-works/pi-ai/compat";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ExtensionAPI, ExtensionUIContext } from "../../src/core/extensions/types.ts";
 import modelHandoff from "../../src/extensions/model-handoff.ts";
@@ -31,10 +31,14 @@ function pointConfigAt(harness: Harness, tiers: Record<string, unknown> | null):
 /** Harness with the handoff extension loaded and its config pointed at a temp file. */
 async function setupHandoff(
 	tiers: Record<string, unknown> | null,
-	options: { factories?: HarnessOptions["extensionFactories"]; uiContext?: ExtensionUIContext } = {},
+	options: {
+		models?: HarnessOptions["models"];
+		factories?: HarnessOptions["extensionFactories"];
+		uiContext?: ExtensionUIContext;
+	} = {},
 ): Promise<Harness> {
 	const harness = await createHarness({
-		models: [
+		models: options.models ?? [
 			{ id: "faux-1", name: "One" },
 			{ id: "faux-2", name: "Two" },
 		],
@@ -59,6 +63,35 @@ function modelSelectRecorder() {
 			});
 		},
 	};
+}
+
+function assistantModelIds(harness: Harness): string[] {
+	return harness.session.messages
+		.filter((message) => message.role === "assistant")
+		.map((message) => (message as AssistantMessage).model);
+}
+
+function toolResultTexts(harness: Harness): string[] {
+	return harness.session.messages
+		.filter((message) => message.role === "toolResult")
+		.map((message) => getMessageText(message));
+}
+
+function modelChanges(harness: Harness): string[] {
+	return harness.sessionManager
+		.getEntries()
+		.filter((entry) => entry.type === "model_change")
+		.map((entry) => `${entry.provider}/${entry.modelId}`);
+}
+
+/** A refused handoff: both assistant turns stayed on the start model, nothing switched. */
+function expectStayedPut(harness: Harness, ...resultContains: string[]): void {
+	expect(assistantModelIds(harness)).toEqual(["faux-1", "faux-1"]);
+	const results = toolResultTexts(harness).join("\n");
+	for (const fragment of resultContains) {
+		expect(results).toContain(fragment);
+	}
+	expect(modelChanges(harness)).toEqual([]);
 }
 
 describe("model-handoff built-in (#107)", () => {
@@ -118,27 +151,16 @@ describe("model-handoff built-in (#107)", () => {
 		await harness.session.prompt("delegate this");
 
 		// The run continued on the target model: same run, next assistant turn.
-		const assistantModels = harness.session.messages
-			.filter((message) => message.role === "assistant")
-			.map((message) => (message as AssistantMessage).model);
-		expect(assistantModels).toEqual(["faux-1", "faux-2"]);
+		expect(assistantModelIds(harness)).toEqual(["faux-1", "faux-2"]);
 		expect(getAssistantTexts(harness).at(-1)).toBe("fast done");
 		// The baton: the tool result carries who, why, and the brief.
-		const baton = harness.session.messages
-			.filter((message) => message.role === "toolResult")
-			.map((message) => getMessageText(message))
-			.join("\n");
+		const baton = toolResultTexts(harness).join("\n");
 		expect(baton).toContain("faux/faux-1");
 		expect(baton).toContain("fast (faux/faux-2)");
 		expect(baton).toContain("mechanical from here");
 		expect(baton).toContain("apply the plan");
 		// Persistence and events, exactly as a manual switch.
-		expect(
-			harness.sessionManager
-				.getEntries()
-				.filter((entry) => entry.type === "model_change")
-				.map((entry) => `${entry.provider}/${entry.modelId}`),
-		).toEqual(["faux/faux-2"]);
+		expect(modelChanges(harness)).toEqual(["faux/faux-2"]);
 		expect(recorder.selects).toEqual(["faux-1->faux-2:set"]);
 		expect(targetRequestHadTool).toBe(true);
 		expect(targetRequestSawBaton).toBe(true);
@@ -195,5 +217,187 @@ describe("model-handoff built-in (#107)", () => {
 		expect(notifications.join("\n")).toContain("faux-ghost");
 		expect(providerSystemPrompt).not.toContain("switch_model");
 		expect(switchModelTool).toBe(false);
+	});
+});
+
+describe("model-handoff guards (#108)", () => {
+	it("returns a no-op for a tier that is already the active model", async () => {
+		const recorder = modelSelectRecorder();
+		const harness = await setupHandoff(
+			{
+				smart: { provider: "faux", modelId: "faux-1" },
+				fast: { provider: "faux", modelId: "faux-2" },
+			},
+			{ factories: [recorder.factory] },
+		);
+
+		harness.setResponses([
+			fauxAssistantMessage([fauxToolCall("switch_model", { target: "smart", reason: "already here" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage("still me"),
+		]);
+		await harness.session.prompt("try a no-op");
+
+		expectStayedPut(harness, "already the active model");
+		expect(recorder.selects).toEqual([]);
+		expect(harness.session.getSessionStats().prefixInvalidationsByCause ?? {}).toEqual({});
+		expect(harness.eventsOfType("prefix_invalidated")).toHaveLength(0);
+	});
+
+	it("refuses an in-run bounce and allows the reverse handoff in a fresh run", async () => {
+		const recorder = modelSelectRecorder();
+		const harness = await setupHandoff(
+			{
+				smart: { provider: "faux", modelId: "faux-1" },
+				fast: { provider: "faux", modelId: "faux-2" },
+			},
+			{ factories: [recorder.factory] },
+		);
+
+		harness.setResponses([
+			fauxAssistantMessage([fauxToolCall("switch_model", { target: "fast", reason: "mechanical now" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("switch_model", { target: "smart", reason: "bouncing back" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage("done on fast"),
+		]);
+		await harness.session.prompt("bounce around");
+
+		// The bounce was refused with nothing announced: the third turn is still
+		// fast, and only the first handoff switched anything.
+		expect(assistantModelIds(harness)).toEqual(["faux-1", "faux-2", "faux-2"]);
+		expect(toolResultTexts(harness).join("\n")).toContain("held the baton");
+		expect(modelChanges(harness)).toEqual(["faux/faux-2"]);
+		expect(recorder.selects).toEqual(["faux-1->faux-2:set"]);
+		expect(harness.session.getSessionStats().prefixInvalidationsByCause ?? {}).toEqual({ "model-change": 1 });
+		expect(harness.eventsOfType("prefix_invalidated")).toHaveLength(0);
+
+		harness.setResponses([
+			fauxAssistantMessage([fauxToolCall("switch_model", { target: "smart", reason: "new run, allowed" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage("back on smart"),
+		]);
+		await harness.session.prompt("hand back later");
+
+		expect(modelChanges(harness)).toEqual(["faux/faux-2", "faux/faux-1"]);
+		expect(recorder.selects).toEqual(["faux-1->faux-2:set", "faux-2->faux-1:set"]);
+		expect(assistantModelIds(harness).at(-1)).toBe("faux-1");
+	});
+
+	it("refuses a multi-hop bounce back to any earlier holder in the run", async () => {
+		const harness = await setupHandoff(
+			{
+				smart: { provider: "faux", modelId: "faux-1" },
+				fast: { provider: "faux", modelId: "faux-2" },
+				tiny: { provider: "faux", modelId: "faux-3" },
+			},
+			{
+				models: [
+					{ id: "faux-1", name: "One" },
+					{ id: "faux-2", name: "Two" },
+					{ id: "faux-3", name: "Three" },
+				],
+			},
+		);
+
+		harness.setResponses([
+			fauxAssistantMessage([fauxToolCall("switch_model", { target: "fast", reason: "step one" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("switch_model", { target: "tiny", reason: "step two" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("switch_model", { target: "smart", reason: "hop back to start" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage("done on tiny"),
+		]);
+		await harness.session.prompt("hop around");
+
+		expect(assistantModelIds(harness)).toEqual(["faux-1", "faux-2", "faux-3", "faux-3"]);
+		expect(toolResultTexts(harness).join("\n")).toContain("held the baton");
+		expect(modelChanges(harness)).toEqual(["faux/faux-2", "faux/faux-3"]);
+	});
+
+	it("stays put and reports when the target provider has no credentials", async () => {
+		// A second faux provider registered without an apiKey: resolvable in the
+		// registry (so activation passes) but never authenticated, so the switch
+		// is refused at the auth check. Deleting stored credentials mid-run does
+		// not drive this: the harness's faux provider carries an embedded key.
+		const keyless = registerFauxProvider({
+			provider: "faux-keyless",
+			models: [{ id: "faux-keyless-1", name: "Keyless" }],
+		});
+		try {
+			const harness = await setupHandoff(
+				{
+					smart: { provider: "faux", modelId: "faux-1" },
+					ghost: { provider: "faux-keyless", modelId: "faux-keyless-1" },
+				},
+				{
+					factories: [
+						(pi) => {
+							pi.registerProvider("faux-keyless", {
+								baseUrl: keyless.models[0].baseUrl,
+								api: keyless.api,
+								models: keyless.models.map((model) => ({
+									id: model.id,
+									name: model.name,
+									reasoning: model.reasoning,
+									input: model.input,
+									cost: model.cost,
+									contextWindow: model.contextWindow,
+									maxTokens: model.maxTokens,
+								})),
+							});
+						},
+					],
+				},
+			);
+
+			harness.setResponses([
+				fauxAssistantMessage([fauxToolCall("switch_model", { target: "ghost", reason: "go keyless" })], {
+					stopReason: "toolUse",
+				}),
+				fauxAssistantMessage("stayed put"),
+			]);
+			await harness.session.prompt("escalate");
+
+			expectStayedPut(harness, "no credentials for faux-keyless/faux-keyless-1", "staying on the current model");
+		} finally {
+			keyless.unregister();
+		}
+	});
+
+	it("stays put and names the tier when it is gone from the registry at call time", async () => {
+		const harness = await setupHandoff(
+			{
+				smart: { provider: "faux", modelId: "faux-1" },
+				fast: { provider: "faux", modelId: "faux-2" },
+			},
+			{
+				factories: [
+					(pi) => {
+						pi.on("agent_start", (_event, ctx) => {
+							ctx.modelRegistry.unregisterProvider("faux");
+						});
+					},
+				],
+			},
+		);
+
+		harness.setResponses([
+			fauxAssistantMessage([fauxToolCall("switch_model", { target: "fast", reason: "go faster" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage("stayed put"),
+		]);
+		await harness.session.prompt("escalate");
+
+		expectStayedPut(harness, 'tier "fast" is not available');
 	});
 });
