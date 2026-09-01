@@ -77,7 +77,9 @@ describe("AgentSession model and extension characterization", () => {
 
 		harness.session.setThinkingLevel("max", { persist: true });
 
-		expect(harness.session.thinkingLevel).toBe("high");
+		// Mapless reasoning models offer xhigh since 73dd4f751, so "max" clamps
+		// to xhigh, not high; the requested default still persists untouched.
+		expect(harness.session.thinkingLevel).toBe("xhigh");
 		expect(harness.settingsManager.getDefaultThinkingLevel()).toBe("max");
 	});
 
