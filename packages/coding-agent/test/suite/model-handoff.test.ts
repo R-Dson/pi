@@ -3,7 +3,7 @@ import { join } from "node:path";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { fauxAssistantMessage, fauxToolCall, registerFauxProvider } from "@earendil-works/pi-ai/compat";
 import { afterEach, describe, expect, it } from "vitest";
-import type { ExtensionAPI, ExtensionContext, ExtensionUIContext } from "../../src/core/extensions/types.ts";
+import type { ExtensionAPI, ExtensionUIContext } from "../../src/core/extensions/types.ts";
 import modelHandoff from "../../src/extensions/model-handoff.ts";
 import { createHarness, getAssistantTexts, getMessageText, type Harness, type HarnessOptions } from "./harness.ts";
 
@@ -31,10 +31,14 @@ function pointConfigAt(harness: Harness, tiers: Record<string, unknown> | null):
 /** Harness with the handoff extension loaded and its config pointed at a temp file. */
 async function setupHandoff(
 	tiers: Record<string, unknown> | null,
-	options: { factories?: HarnessOptions["extensionFactories"]; uiContext?: ExtensionUIContext } = {},
+	options: {
+		models?: HarnessOptions["models"];
+		factories?: HarnessOptions["extensionFactories"];
+		uiContext?: ExtensionUIContext;
+	} = {},
 ): Promise<Harness> {
 	const harness = await createHarness({
-		models: [
+		models: options.models ?? [
 			{ id: "faux-1", name: "One" },
 			{ id: "faux-2", name: "Two" },
 		],
@@ -80,20 +84,14 @@ function modelChanges(harness: Harness): string[] {
 		.map((entry) => `${entry.provider}/${entry.modelId}`);
 }
 
-/**
- * Deferred side effect run at agent_start: after the auth preflight, before
- * tool execution. Used to mutate state (credentials, registry) mid-run.
- */
-function atRunStart() {
-	const hook: { run: (ctx: ExtensionContext) => void | Promise<void> } = { run: () => {} };
-	return {
-		hook,
-		factory: (pi: ExtensionAPI) => {
-			pi.on("agent_start", async (_event, ctx) => {
-				await hook.run(ctx);
-			});
-		},
-	};
+/** A refused handoff: both assistant turns stayed on the start model, nothing switched. */
+function expectStayedPut(harness: Harness, ...resultContains: string[]): void {
+	expect(assistantModelIds(harness)).toEqual(["faux-1", "faux-1"]);
+	const results = toolResultTexts(harness).join("\n");
+	for (const fragment of resultContains) {
+		expect(results).toContain(fragment);
+	}
+	expect(modelChanges(harness)).toEqual([]);
 }
 
 describe("model-handoff built-in (#107)", () => {
@@ -241,19 +239,21 @@ describe("model-handoff guards (#108)", () => {
 		]);
 		await harness.session.prompt("try a no-op");
 
-		expect(assistantModelIds(harness)).toEqual(["faux-1", "faux-1"]);
-		expect(toolResultTexts(harness).join("\n")).toContain("already the active model");
-		expect(modelChanges(harness)).toEqual([]);
+		expectStayedPut(harness, "already the active model");
 		expect(recorder.selects).toEqual([]);
 		expect(harness.session.getSessionStats().prefixInvalidationsByCause ?? {}).toEqual({});
 		expect(harness.eventsOfType("prefix_invalidated")).toHaveLength(0);
 	});
 
 	it("refuses an in-run bounce and allows the reverse handoff in a fresh run", async () => {
-		const harness = await setupHandoff({
-			smart: { provider: "faux", modelId: "faux-1" },
-			fast: { provider: "faux", modelId: "faux-2" },
-		});
+		const recorder = modelSelectRecorder();
+		const harness = await setupHandoff(
+			{
+				smart: { provider: "faux", modelId: "faux-1" },
+				fast: { provider: "faux", modelId: "faux-2" },
+			},
+			{ factories: [recorder.factory] },
+		);
 
 		harness.setResponses([
 			fauxAssistantMessage([fauxToolCall("switch_model", { target: "fast", reason: "mechanical now" })], {
@@ -266,11 +266,14 @@ describe("model-handoff guards (#108)", () => {
 		]);
 		await harness.session.prompt("bounce around");
 
-		// The bounce was refused: the third turn is still fast, and only the
-		// first handoff switched anything.
+		// The bounce was refused with nothing announced: the third turn is still
+		// fast, and only the first handoff switched anything.
 		expect(assistantModelIds(harness)).toEqual(["faux-1", "faux-2", "faux-2"]);
 		expect(toolResultTexts(harness).join("\n")).toContain("held the baton");
 		expect(modelChanges(harness)).toEqual(["faux/faux-2"]);
+		expect(recorder.selects).toEqual(["faux-1->faux-2:set"]);
+		expect(harness.session.getSessionStats().prefixInvalidationsByCause ?? {}).toEqual({ "model-change": 1 });
+		expect(harness.eventsOfType("prefix_invalidated")).toHaveLength(0);
 
 		harness.setResponses([
 			fauxAssistantMessage([fauxToolCall("switch_model", { target: "smart", reason: "new run, allowed" })], {
@@ -281,7 +284,43 @@ describe("model-handoff guards (#108)", () => {
 		await harness.session.prompt("hand back later");
 
 		expect(modelChanges(harness)).toEqual(["faux/faux-2", "faux/faux-1"]);
+		expect(recorder.selects).toEqual(["faux-1->faux-2:set", "faux-2->faux-1:set"]);
 		expect(assistantModelIds(harness).at(-1)).toBe("faux-1");
+	});
+
+	it("refuses a multi-hop bounce back to any earlier holder in the run", async () => {
+		const harness = await setupHandoff(
+			{
+				smart: { provider: "faux", modelId: "faux-1" },
+				fast: { provider: "faux", modelId: "faux-2" },
+				tiny: { provider: "faux", modelId: "faux-3" },
+			},
+			{
+				models: [
+					{ id: "faux-1", name: "One" },
+					{ id: "faux-2", name: "Two" },
+					{ id: "faux-3", name: "Three" },
+				],
+			},
+		);
+
+		harness.setResponses([
+			fauxAssistantMessage([fauxToolCall("switch_model", { target: "fast", reason: "step one" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("switch_model", { target: "tiny", reason: "step two" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("switch_model", { target: "smart", reason: "hop back to start" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage("done on tiny"),
+		]);
+		await harness.session.prompt("hop around");
+
+		expect(assistantModelIds(harness)).toEqual(["faux-1", "faux-2", "faux-3", "faux-3"]);
+		expect(toolResultTexts(harness).join("\n")).toContain("held the baton");
+		expect(modelChanges(harness)).toEqual(["faux/faux-2", "faux/faux-3"]);
 	});
 
 	it("stays put and reports when the target provider has no credentials", async () => {
@@ -328,28 +367,28 @@ describe("model-handoff guards (#108)", () => {
 			]);
 			await harness.session.prompt("escalate");
 
-			expect(assistantModelIds(harness)).toEqual(["faux-1", "faux-1"]);
-			const results = toolResultTexts(harness).join("\n");
-			expect(results).toContain("no credentials for faux-keyless/faux-keyless-1");
-			expect(results).toContain("staying on the current model");
-			expect(modelChanges(harness)).toEqual([]);
+			expectStayedPut(harness, "no credentials for faux-keyless/faux-keyless-1", "staying on the current model");
 		} finally {
 			keyless.unregister();
 		}
 	});
 
 	it("stays put and names the tier when it is gone from the registry at call time", async () => {
-		const remover = atRunStart();
 		const harness = await setupHandoff(
 			{
 				smart: { provider: "faux", modelId: "faux-1" },
 				fast: { provider: "faux", modelId: "faux-2" },
 			},
-			{ factories: [remover.factory] },
+			{
+				factories: [
+					(pi) => {
+						pi.on("agent_start", (_event, ctx) => {
+							ctx.modelRegistry.unregisterProvider("faux");
+						});
+					},
+				],
+			},
 		);
-		remover.hook.run = (ctx) => {
-			ctx.modelRegistry.unregisterProvider("faux");
-		};
 
 		harness.setResponses([
 			fauxAssistantMessage([fauxToolCall("switch_model", { target: "fast", reason: "go faster" })], {
@@ -359,8 +398,6 @@ describe("model-handoff guards (#108)", () => {
 		]);
 		await harness.session.prompt("escalate");
 
-		expect(assistantModelIds(harness)).toEqual(["faux-1", "faux-1"]);
-		expect(toolResultTexts(harness).join("\n")).toContain('tier "fast" is not available');
-		expect(modelChanges(harness)).toEqual([]);
+		expectStayedPut(harness, 'tier "fast" is not available');
 	});
 });

@@ -11,8 +11,8 @@
  * Configuration lives in handoff.json (extensions cannot read pi settings):
  * `{ "tiers": { "fast": { "provider": "...", "modelId": "...", "description":
  * "..." } } }`, machine config dir by default. Inert without a file; fewer than
- * two registry-resolvable tiers is also inert, with a warning. Guards and
- * returnAfterRun land with #108/#109.
+ * two registry-resolvable tiers is also inert, with a warning. Refusal guards
+ * landed with #108; returnAfterRun lands with #109.
  */
 
 import { existsSync, readFileSync } from "node:fs";
@@ -78,7 +78,7 @@ export default function modelHandoff(pi: ExtensionAPI): void {
 	// imported across session switches, so module state would leak between
 	// sessions) and never inside session_start (the test harness re-fires it
 	// on one runner, which would pile up duplicate subscriptions).
-	let previousHolderKey: string | undefined;
+	const batonHolders = new Set<string>();
 	let awaitingNewRun = true;
 
 	// The bounce guard covers one settled run: agent_start also fires for
@@ -89,7 +89,7 @@ export default function modelHandoff(pi: ExtensionAPI): void {
 	});
 	pi.on("agent_start", () => {
 		if (awaitingNewRun) {
-			previousHolderKey = undefined;
+			batonHolders.clear();
 			awaitingNewRun = false;
 		}
 	});
@@ -151,7 +151,7 @@ export default function modelHandoff(pi: ExtensionAPI): void {
 				const target = tier ? execCtx.modelRegistry.find(tier.provider, tier.modelId) : undefined;
 				if (!tier || !target) {
 					return textResult(
-						`switch_model: tier "${params.target}" is not available; staying on the current model.`,
+						`switch_model: tier "${params.target}" is not available. Continue on the current model.`,
 					);
 				}
 				const from = execCtx.model;
@@ -160,7 +160,7 @@ export default function modelHandoff(pi: ExtensionAPI): void {
 				if (fromKey === targetKey) {
 					return textResult(`switch_model: tier "${params.target}" (${targetKey}) is already the active model.`);
 				}
-				if (fromKey && previousHolderKey === targetKey) {
+				if (fromKey && batonHolders.has(targetKey)) {
 					return textResult(
 						`switch_model: ${targetKey} held the baton earlier in this run; do the work or surface the problem to the user instead of bouncing back.`,
 					);
@@ -173,10 +173,10 @@ export default function modelHandoff(pi: ExtensionAPI): void {
 					}
 				} catch (error) {
 					return textResult(
-						`switch_model: switching to ${targetKey} failed (${String(error)}); staying on the current model.`,
+						`switch_model: switching to ${targetKey} failed (${String(error)}). Continue on the current model.`,
 					);
 				}
-				previousHolderKey = fromKey;
+				if (fromKey) batonHolders.add(fromKey);
 				const lines = [
 					`Handed off from ${fromKey ?? "unknown"} to ${tier.name} (${targetKey}).`,
 					`Reason: ${params.reason}`,
