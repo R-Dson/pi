@@ -85,9 +85,11 @@ export default function modelHandoff(pi: ExtensionAPI): void {
 	// return consumes it. Memory only: a crash drops it and resume restores
 	// the delegatee through the recorded model change.
 	let pendingReturn: { provider: string; modelId: string } | undefined;
-	// model_select fires inside pi.setModel's await, so this flag distinguishes
-	// this extension's switches from the user's manual ones (keybindings, /model).
-	let switchInitiatedByUs = false;
+	// model_select fires inside pi.setModel's await; the model this extension is
+	// currently switching to distinguishes its switches from the user's manual
+	// ones (keybindings, /model). A user switch to that same model is
+	// indistinguishable, but also inconsequential.
+	let inFlightTargetKey: string | undefined;
 
 	// The bounce guard covers one settled run: agent_start also fires for
 	// retry, compaction, and queued-message continuations inside a run, so the
@@ -109,7 +111,7 @@ export default function modelHandoff(pi: ExtensionAPI): void {
 		}
 		// The return is extension-initiated, not a tool call, so it bypasses the
 		// bounce guard: the requester held the baton earlier in the finished run.
-		switchInitiatedByUs = true;
+		inFlightTargetKey = `${pending.provider}/${pending.modelId}`;
 		try {
 			if (!(await pi.setModel(requester))) {
 				ctx.ui.notify(
@@ -123,7 +125,7 @@ export default function modelHandoff(pi: ExtensionAPI): void {
 				"warning",
 			);
 		} finally {
-			switchInitiatedByUs = false;
+			inFlightTargetKey = undefined;
 		}
 	});
 	pi.on("agent_start", () => {
@@ -133,8 +135,8 @@ export default function modelHandoff(pi: ExtensionAPI): void {
 		}
 	});
 	// A manual switch by the user wins over the delegation promise.
-	pi.on("model_select", () => {
-		if (!switchInitiatedByUs) pendingReturn = undefined;
+	pi.on("model_select", (event) => {
+		if (`${event.model.provider}/${event.model.id}` !== inFlightTargetKey) pendingReturn = undefined;
 	});
 
 	// session_start is the only handler with the context (cwd, trust, registry)
@@ -166,7 +168,7 @@ export default function modelHandoff(pi: ExtensionAPI): void {
 			name: "switch_model",
 			label: "Switch model",
 			description:
-				"Hand the whole conversation to another configured model tier. The incoming model sees the full history, your reason, and your brief, and continues the task from the next turn.\n" +
+				"Hand the whole conversation to another configured model tier. The incoming model sees the full history, your reason, and your brief, and continues the task from the next turn. Set returnAfterRun to take control back when the run finishes (plan, delegate, review).\n" +
 				`Tiers:\n${tierList}`,
 			promptSnippet: "Hand the whole conversation to another configured model tier.",
 			promptGuidelines: [
@@ -213,7 +215,7 @@ export default function modelHandoff(pi: ExtensionAPI): void {
 						`switch_model: ${targetKey} held the baton earlier in this run; do the work or surface the problem to the user instead of bouncing back.`,
 					);
 				}
-				switchInitiatedByUs = true;
+				inFlightTargetKey = targetKey;
 				try {
 					if (!(await pi.setModel(target))) {
 						return textResult(
@@ -225,7 +227,7 @@ export default function modelHandoff(pi: ExtensionAPI): void {
 						`switch_model: switching to ${targetKey} failed (${String(error)}). Continue on the current model.`,
 					);
 				} finally {
-					switchInitiatedByUs = false;
+					inFlightTargetKey = undefined;
 				}
 				if (fromKey) batonHolders.add(fromKey);
 				pendingReturn = params.returnAfterRun && from ? { provider: from.provider, modelId: from.id } : undefined;
