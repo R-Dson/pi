@@ -105,7 +105,7 @@ import { exportSessionToJsonl } from "./session-export.ts";
 import type { BranchSummaryEntry, CompactionEntry, SessionEntry, SessionManager } from "./session-manager.ts";
 import { getLatestCompactionEntry } from "./session-manager.ts";
 import type { CacheUsageTotals, RequestKind } from "./sessions/cache-usage.ts";
-import type { PrefixInvalidationCause } from "./sessions/prefix-stability.ts";
+import { type PrefixInvalidationCause, serializeTools } from "./sessions/prefix-stability.ts";
 import { ProviderRequestObserver, unwrapStreamFn } from "./sessions/request-observer.ts";
 import type { SettingsManager } from "./settings-manager.ts";
 import type { SlashCommandInfo } from "./slash-commands.ts";
@@ -394,6 +394,10 @@ export class AgentSession {
 		(event) => this._emit(event),
 		() => this.settingsManager.getBlockImages(),
 	);
+	// Last serialized active-tool set (monitor's own serialization): schema-only
+	// re-registrations announce tool-set-change instead of surfacing as
+	// unexpected invalidations on the next prefix diff.
+	private _lastActiveToolsFingerprint: string | undefined;
 
 	// Extension system
 	private _extensionRunner!: ExtensionRunner;
@@ -1036,7 +1040,6 @@ export class AgentSession {
 	 * Changes take effect on the next agent turn.
 	 */
 	setActiveToolsByName(toolNames: string[]): void {
-		const previousActiveToolNames = this.agent.state.tools.map((tool) => tool.name);
 		const tools: AgentTool[] = [];
 		const validToolNames: string[] = [];
 		for (const name of toolNames) {
@@ -1047,11 +1050,18 @@ export class AgentSession {
 			}
 		}
 		this.agent.state.tools = tools;
-		if (
-			previousActiveToolNames.length !== validToolNames.length ||
-			previousActiveToolNames.some((name, index) => name !== validToolNames[index])
-		) {
+		// Announce on any serialized tool change, not just name-list changes: a
+		// re-registered tool with a changed schema (e.g. a regenerated enum)
+		// rewrites the request's tools section with the same names. The
+		// fingerprint reuses the monitor's own serialization, so it flags
+		// exactly the rewrites the prefix diff will see — no more. The first
+		// computation initializes silently, like the blockImages tracker.
+		const toolsFingerprint = JSON.stringify(serializeTools(tools));
+		if (this._lastActiveToolsFingerprint === undefined) {
+			this._lastActiveToolsFingerprint = toolsFingerprint;
+		} else if (toolsFingerprint !== this._lastActiveToolsFingerprint) {
 			this._requestObserver.expectInvalidation("tool-set-change");
+			this._lastActiveToolsFingerprint = toolsFingerprint;
 		}
 
 		// Rebuild base system prompt with new tool set
