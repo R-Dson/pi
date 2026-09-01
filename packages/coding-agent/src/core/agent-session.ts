@@ -1191,6 +1191,13 @@ export class AgentSession {
 	// =========================================================================
 
 	private async _runAgentPrompt(messages: AgentMessage | AgentMessage[]): Promise<void> {
+		// Wait out any in-flight settle emission before starting: idle is
+		// already reported during settle handlers (pinned contract, #6363), so
+		// a run started now — from prompt() or a trigger-turn message — would
+		// race the handlers, e.g. a model-handoff return switching the model.
+		if (this._settleWait) {
+			await this._settleWait;
+		}
 		this._isAgentRunActive = true;
 		try {
 			await this.agent.prompt(messages);
@@ -1201,16 +1208,18 @@ export class AgentSession {
 			this._systemPromptOverride = undefined;
 			this._flushPendingBashMessages();
 			this._flushPendingCustomMessages();
-			// A prompt arriving while the settle emission is in flight (idle is
-			// already reported, by contract) waits for it, so it runs on the
-			// post-settle state — e.g. the model a settle handler returned
-			// control to — instead of racing it.
-			const settle = this._emitAgentSettled();
-			this._settleWait = settle;
+			// Armed before the emission starts so even a message triggered from
+			// the first handler's synchronous body parks instead of racing the
+			// remaining handlers.
+			let releaseSettle: () => void = () => {};
+			this._settleWait = new Promise<void>((resolve) => {
+				releaseSettle = resolve;
+			});
 			try {
-				await settle;
+				await this._emitAgentSettled();
 			} finally {
 				this._settleWait = undefined;
+				releaseSettle();
 			}
 		}
 	}
@@ -1302,14 +1311,6 @@ export class AgentSession {
 			if (expandPromptTemplates) {
 				expandedText = this._expandSkillCommand(expandedText);
 				expandedText = expandPromptTemplate(expandedText, [...this.promptTemplates]);
-			}
-
-			// If the settle emission is still running, wait it out first: idle is
-			// already reported during settle handlers (pinned contract), so a
-			// prompt here would otherwise start before settle handlers (e.g. a
-			// model-handoff return) finish.
-			if (this._settleWait) {
-				await this._settleWait;
 			}
 
 			// If streaming, queue via steer() or followUp() based on option
