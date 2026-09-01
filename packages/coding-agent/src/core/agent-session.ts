@@ -398,6 +398,9 @@ export class AgentSession {
 	// re-registrations announce tool-set-change instead of surfacing as
 	// unexpected invalidations on the next prefix diff.
 	private _lastActiveToolsFingerprint: string | undefined;
+	// The in-flight agent_settled emission, if any: a prompt arriving while the
+	// session already reports idle waits for it before starting its run.
+	private _settleWait: Promise<void> | undefined;
 
 	// Extension system
 	private _extensionRunner!: ExtensionRunner;
@@ -1188,6 +1191,13 @@ export class AgentSession {
 	// =========================================================================
 
 	private async _runAgentPrompt(messages: AgentMessage | AgentMessage[]): Promise<void> {
+		// Wait out any in-flight settle emission before starting: idle is
+		// already reported during settle handlers (pinned contract, #6363), so
+		// a run started now — from prompt() or a trigger-turn message — would
+		// race the handlers, e.g. a model-handoff return switching the model.
+		if (this._settleWait) {
+			await this._settleWait;
+		}
 		this._isAgentRunActive = true;
 		try {
 			await this.agent.prompt(messages);
@@ -1198,7 +1208,19 @@ export class AgentSession {
 			this._systemPromptOverride = undefined;
 			this._flushPendingBashMessages();
 			this._flushPendingCustomMessages();
-			await this._emitAgentSettled();
+			// Armed before the emission starts so even a message triggered from
+			// the first handler's synchronous body parks instead of racing the
+			// remaining handlers.
+			let releaseSettle: () => void = () => {};
+			this._settleWait = new Promise<void>((resolve) => {
+				releaseSettle = resolve;
+			});
+			try {
+				await this._emitAgentSettled();
+			} finally {
+				this._settleWait = undefined;
+				releaseSettle();
+			}
 		}
 	}
 

@@ -752,3 +752,54 @@ describe("model-handoff call row (#111)", () => {
 		expect(handoffCallSummary({}, false)).toBe("Handoff -> ?");
 	});
 });
+
+describe("model-handoff settle window (#122)", () => {
+	it("a prompt arriving during the settle emission is answered by the returned model, not the delegatee", async () => {
+		// The settling extension loads BEFORE model-handoff so its handler runs
+		// first; the prompt is queued as a microtask so it lands while the
+		// settle emission is still in flight (idle already reported, by
+		// contract) but from outside any handler. Fire once: the late run's own
+		// settle re-triggers handlers otherwise.
+		let fired = false;
+		let lateRun: Promise<unknown> | undefined;
+		const harness = await createHarness({
+			models: [
+				{ id: "faux-1", name: "One" },
+				{ id: "faux-2", name: "Two" },
+			],
+			extensionFactories: [
+				(pi) => {
+					pi.on("agent_settled", () => {
+						if (fired) return;
+						fired = true;
+						queueMicrotask(() => {
+							lateRun = harness.session.prompt("late question");
+						});
+					});
+				},
+				modelHandoff,
+			],
+		});
+		harnesses.push(harness);
+		pointConfigAt(harness, {
+			smart: { provider: "faux", modelId: "faux-1" },
+			fast: { provider: "faux", modelId: "faux-2" },
+		});
+		await harness.session.bindExtensions({ shutdownHandler: () => {} });
+
+		harness.setResponses([
+			handoffTurn("fast", { reason: "delegate", returnAfterRun: true }),
+			fauxAssistantMessage("done on fast"),
+			fauxAssistantMessage("late answer"),
+		]);
+		await harness.session.prompt("delegate");
+		if (lateRun) await lateRun;
+		else await harness.session.waitForIdle();
+
+		// The handoff turn, the delegate's turn, and the late prompt answered by
+		// the returned model.
+		expect(assistantModelIds(harness)).toEqual(["faux-1", "faux-2", "faux-1"]);
+		expect(getAssistantTexts(harness).at(-1)).toBe("late answer");
+		expect(modelChanges(harness)).toEqual(["faux/faux-2", "faux/faux-1"]);
+	});
+});
