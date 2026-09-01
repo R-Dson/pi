@@ -401,3 +401,205 @@ describe("model-handoff guards (#108)", () => {
 		expectStayedPut(harness, 'tier "fast" is not available');
 	});
 });
+
+describe("model-handoff returnAfterRun (#109)", () => {
+	const threeTiers = {
+		smart: { provider: "faux", modelId: "faux-1" },
+		fast: { provider: "faux", modelId: "faux-2" },
+		tiny: { provider: "faux", modelId: "faux-3" },
+	};
+	const threeModels = [
+		{ id: "faux-1", name: "One" },
+		{ id: "faux-2", name: "Two" },
+		{ id: "faux-3", name: "Three" },
+	];
+
+	it("returns control to the requester when the run settles, once, without a new prompt", async () => {
+		const recorder = modelSelectRecorder();
+		const harness = await setupHandoff(
+			{
+				smart: { provider: "faux", modelId: "faux-1" },
+				fast: { provider: "faux", modelId: "faux-2" },
+			},
+			{ factories: [recorder.factory] },
+		);
+
+		harness.setResponses([
+			fauxAssistantMessage(
+				[
+					fauxToolCall(
+						"switch_model",
+						{ target: "fast", reason: "mechanical work", returnAfterRun: true },
+						{ id: "handoff-1" },
+					),
+				],
+				{ stopReason: "toolUse" },
+			),
+			fauxAssistantMessage("done on fast"),
+		]);
+		await harness.session.prompt("delegate");
+
+		// The return fired at settle: the session is back on the requester, with
+		// the full setModel side effects, and no extra assistant turn happened.
+		expect(harness.session.model?.id).toBe("faux-1");
+		expect(modelChanges(harness)).toEqual(["faux/faux-2", "faux/faux-1"]);
+		expect(recorder.selects).toEqual(["faux-1->faux-2:set", "faux-2->faux-1:set"]);
+		expect(assistantModelIds(harness)).toEqual(["faux-1", "faux-2"]);
+
+		// The slot cleared: a plain later run settles without switching back again.
+		// Its request also materializes the return's model-change invalidation.
+		harness.setResponses([fauxAssistantMessage("plain turn")]);
+		await harness.session.prompt("plain");
+		expect(harness.session.model?.id).toBe("faux-1");
+		expect(modelChanges(harness)).toEqual(["faux/faux-2", "faux/faux-1"]);
+		expect(harness.session.getSessionStats().prefixInvalidationsByCause ?? {}).toEqual({ "model-change": 2 });
+	});
+
+	it("a later handoff without the flag cancels the pending return", async () => {
+		const harness = await setupHandoff(threeTiers, { models: threeModels });
+
+		harness.setResponses([
+			fauxAssistantMessage(
+				[
+					fauxToolCall(
+						"switch_model",
+						{ target: "fast", reason: "step one", returnAfterRun: true },
+						{
+							id: "handoff-1",
+						},
+					),
+				],
+				{ stopReason: "toolUse" },
+			),
+			fauxAssistantMessage([fauxToolCall("switch_model", { target: "tiny", reason: "step two" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage("done on tiny"),
+		]);
+		await harness.session.prompt("chain");
+
+		expect(harness.session.model?.id).toBe("faux-3");
+		expect(modelChanges(harness)).toEqual(["faux/faux-2", "faux/faux-3"]);
+	});
+
+	it("a later handoff with the flag replaces the pending return with the newer requester", async () => {
+		const harness = await setupHandoff(threeTiers, { models: threeModels });
+
+		harness.setResponses([
+			fauxAssistantMessage(
+				[
+					fauxToolCall(
+						"switch_model",
+						{ target: "fast", reason: "step one", returnAfterRun: true },
+						{
+							id: "handoff-1",
+						},
+					),
+				],
+				{ stopReason: "toolUse" },
+			),
+			fauxAssistantMessage(
+				[fauxToolCall("switch_model", { target: "tiny", reason: "step two", returnAfterRun: true })],
+				{ stopReason: "toolUse" },
+			),
+			fauxAssistantMessage("done on tiny"),
+		]);
+		await harness.session.prompt("chain");
+
+		expect(harness.session.model?.id).toBe("faux-2");
+		expect(modelChanges(harness)).toEqual(["faux/faux-2", "faux/faux-3", "faux/faux-2"]);
+	});
+
+	it("a no-op switch records no pending return", async () => {
+		const harness = await setupHandoff(threeTiers, { models: threeModels });
+
+		harness.setResponses([
+			fauxAssistantMessage(
+				[fauxToolCall("switch_model", { target: "smart", reason: "already here", returnAfterRun: true })],
+				{ stopReason: "toolUse" },
+			),
+			fauxAssistantMessage("still me"),
+		]);
+		await harness.session.prompt("no-op");
+
+		expectStayedPut(harness, "already the active model");
+		expect(harness.session.model?.id).toBe("faux-1");
+	});
+
+	it("a manual switch cancels the pending return", async () => {
+		const manual: { switch: () => Promise<void> } = { switch: async () => {} };
+		const harness = await setupHandoff(threeTiers, {
+			models: threeModels,
+			factories: [
+				(pi) => {
+					pi.on("tool_result", async (event) => {
+						if (event.toolCallId === "handoff-1") await manual.switch();
+					});
+				},
+			],
+		});
+		const target = harness.getModel("faux-3");
+		if (!target) throw new Error("faux-3 missing");
+		manual.switch = async () => {
+			await harness.session.setModel(target);
+		};
+
+		harness.setResponses([
+			fauxAssistantMessage(
+				[
+					fauxToolCall(
+						"switch_model",
+						{ target: "fast", reason: "delegate", returnAfterRun: true },
+						{
+							id: "handoff-1",
+						},
+					),
+				],
+				{ stopReason: "toolUse" },
+			),
+			fauxAssistantMessage("done on fast"),
+		]);
+		await harness.session.prompt("delegate then user switches");
+
+		// The user's mid-run choice survives the settle: no return to faux-1.
+		expect(harness.session.model?.id).toBe("faux-3");
+		expect(modelChanges(harness)).toEqual(["faux/faux-2", "faux/faux-3"]);
+	});
+
+	it("stays put with a warning when the requester is gone at settle time", async () => {
+		const notifications: string[] = [];
+		const harness = await setupHandoff(threeTiers, {
+			models: threeModels,
+			uiContext: {
+				notify: (message: string) => notifications.push(message),
+			} as unknown as ExtensionUIContext,
+			factories: [
+				(pi) => {
+					pi.on("tool_result", (_event, ctx) => {
+						ctx.modelRegistry.unregisterProvider("faux");
+					});
+				},
+			],
+		});
+
+		harness.setResponses([
+			fauxAssistantMessage(
+				[
+					fauxToolCall(
+						"switch_model",
+						{ target: "fast", reason: "delegate", returnAfterRun: true },
+						{
+							id: "handoff-1",
+						},
+					),
+				],
+				{ stopReason: "toolUse" },
+			),
+			fauxAssistantMessage("done on fast"),
+		]);
+		await harness.session.prompt("delegate");
+
+		expect(harness.session.model?.id).toBe("faux-2");
+		expect(notifications.join("\n")).toContain("model-handoff");
+	});
+});
