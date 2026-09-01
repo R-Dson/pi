@@ -57,6 +57,16 @@ The full design and slicing live in [docs/fork/cache-preserving-context-plan.md]
   { "rules": [{ "tool": "bash", "command": "git push", "effect": "deny" }] }
   ```
   Rules match tool name, capability, path, or command (token boundary, normalized paths). Deny beats ask beats allow; your rules beat the profile presets (`code`, `review`, `minimal`); `hide: true` removes a tool from the model's list; `ask` opens an approval dialog. [`read-only-mode.ts`](packages/coding-agent/examples/extensions/read-only-mode.ts) is the minimal copy-me variant. The rule evaluator ships as exported library API for extension authors; core performs no permission enforcement, matching upstream's stance that permission flows are extension territory.
+- **Model handoff, opt-in.** The model itself decides a task fits another tier and hands the whole conversation over mid-run: name two or more tiers in `~/.pi/agent/handoff.json` and a `switch_model` tool appears. A successful call makes the next assistant turn come from the target tier, the tool result is the baton (who handed off, why, the brief), and `returnAfterRun` gives control back when the run finishes, covering plan, delegate, review without re-switching by hand. A `.pi/handoff.json` in a trusted project adds project tiers on top (project wins on name collisions). Tiers:
+  ```json
+  {
+    "tiers": {
+      "fast": { "provider": "deepseek", "modelId": "deepseek-chat", "description": "mechanical edits" },
+      "smart": { "provider": "anthropic", "modelId": "claude-opus-4-5", "description": "plans and reviews" }
+    }
+  }
+  ```
+  Refusals change nothing: an already-active tier, bouncing back to an earlier baton holder in the same run, a provider without credentials, or a tier gone from the registry each stay put with an explanation. Fewer than two resolvable tiers (or no file at all) leaves `switch_model` unregistered, and manual switching stays canonical over any delegation; a crash drops a pending return, and resuming the session restores the model that held the baton last. The transcript row shows the tier, its model, and the reason. A permission-policies rule on `switch_model` gates it like any other tool.
 
 Each feature sits in core only as far as pi's extension API allows; the ledger records why, and what it would take to move each one out.
 
