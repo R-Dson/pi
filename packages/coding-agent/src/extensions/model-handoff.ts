@@ -10,9 +10,11 @@
  *
  * Configuration lives in handoff.json (extensions cannot read pi settings):
  * `{ "tiers": { "fast": { "provider": "...", "modelId": "...", "description":
- * "..." } } }`, machine config dir by default. Inert without a file; fewer than
- * two registry-resolvable tiers is also inert, with a warning. The refusal
- * guards landed with #108; returnAfterRun with #109.
+ * "..." } } }`, machine config dir by default, plus a project file under .pi
+ * in trusted projects; tiers merge and the project file wins on a name
+ * collision. Inert without any file; fewer than two registry-resolvable tiers
+ * in the merged set is also inert, with a warning. The refusal guards landed
+ * with #108, returnAfterRun with #109, project config with #110.
  */
 
 import { existsSync, readFileSync } from "node:fs";
@@ -31,25 +33,35 @@ interface TierConfig {
 /** A TierConfig that resolved in the model registry, bound to its tier name. */
 type Tier = TierConfig & { name: string };
 
-function readTiers(ctx: ExtensionContext): { tiers: Tier[]; configFilePresent: boolean } {
-	// The env override is a test seam (same pattern as PI_PERMISSION_POLICIES_GLOBAL).
-	const path = process.env.PI_HANDOFF_GLOBAL ?? join(homedir(), ".pi", "agent", "handoff.json");
-	if (!existsSync(path)) return { tiers: [], configFilePresent: false };
+/** Tiers from one config file, undefined when the file is absent or unreadable. */
+function readTierFile(path: string, ctx: ExtensionContext): Record<string, TierConfig> | undefined {
+	if (!existsSync(path)) return undefined;
 	let parsed: unknown;
 	try {
 		parsed = JSON.parse(readFileSync(path, "utf8"));
 	} catch (error) {
-		// A present-but-unreadable file warns once and counts as absent, so it
-		// never also triggers the fewer-than-two-tiers warning.
 		ctx.ui.notify(`model-handoff: ignoring unreadable ${path}: ${String(error)}`, "warning");
-		return { tiers: [], configFilePresent: false };
+		return undefined;
 	}
 	if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
 		ctx.ui.notify(`model-handoff: ignoring unreadable ${path}: expected a JSON object`, "warning");
-		return { tiers: [], configFilePresent: false };
+		return undefined;
 	}
+	return (parsed as { tiers?: Record<string, TierConfig> }).tiers ?? {};
+}
+
+function readTiers(ctx: ExtensionContext): { tiers: Tier[]; configFilePresent: boolean } {
+	// The env override is a test seam (same pattern as PI_PERMISSION_POLICIES_GLOBAL).
+	const machinePath = process.env.PI_HANDOFF_GLOBAL ?? join(homedir(), ".pi", "agent", "handoff.json");
+	const machine = readTierFile(machinePath, ctx);
+	// The project file counts only in a trusted project: an untrusted
+	// checkout's .pi directory must not steer handoffs.
+	const project = ctx.isProjectTrusted() ? readTierFile(join(ctx.cwd, ".pi", "handoff.json"), ctx) : undefined;
+	const merged = new Map<string, TierConfig>();
+	for (const [name, config] of Object.entries(machine ?? {})) merged.set(name, config);
+	for (const [name, config] of Object.entries(project ?? {})) merged.set(name, config);
 	const tiers: Tier[] = [];
-	for (const [name, config] of Object.entries((parsed as { tiers?: Record<string, TierConfig> }).tiers ?? {})) {
+	for (const [name, config] of merged) {
 		if (!config) {
 			ctx.ui.notify(
 				`model-handoff: skipping tier "${name}": entry must be {provider, modelId, description?}`,
@@ -66,7 +78,7 @@ function readTiers(ctx: ExtensionContext): { tiers: Tier[]; configFilePresent: b
 		}
 		tiers.push({ name, ...config });
 	}
-	return { tiers, configFilePresent: true };
+	return { tiers, configFilePresent: machine !== undefined || project !== undefined };
 }
 
 function textResult(text: string) {
@@ -138,6 +150,11 @@ export default function modelHandoff(pi: ExtensionAPI): void {
 	pi.on("model_select", (event) => {
 		if (`${event.model.provider}/${event.model.id}` !== inFlightTargetKey) pendingReturn = undefined;
 	});
+	// The extension API has no unregister, so deactivation subtracts the tool
+	// from the active list (permission-policies' pattern) and re-registration
+	// must re-add it explicitly: a re-registered name is not new to the
+	// registry, so the refresh does not reactivate it on its own.
+	let toolActive = false;
 
 	// session_start is the only handler with the context (cwd, trust, registry)
 	// config reading needs, and it fires for every reason (startup, new, resume,
@@ -148,6 +165,10 @@ export default function modelHandoff(pi: ExtensionAPI): void {
 	pi.on("session_start", (_event, ctx) => {
 		const { tiers, configFilePresent } = readTiers(ctx);
 		if (tiers.length < 2) {
+			if (toolActive) {
+				pi.setActiveTools(pi.getActiveTools().filter((name) => name !== "switch_model"));
+				toolActive = false;
+			}
 			if (configFilePresent) {
 				ctx.ui.notify(
 					`model-handoff: needs at least two resolvable tiers, found ${tiers.length}; staying inactive`,
@@ -156,6 +177,7 @@ export default function modelHandoff(pi: ExtensionAPI): void {
 			}
 			return;
 		}
+		toolActive = true;
 
 		const tierList = tiers
 			.map(
@@ -240,5 +262,8 @@ export default function modelHandoff(pi: ExtensionAPI): void {
 				return textResult(lines.join("\n"));
 			},
 		});
+		// Reactivate explicitly: after a deactivation subtracted the tool, a
+		// re-registration alone does not bring it back (see toolActive comment).
+		pi.setActiveTools([...new Set([...pi.getActiveTools(), "switch_model"])]);
 	});
 }
