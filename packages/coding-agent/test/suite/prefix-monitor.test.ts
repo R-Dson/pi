@@ -370,4 +370,67 @@ describe("provider wire-rewrite attribution (issue #56)", () => {
 		expect(events).toHaveLength(1);
 		expect(events[0]).toMatchObject({ cause: "unexpected-history-change", firstDivergenceIndex: 0 });
 	});
+
+	it("attributes a schema-only tool re-registration to tool-set-change without a diagnostic event (#120)", async () => {
+		const harness = await createHarness({
+			extensionFactories: [
+				(pi) => {
+					const register = (value: string) => {
+						pi.registerTool({
+							name: "shape",
+							label: "Shape",
+							description: "Shaped tool",
+							parameters: Type.Object({ v: Type.Literal(value) }),
+							execute: async () => ({ content: [], details: undefined }),
+						});
+					};
+					register("one");
+					// Re-register between runs, like a config reload: an announce
+					// armed mid-stream would be cleared by that request's own
+					// deferred observation (pre-existing monitor timing).
+					pi.on("agent_settled", () => {
+						register("two");
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		harness.setResponses([fauxAssistantMessage("first reply"), fauxAssistantMessage("second reply")]);
+
+		await harness.session.prompt("first turn");
+		await harness.session.prompt("second turn");
+
+		expect(harness.session.getSessionStats().prefixInvalidationsByCause).toEqual({ "tool-set-change": 1 });
+		expect(harness.eventsOfType("prefix_invalidated")).toHaveLength(0);
+	});
+
+	it("counts nothing when a tool is re-registered with an unchanged schema (#120)", async () => {
+		const harness = await createHarness({
+			extensionFactories: [
+				(pi) => {
+					const register = () => {
+						pi.registerTool({
+							name: "shape",
+							label: "Shape",
+							description: "Shaped tool",
+							parameters: Type.Object({ v: Type.Literal("one") }),
+							execute: async () => ({ content: [], details: undefined }),
+						});
+					};
+					register();
+					pi.on("agent_settled", () => {
+						register();
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		harness.setResponses([fauxAssistantMessage("first reply"), fauxAssistantMessage("second reply")]);
+
+		await harness.session.prompt("first turn");
+		await harness.session.prompt("second turn");
+
+		expect(harness.session.getSessionStats().prefixInvalidationsByCause).toEqual({});
+		expect(harness.eventsOfType("prefix_invalidated")).toHaveLength(0);
+	});
 });
