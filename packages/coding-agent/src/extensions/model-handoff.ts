@@ -21,42 +21,35 @@ import { join } from "node:path";
 import { Type } from "typebox";
 import type { ExtensionAPI, ExtensionContext } from "../core/extensions/types.ts";
 
+/** Raw tier entry from handoff.json. */
 interface TierConfig {
 	provider: string;
 	modelId: string;
 	description?: string;
 }
 
-interface HandoffConfig {
-	tiers?: Record<string, TierConfig>;
-}
+/** A TierConfig that resolved in the model registry, bound to its tier name. */
+type Tier = TierConfig & { name: string };
 
-interface Tier {
-	name: string;
-	provider: string;
-	modelId: string;
-	description?: string;
-}
-
-function readTiers(ctx: ExtensionContext): { tiers: Tier[]; configured: boolean } {
+function readTiers(ctx: ExtensionContext): { tiers: Tier[]; configFilePresent: boolean } {
 	// The env override is a test seam (same pattern as PI_PERMISSION_POLICIES_GLOBAL).
 	const path = process.env.PI_HANDOFF_GLOBAL ?? join(homedir(), ".pi", "agent", "handoff.json");
-	if (!existsSync(path)) return { tiers: [], configured: false };
+	if (!existsSync(path)) return { tiers: [], configFilePresent: false };
 	let parsed: unknown;
 	try {
 		parsed = JSON.parse(readFileSync(path, "utf8"));
 	} catch (error) {
-		// A present-but-unreadable file warns once and counts as not configured,
-		// so it never also triggers the fewer-than-two-tiers warning.
+		// A present-but-unreadable file warns once and counts as absent, so it
+		// never also triggers the fewer-than-two-tiers warning.
 		ctx.ui.notify(`model-handoff: ignoring unreadable ${path}: ${String(error)}`, "warning");
-		return { tiers: [], configured: false };
+		return { tiers: [], configFilePresent: false };
 	}
 	if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
 		ctx.ui.notify(`model-handoff: ignoring unreadable ${path}: expected a JSON object`, "warning");
-		return { tiers: [], configured: false };
+		return { tiers: [], configFilePresent: false };
 	}
 	const tiers: Tier[] = [];
-	for (const [name, config] of Object.entries((parsed as HandoffConfig).tiers ?? {})) {
+	for (const [name, config] of Object.entries((parsed as { tiers?: Record<string, TierConfig> }).tiers ?? {})) {
 		if (!config) {
 			ctx.ui.notify(
 				`model-handoff: skipping tier "${name}": entry must be {provider, modelId, description?}`,
@@ -66,14 +59,14 @@ function readTiers(ctx: ExtensionContext): { tiers: Tier[]; configured: boolean 
 		}
 		if (!ctx.modelRegistry.find(config.provider, config.modelId)) {
 			ctx.ui.notify(
-				`model-handoff: skipping tier "${name}": ${config.provider ?? "?"}/${config.modelId ?? "?"} is not in the model registry`,
+				`model-handoff: skipping tier "${name}": ${config.provider}/${config.modelId} is not in the model registry`,
 				"warning",
 			);
 			continue;
 		}
-		tiers.push({ name, provider: config.provider, modelId: config.modelId, description: config.description });
+		tiers.push({ name, ...config });
 	}
-	return { tiers, configured: true };
+	return { tiers, configFilePresent: true };
 }
 
 function textResult(text: string) {
@@ -81,12 +74,16 @@ function textResult(text: string) {
 }
 
 export default function modelHandoff(pi: ExtensionAPI): void {
-	// session_start fires for every reason (startup, new, resume, fork, reload);
-	// registerTool overwrites by name, so re-registering is the refresh path.
+	// session_start is the only handler with the context (cwd, trust, registry)
+	// config reading needs, and it fires for every reason (startup, new, resume,
+	// fork, reload). Production reload re-runs factories, so registerTool's
+	// overwrite-by-name only matters in the test harness; either way the
+	// serialized tool bytes must not change within a session or the provider
+	// prefix cache busts as an unexpected tools-change.
 	pi.on("session_start", (_event, ctx) => {
-		const { tiers, configured } = readTiers(ctx);
+		const { tiers, configFilePresent } = readTiers(ctx);
 		if (tiers.length < 2) {
-			if (configured) {
+			if (configFilePresent) {
 				ctx.ui.notify(
 					`model-handoff: needs at least two resolvable tiers, found ${tiers.length}; staying inactive`,
 					"warning",
@@ -106,21 +103,18 @@ export default function modelHandoff(pi: ExtensionAPI): void {
 			name: "switch_model",
 			label: "Switch model",
 			description:
-				"Hand the whole conversation to another configured model tier. The incoming model " +
-				"receives the full history plus your reason and brief, and continues this task from the next turn.\n" +
+				"Hand the whole conversation to another configured model tier. The incoming model sees the full history, your reason, and your brief, and continues the task from the next turn.\n" +
 				`Tiers:\n${tierList}`,
-			promptSnippet: "switch_model: hand the whole conversation to another configured model tier.",
+			promptSnippet: "Hand the whole conversation to another configured model tier.",
 			promptGuidelines: [
-				"switch_model transfers the conversation to another tier; it does not spawn a helper. The incoming model sees everything and continues the task.",
-				"Escalate when the work needs planning, architecture decisions, or stubborn debugging. Hand down when a written plan makes the remaining work mechanical, and carry the plan as the brief.",
-				"Hand off at task boundaries, not per message: every switch re-reads the target tier's cached prefix.",
+				"switch_model is a handoff, not a helper: the incoming model takes over the same conversation.",
+				"Escalate for planning, architecture decisions, or stubborn debugging; hand down when a written plan makes the remaining work mechanical, carrying the plan as the brief.",
+				"Hand off at task boundaries, not per message.",
 			],
 			parameters: Type.Object({
 				target: Type.Union(
 					tiers.map((tier) => Type.Literal(tier.name)),
-					{
-						description: "Tier to hand off to",
-					},
+					{ description: "Tier to hand off to" },
 				),
 				reason: Type.String({ description: "Short justification, shown to the user and the incoming model" }),
 				brief: Type.Optional(
