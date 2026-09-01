@@ -4,7 +4,7 @@ import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { fauxAssistantMessage, fauxToolCall, registerFauxProvider } from "@earendil-works/pi-ai/compat";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ExtensionAPI, ExtensionUIContext } from "../../src/core/extensions/types.ts";
-import modelHandoff from "../../src/extensions/model-handoff.ts";
+import modelHandoff, { handoffCallSummary } from "../../src/extensions/model-handoff.ts";
 import { createHarness, getAssistantTexts, getMessageText, type Harness, type HarnessOptions } from "./harness.ts";
 
 // #107: machine-wide model handoff. The config is pointed at a temp file via
@@ -737,5 +737,15 @@ describe("model-handoff project config (#110)", () => {
 
 		expect(notifications.join("\n")).toContain("unreadable");
 		expect(switchModelTool).toBe(false);
+	});
+});
+
+describe("model-handoff call row (#111)", () => {
+	it("shows tier and reason on one collapsed line, brief only when expanded", () => {
+		const args = { target: "fast", reason: "mechanical now", brief: "apply the plan" };
+		expect(handoffCallSummary(args, false)).toBe("Handoff -> fast: mechanical now");
+		expect(handoffCallSummary(args, true)).toBe("Handoff -> fast: mechanical now\nBrief: apply the plan");
+		expect(handoffCallSummary({ target: "fast" }, false)).toBe("Handoff -> fast");
+		expect(handoffCallSummary({}, false)).toBe("Handoff -> ?");
 	});
 });

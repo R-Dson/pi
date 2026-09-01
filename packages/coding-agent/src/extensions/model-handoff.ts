@@ -21,6 +21,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import type { ExtensionAPI, ExtensionContext } from "../core/extensions/types.ts";
 
@@ -84,6 +85,16 @@ function readTiers(ctx: ExtensionContext): { tiers: Tier[]; configFilePresent: b
 
 function textResult(text: string) {
 	return { details: undefined, content: [{ type: "text" as const, text }] };
+}
+
+/** The switch_model call row: tier and reason on one line, the brief only when expanded. */
+export function handoffCallSummary(
+	args: { target?: string; reason?: string; brief?: string },
+	expanded: boolean,
+): string {
+	const reason = args.reason ? `: ${args.reason}` : "";
+	const brief = expanded && args.brief ? `\nBrief: ${args.brief}` : "";
+	return `Handoff -> ${args.target ?? "?"}${reason}${brief}`;
 }
 
 export default function modelHandoff(pi: ExtensionAPI): void {
@@ -215,6 +226,10 @@ export default function modelHandoff(pi: ExtensionAPI): void {
 			// Sequential: two switch_model calls in one assistant message would
 			// otherwise race in execute() and both claim the baton.
 			executionMode: "sequential",
+			// The brief stays out of the collapsed row (HTML export renders calls
+			// collapsed, so the brief reaches export through the result text).
+			renderCall: (args, renderTheme, context) =>
+				new Text(renderTheme.fg("toolTitle", handoffCallSummary(args, context.expanded)), 0, 0),
 			// Re-resolve through the context on every call: a Model cached at
 			// activation would go stale against the live registry (#108 relies on this).
 			async execute(_toolCallId, params, _signal, _onUpdate, execCtx) {
