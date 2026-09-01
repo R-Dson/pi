@@ -74,6 +74,26 @@ function textResult(text: string) {
 }
 
 export default function modelHandoff(pi: ExtensionAPI): void {
+	// Guard state lives at factory scope: never module scope (built-ins stay
+	// imported across session switches, so module state would leak between
+	// sessions) and never inside session_start (the test harness re-fires it
+	// on one runner, which would pile up duplicate subscriptions).
+	let previousHolderKey: string | undefined;
+	let awaitingNewRun = true;
+
+	// The bounce guard covers one settled run: agent_start also fires for
+	// retry, compaction, and queued-message continuations inside a run, so the
+	// reset happens only at the first agent_start after an agent_settled.
+	pi.on("agent_settled", () => {
+		awaitingNewRun = true;
+	});
+	pi.on("agent_start", () => {
+		if (awaitingNewRun) {
+			previousHolderKey = undefined;
+			awaitingNewRun = false;
+		}
+	});
+
 	// session_start is the only handler with the context (cwd, trust, registry)
 	// config reading needs, and it fires for every reason (startup, new, resume,
 	// fork, reload). Production reload re-runs factories, so registerTool's
@@ -135,19 +155,30 @@ export default function modelHandoff(pi: ExtensionAPI): void {
 					);
 				}
 				const from = execCtx.model;
+				const fromKey = from ? `${from.provider}/${from.id}` : undefined;
+				const targetKey = `${target.provider}/${target.id}`;
+				if (fromKey === targetKey) {
+					return textResult(`switch_model: tier "${params.target}" (${targetKey}) is already the active model.`);
+				}
+				if (fromKey && previousHolderKey === targetKey) {
+					return textResult(
+						`switch_model: ${targetKey} held the baton earlier in this run; do the work or surface the problem to the user instead of bouncing back.`,
+					);
+				}
 				try {
 					if (!(await pi.setModel(target))) {
 						return textResult(
-							`switch_model: no credentials for ${target.provider}/${target.id}; staying on the current model. Ask the user to log in.`,
+							`switch_model: no credentials for ${targetKey}; staying on the current model. Ask the user to log in.`,
 						);
 					}
 				} catch (error) {
 					return textResult(
-						`switch_model: switching to ${target.provider}/${target.id} failed (${String(error)}); staying on the current model.`,
+						`switch_model: switching to ${targetKey} failed (${String(error)}); staying on the current model.`,
 					);
 				}
+				previousHolderKey = fromKey;
 				const lines = [
-					`Handed off from ${from ? `${from.provider}/${from.id}` : "unknown"} to ${tier.name} (${target.provider}/${target.id}).`,
+					`Handed off from ${fromKey ?? "unknown"} to ${tier.name} (${targetKey}).`,
 					`Reason: ${params.reason}`,
 					...(params.brief ? [`Brief: ${params.brief}`] : []),
 					"You hold the baton now: continue the task from here with the conversation above.",
