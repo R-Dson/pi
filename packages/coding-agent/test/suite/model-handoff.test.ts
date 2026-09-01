@@ -1,4 +1,4 @@
-import { writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { fauxAssistantMessage, fauxToolCall, registerFauxProvider } from "@earendil-works/pi-ai/compat";
@@ -28,6 +28,27 @@ function pointConfigAt(harness: Harness, tiers: Record<string, unknown> | null):
 	process.env[CONFIG_ENV] = path;
 }
 
+function writeProjectConfig(harness: Harness, contents: string): void {
+	const dir = join(harness.tempDir, ".pi");
+	mkdirSync(dir, { recursive: true });
+	writeFileSync(join(dir, "handoff.json"), contents);
+}
+
+/** UI context capturing notify calls, for asserting warnings. */
+function captureNotify(): { notifications: string[]; uiContext: ExtensionUIContext } {
+	const notifications: string[] = [];
+	return {
+		notifications,
+		uiContext: { notify: (message: string) => notifications.push(message) } as unknown as ExtensionUIContext,
+	};
+}
+
+const threeModels = [
+	{ id: "faux-1", name: "One" },
+	{ id: "faux-2", name: "Two" },
+	{ id: "faux-3", name: "Three" },
+];
+
 /** Harness with the handoff extension loaded and its config pointed at a temp file. */
 async function setupHandoff(
 	tiers: Record<string, unknown> | null,
@@ -35,6 +56,7 @@ async function setupHandoff(
 		models?: HarnessOptions["models"];
 		factories?: HarnessOptions["extensionFactories"];
 		uiContext?: ExtensionUIContext;
+		untrusted?: boolean;
 	} = {},
 ): Promise<Harness> {
 	const harness = await createHarness({
@@ -46,6 +68,7 @@ async function setupHandoff(
 	});
 	harnesses.push(harness);
 	pointConfigAt(harness, tiers);
+	if (options.untrusted) harness.settingsManager.setProjectTrusted(false);
 	await harness.session.bindExtensions(
 		options.uiContext ? { uiContext: options.uiContext } : { shutdownHandler: () => {} },
 	);
@@ -420,11 +443,6 @@ describe("model-handoff returnAfterRun (#109)", () => {
 		fast: { provider: "faux", modelId: "faux-2" },
 		tiny: { provider: "faux", modelId: "faux-3" },
 	};
-	const threeModels = [
-		{ id: "faux-1", name: "One" },
-		{ id: "faux-2", name: "Two" },
-		{ id: "faux-3", name: "Three" },
-	];
 
 	it("returns control to the requester when the run settles, once, without a new prompt", async () => {
 		const recorder = modelSelectRecorder();
@@ -555,5 +573,169 @@ describe("model-handoff returnAfterRun (#109)", () => {
 
 		expect(harness.session.model?.id).toBe("faux-2");
 		expect(notifications.join("\n")).toContain("model-handoff");
+	});
+});
+
+describe("model-handoff project config (#110)", () => {
+	const threeModels = [
+		{ id: "faux-1", name: "One" },
+		{ id: "faux-2", name: "Two" },
+		{ id: "faux-3", name: "Three" },
+	];
+
+	it("merges project tiers with machine tiers, project winning on collision", async () => {
+		const harness = await setupHandoff({ smart: { provider: "faux", modelId: "faux-1" } }, { models: threeModels });
+		writeProjectConfig(
+			harness,
+			JSON.stringify({
+				tiers: { smart: { provider: "faux", modelId: "faux-2" }, fast: { provider: "faux", modelId: "faux-3" } },
+			}),
+		);
+		await harness.session.bindExtensions({ shutdownHandler: () => {} });
+
+		harness.setResponses([
+			handoffTurn("smart", { reason: "collision should follow the project file" }),
+			fauxAssistantMessage("done"),
+		]);
+		await harness.session.prompt("delegate");
+
+		expect(assistantModelIds(harness)).toEqual(["faux-1", "faux-2"]);
+		expect(modelChanges(harness)).toEqual(["faux/faux-2"]);
+	});
+
+	it("ignores the project file entirely in an untrusted project", async () => {
+		const harness = await setupHandoff(
+			{
+				smart: { provider: "faux", modelId: "faux-1" },
+				fast: { provider: "faux", modelId: "faux-2" },
+			},
+			{ models: threeModels, untrusted: true },
+		);
+		writeProjectConfig(harness, JSON.stringify({ tiers: { tiny: { provider: "faux", modelId: "faux-3" } } }));
+		await harness.session.bindExtensions({ shutdownHandler: () => {} });
+
+		let switchModel = "";
+		harness.setResponses([
+			(context) => {
+				switchModel = JSON.stringify(context.tools?.find((tool) => tool.name === "switch_model"));
+				return handoffTurn("fast", { reason: "machine tiers still work" });
+			},
+			fauxAssistantMessage("done"),
+		]);
+		await harness.session.prompt("delegate");
+
+		expect(switchModel).toContain('"fast"');
+		expect(switchModel).not.toContain("tiny");
+		expect(assistantModelIds(harness)).toEqual(["faux-1", "faux-2"]);
+	});
+
+	it("re-registers with a regenerated enum when a reload adds a tier", async () => {
+		const harness = await setupHandoff(
+			{
+				smart: { provider: "faux", modelId: "faux-1" },
+				fast: { provider: "faux", modelId: "faux-2" },
+			},
+			{ models: threeModels },
+		);
+		writeProjectConfig(harness, JSON.stringify({ tiers: { tiny: { provider: "faux", modelId: "faux-3" } } }));
+		// session.reload() would invalidate the harness's frozen extension
+		// runtime; a second bindExtensions fires session_start on the live
+		// runner, which is the re-read-and-re-register path this tests.
+		await harness.session.bindExtensions({ shutdownHandler: () => {} });
+
+		harness.setResponses([
+			handoffTurn("tiny", { reason: "new tier from the reloaded config" }),
+			fauxAssistantMessage("done on tiny"),
+		]);
+		await harness.session.prompt("delegate");
+
+		expect(assistantModelIds(harness)).toEqual(["faux-1", "faux-3"]);
+		expect(modelChanges(harness)).toEqual(["faux/faux-3"]);
+	});
+
+	it("deactivates on reload when the merged set drops below two tiers, and reactivates when it grows back", async () => {
+		const { notifications, uiContext } = captureNotify();
+		const harness = await setupHandoff(
+			{
+				smart: { provider: "faux", modelId: "faux-1" },
+				fast: { provider: "faux", modelId: "faux-2" },
+			},
+			{ uiContext },
+		);
+		pointConfigAt(harness, { smart: { provider: "faux", modelId: "faux-1" } });
+		await harness.session.bindExtensions({ shutdownHandler: () => {} });
+
+		let providerSystemPrompt = "";
+		let switchModelTool = false;
+		harness.setResponses([
+			(context) => {
+				providerSystemPrompt = context.systemPrompt ?? "";
+				switchModelTool = context.tools?.some((tool) => tool.name === "switch_model") ?? false;
+				return fauxAssistantMessage("ok");
+			},
+		]);
+		await harness.session.prompt("hello");
+
+		expect(switchModelTool).toBe(false);
+		expect(providerSystemPrompt).not.toContain("switch_model");
+		expect(notifications.join("\n")).toContain("found 1");
+
+		// Growing back re-registers and reactivates: the subtraction is undone.
+		pointConfigAt(harness, {
+			smart: { provider: "faux", modelId: "faux-1" },
+			fast: { provider: "faux", modelId: "faux-2" },
+		});
+		await harness.session.bindExtensions({ shutdownHandler: () => {} });
+		harness.setResponses([handoffTurn("fast", { reason: "back in business" }), fauxAssistantMessage("done")]);
+		await harness.session.prompt("delegate again");
+
+		expect(assistantModelIds(harness)).toEqual(["faux-1", "faux-1", "faux-2"]);
+		expect(modelChanges(harness)).toEqual(["faux/faux-2"]);
+	});
+
+	it("treats an unreadable project file as absent with a warning", async () => {
+		const { notifications, uiContext } = captureNotify();
+		const harness = await setupHandoff(
+			{
+				smart: { provider: "faux", modelId: "faux-1" },
+				fast: { provider: "faux", modelId: "faux-2" },
+			},
+			{ uiContext },
+		);
+		writeProjectConfig(harness, "{ not json");
+		await harness.session.bindExtensions({ shutdownHandler: () => {} });
+
+		harness.setResponses([handoffTurn("fast", { reason: "machine tiers still work" }), fauxAssistantMessage("done")]);
+		await harness.session.prompt("delegate");
+
+		expect(notifications.join("\n")).toContain("unreadable");
+		expect(assistantModelIds(harness)).toEqual(["faux-1", "faux-2"]);
+	});
+
+	it("treats an unreadable machine file as absent with a warning", async () => {
+		const { notifications, uiContext } = captureNotify();
+		const harness = await setupHandoff(
+			{
+				smart: { provider: "faux", modelId: "faux-1" },
+				fast: { provider: "faux", modelId: "faux-2" },
+			},
+			{ uiContext },
+		);
+		const machinePath = process.env[CONFIG_ENV];
+		if (!machinePath) throw new Error("machine config path missing");
+		writeFileSync(machinePath, "[not an object");
+		await harness.session.bindExtensions({ shutdownHandler: () => {} });
+
+		let switchModelTool = false;
+		harness.setResponses([
+			(context) => {
+				switchModelTool = context.tools?.some((tool) => tool.name === "switch_model") ?? false;
+				return fauxAssistantMessage("ok");
+			},
+		]);
+		await harness.session.prompt("hello");
+
+		expect(notifications.join("\n")).toContain("unreadable");
+		expect(switchModelTool).toBe(false);
 	});
 });
