@@ -11,8 +11,8 @@
  * Configuration lives in handoff.json (extensions cannot read pi settings):
  * `{ "tiers": { "fast": { "provider": "...", "modelId": "...", "description":
  * "..." } } }`, machine config dir by default. Inert without a file; fewer than
- * two registry-resolvable tiers is also inert, with a warning. Refusal guards
- * landed with #108; returnAfterRun lands with #109.
+ * two registry-resolvable tiers is also inert, with a warning. The refusal
+ * guards landed with #108; returnAfterRun with #109.
  */
 
 import { existsSync, readFileSync } from "node:fs";
@@ -80,18 +80,63 @@ export default function modelHandoff(pi: ExtensionAPI): void {
 	// on one runner, which would pile up duplicate subscriptions).
 	const batonHolders = new Set<string>();
 	let awaitingNewRun = true;
+	// #109: one pending-return slot; a handoff with returnAfterRun records its
+	// caller, the next handoff replaces or cancels it, and the settle-time
+	// return consumes it. Memory only: a crash drops it and resume restores
+	// the delegatee through the recorded model change.
+	let pendingReturn: { provider: string; modelId: string } | undefined;
+	// model_select fires inside pi.setModel's await; the model this extension is
+	// currently switching to distinguishes its switches from the user's manual
+	// ones (keybindings, /model). A user switch to that same model is
+	// indistinguishable, but also inconsequential.
+	let inFlightTargetKey: string | undefined;
 
 	// The bounce guard covers one settled run: agent_start also fires for
 	// retry, compaction, and queued-message continuations inside a run, so the
 	// reset happens only at the first agent_start after an agent_settled.
-	pi.on("agent_settled", () => {
+	pi.on("agent_settled", async (_event, ctx) => {
 		awaitingNewRun = true;
+		const pending = pendingReturn;
+		pendingReturn = undefined;
+		if (!pending) return;
+		const current = ctx.model;
+		if (current && current.provider === pending.provider && current.id === pending.modelId) return;
+		const requester = ctx.modelRegistry.find(pending.provider, pending.modelId);
+		if (!requester) {
+			ctx.ui.notify(
+				`model-handoff: cannot return to ${pending.provider}/${pending.modelId}: not in the model registry`,
+				"warning",
+			);
+			return;
+		}
+		// The return is extension-initiated, not a tool call, so it bypasses the
+		// bounce guard: the requester held the baton earlier in the finished run.
+		inFlightTargetKey = `${pending.provider}/${pending.modelId}`;
+		try {
+			if (!(await pi.setModel(requester))) {
+				ctx.ui.notify(
+					`model-handoff: cannot return to ${pending.provider}/${pending.modelId}: no credentials`,
+					"warning",
+				);
+			}
+		} catch (error) {
+			ctx.ui.notify(
+				`model-handoff: return to ${pending.provider}/${pending.modelId} failed: ${String(error)}`,
+				"warning",
+			);
+		} finally {
+			inFlightTargetKey = undefined;
+		}
 	});
 	pi.on("agent_start", () => {
 		if (awaitingNewRun) {
 			batonHolders.clear();
 			awaitingNewRun = false;
 		}
+	});
+	// A manual switch by the user wins over the delegation promise.
+	pi.on("model_select", (event) => {
+		if (`${event.model.provider}/${event.model.id}` !== inFlightTargetKey) pendingReturn = undefined;
 	});
 
 	// session_start is the only handler with the context (cwd, trust, registry)
@@ -123,7 +168,7 @@ export default function modelHandoff(pi: ExtensionAPI): void {
 			name: "switch_model",
 			label: "Switch model",
 			description:
-				"Hand the whole conversation to another configured model tier. The incoming model sees the full history, your reason, and your brief, and continues the task from the next turn.\n" +
+				"Hand the whole conversation to another configured model tier. The incoming model sees the full history, your reason, and your brief, and continues the task from the next turn. Set returnAfterRun to take control back when the run finishes (plan, delegate, review).\n" +
 				`Tiers:\n${tierList}`,
 			promptSnippet: "Hand the whole conversation to another configured model tier.",
 			promptGuidelines: [
@@ -139,6 +184,11 @@ export default function modelHandoff(pi: ExtensionAPI): void {
 				reason: Type.String({ description: "Short justification, shown to the user and the incoming model" }),
 				brief: Type.Optional(
 					Type.String({ description: "Instructions for the incoming model; carry the plan when handing down" }),
+				),
+				returnAfterRun: Type.Optional(
+					Type.Boolean({
+						description: "Hand control back to this model when the current run finishes (plan, delegate, review)",
+					}),
 				),
 			}),
 			// Sequential: two switch_model calls in one assistant message would
@@ -165,6 +215,7 @@ export default function modelHandoff(pi: ExtensionAPI): void {
 						`switch_model: ${targetKey} held the baton earlier in this run; do the work or surface the problem to the user instead of bouncing back.`,
 					);
 				}
+				inFlightTargetKey = targetKey;
 				try {
 					if (!(await pi.setModel(target))) {
 						return textResult(
@@ -175,8 +226,11 @@ export default function modelHandoff(pi: ExtensionAPI): void {
 					return textResult(
 						`switch_model: switching to ${targetKey} failed (${String(error)}). Continue on the current model.`,
 					);
+				} finally {
+					inFlightTargetKey = undefined;
 				}
 				if (fromKey) batonHolders.add(fromKey);
+				pendingReturn = params.returnAfterRun && from ? { provider: from.provider, modelId: from.id } : undefined;
 				const lines = [
 					`Handed off from ${fromKey ?? "unknown"} to ${tier.name} (${targetKey}).`,
 					`Reason: ${params.reason}`,
