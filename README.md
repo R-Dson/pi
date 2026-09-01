@@ -66,7 +66,7 @@ The full design and slicing live in [docs/fork/cache-preserving-context-plan.md]
     }
   }
   ```
-  Refusals change nothing: an already-active tier, bouncing back to an earlier baton holder in the same run, a provider without credentials, or a tier gone from the registry each stay put with an explanation. Fewer than two resolvable tiers (or no file at all) leaves the built-in absent, and manual switching stays canonical over any delegation. The transcript row shows the tier, its model, and the reason. A permission-policies rule on `switch_model` gates it like any other tool.
+  Refusals change nothing: an already-active tier, bouncing back to an earlier baton holder in the same run, a provider without credentials, or a tier gone from the registry each stay put with an explanation. Fewer than two resolvable tiers (or no file at all) leaves `switch_model` unregistered, and manual switching stays canonical over any delegation; a crash drops a pending return, and resuming the session restores the model that held the baton last. The transcript row shows the tier, its model, and the reason. A permission-policies rule on `switch_model` gates it like any other tool.
 
 Each feature sits in core only as far as pi's extension API allows; the ledger records why, and what it would take to move each one out.
 
