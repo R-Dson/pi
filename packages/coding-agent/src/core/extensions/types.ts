@@ -806,7 +806,7 @@ export interface MessageUpdateEvent {
 	assistantMessageEvent: AssistantMessageEvent;
 }
 
-/** Fired when a message ends */
+/** Fired when a message ends (user, assistant, or toolResult) */
 export interface MessageEndEvent {
 	type: "message_end";
 	message: AgentMessage;
