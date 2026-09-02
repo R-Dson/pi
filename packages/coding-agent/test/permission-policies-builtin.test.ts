@@ -22,7 +22,7 @@ import { builtInExtensions } from "../src/extensions/index.ts";
 import permissionPolicies, {
 	policyFileExists,
 	resolvePermissionConfig,
-} from "../src/extensions/permission-policies.ts";
+} from "../src/extensions/permission-policies/index.ts";
 
 type Handler = (event: never, ctx: never) => unknown;
 

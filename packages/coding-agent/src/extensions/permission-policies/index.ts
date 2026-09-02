@@ -57,7 +57,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { ExtensionAPI, ExtensionContext, ToolCallEvent, ToolInfo } from "../core/extensions/types.ts";
+import type { ExtensionAPI, ExtensionContext, ToolCallEvent, ToolInfo } from "../../core/extensions/types.ts";
 import {
 	evaluatePermissionLayered,
 	type PermissionDecision,
@@ -65,7 +65,7 @@ import {
 	resolveProfileConfig,
 	type ToolCapability,
 	type ToolProfile,
-} from "../core/tools/permissions.ts";
+} from "../../core/tools/permissions.ts";
 
 interface PermissionFile {
 	profile?: ToolProfile;
