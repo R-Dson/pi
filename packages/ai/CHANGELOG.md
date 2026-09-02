@@ -8,7 +8,11 @@
 
 ### Changed
 
-- Changed `getSupportedThinkingLevels` to offer `xhigh` for reasoning models that ship no `thinkingLevelMap` (their level vocabulary is uncurated): OpenAI-style adapters send the unmapped level raw, so a provider that does not support it rejects the request with an actionable error; the Anthropic and Bedrock adapters map it to effort `high`, the Google adapter rejects it client-side (`Unsupported Google thinking level mapping`), and zai models without `supportsReasoningEffort` send no effort at all. Models with a map — including maps that omit the `xhigh` key — are unchanged, and `max` stays opt-in ([earendil-works/pi#4344](https://github.com/earendil-works/pi/issues/4344)).
+- Changed `getSupportedThinkingLevels` to offer `xhigh` for reasoning models that ship no `thinkingLevelMap` (their level vocabulary is uncurated): OpenAI-style adapters send the unmapped level raw, so a provider that does not support it rejects the request with an actionable error; the Anthropic, Bedrock, and Google adapters map it to effort `high` (see the `Fixed` entry below for how Google got there), and zai models without `supportsReasoningEffort` send no effort at all. Models with a map — including maps that omit the `xhigh` key — are unchanged, and `max` stays opt-in ([earendil-works/pi#4344](https://github.com/earendil-works/pi/issues/4344)).
+
+### Fixed
+
+- Fixed unmapped `xhigh`/`max` on Google models failing every request client-side: the Google resolver cannot send an unmapped level, so a persisted `xhigh` default crossing onto a mapless Google model (the catalog's Gemini 2.5-era entries) hit `Unsupported Google thinking level mapping` on every request. Unmapped `xhigh`/`max` now degrade to `high`, matching the Anthropic, Bedrock, and Mistral adapters; the footer still displays the requested level, so the degradation is a wire-only divergence like zai's label-only `xhigh`. Explicit garbage or `null` mappings still throw, and mapped values stay authoritative ([#124](https://github.com/R-Dson/pi/issues/124)).
 
 ## [0.84.4] - 2026-08-28
 

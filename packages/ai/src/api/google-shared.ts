@@ -44,11 +44,11 @@ export function resolveGoogleThinkingLevel<T extends GoogleApiType>(
 		case "high":
 			return resolvedLevel;
 		default:
-			// Unmapped xhigh/max degrade to high, as the Anthropic and Bedrock
-			// adapters already do (#124): both levels are selectable on mapless
-			// models, and throwing meant a persisted default crossing onto a
-			// Google model failed every request client-side. A map that maps
-			// the level to garbage still errors.
+			// Unmapped xhigh/max degrade to high, as the Anthropic, Bedrock, and
+			// Mistral adapters already do (#124): xhigh is selectable on mapless
+			// models and max clamps down to xhigh there, and throwing meant a
+			// persisted default crossing onto a Google model failed every request
+			// client-side. An explicit garbage or null mapping still errors.
 			if (mapped === undefined && (level === "xhigh" || level === "max")) return "high";
 			throw new Error(
 				`Unsupported Google thinking level mapping for ${model.provider}/${model.id}: ${level} -> ${String(mapped)}`,

@@ -32,7 +32,7 @@ function googleModel(id: string, thinkingLevelMap?: ThinkingLevelMap): Model<"go
 	};
 }
 
-function vertexModel(id: string, thinkingLevelMap: ThinkingLevelMap): Model<"google-vertex"> {
+function vertexModel(id: string, thinkingLevelMap?: ThinkingLevelMap): Model<"google-vertex"> {
 	return {
 		id,
 		name: id,
@@ -128,15 +128,26 @@ describe("Google thinking level maps", () => {
 		);
 	});
 
-	it("degrades unmapped xhigh and max to high instead of throwing (#124)", () => {
-		// A mapless model (the catalog's Gemini 2.5-era entries) and a map that
-		// omits the key: xhigh is selectable on both since #104, and the
-		// guaranteed client-side error made every request fail when a persisted
-		// default crossed onto a Google model. Anthropic and Bedrock already
-		// fall back to high for unmapped levels.
+	// #124: unmapped xhigh/max degrade to high instead of throwing. The mapless
+	// case is the reachable one (xhigh is selectable on mapless models since
+	// #104, and max clamps down to xhigh there); the key-omitting map is
+	// defensive, since the clamp redirects before the resolver in that case.
+	// Anthropic, Bedrock, and Mistral already fall back to high.
+	it("degrades unmapped xhigh and max to high instead of throwing", () => {
 		expect(resolveGoogleThinkingLevel(googleModel("gemini-2.5-flash"), "xhigh")).toBe("high");
 		expect(resolveGoogleThinkingLevel(googleModel("gemini-2.5-flash"), "max")).toBe("high");
 		expect(resolveGoogleThinkingLevel(googleModel("gemini-2.5-flash", { low: "low" }), "xhigh")).toBe("high");
+	});
+
+	// #124: the degraded level reaches the wire, not just the resolver return.
+	it("sends the degraded thinking budget for a mapless Google model", async () => {
+		const payload = await captureGooglePayload(googleModel("gemini-2.5-flash"), "xhigh");
+		expect(payload).toMatchObject({ config: { thinkingConfig: { includeThoughts: true, thinkingBudget: 24576 } } });
+	});
+
+	it("sends the degraded thinking budget for a mapless Vertex model", async () => {
+		const payload = await captureVertexPayload(vertexModel("gemini-2.5-flash"), "xhigh");
+		expect(payload).toMatchObject({ config: { thinkingConfig: { includeThoughts: true, thinkingBudget: 24576 } } });
 	});
 
 	it.each(["xhigh", "max"] as const)("maps Google Generative AI %s to a supported level", async (reasoning) => {
