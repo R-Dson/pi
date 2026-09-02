@@ -143,6 +143,13 @@ export class AssistantMessageComponent extends Container {
 	private thinkingRunCount = 0;
 	/** Set when this message continues after a tool call: its opening thinking run renders headerless. */
 	private readonly continuesAfterToolCall: boolean;
+	/**
+	 * Provider/model key of the previous assistant message, when the caller
+	 * tracks one: a differing model renders a muted model-id line above the
+	 * content, so mixed-model (handoff) sessions show who said what. Undefined
+	 * renders no marker — the single-model common case stays byte-identical.
+	 */
+	private readonly previousModel: string | undefined;
 
 	constructor(
 		message?: AssistantMessage,
@@ -153,6 +160,8 @@ export class AssistantMessageComponent extends Container {
 		markdownTransformers: readonly MarkdownTransformer[] = [],
 		/** This message continues an assistant turn whose previous message ended at a tool call. */
 		continuesAfterToolCall = false,
+		/** Provider/model of the previous assistant message; omit to never mark. */
+		previousModel?: string,
 	) {
 		super();
 
@@ -162,6 +171,7 @@ export class AssistantMessageComponent extends Container {
 		this.outputPad = outputPad;
 		this.markdownTransformers = markdownTransformers;
 		this.continuesAfterToolCall = continuesAfterToolCall;
+		this.previousModel = previousModel;
 
 		// Container for text/thinking content
 		this.contentContainer = new Container();
@@ -315,6 +325,13 @@ export class AssistantMessageComponent extends Container {
 
 		if (hasVisibleContent) {
 			this.contentContainer.addChild(new Spacer(1));
+		}
+
+		// Model attribution for mixed-model sessions (#135): a muted id line
+		// when this message's model differs from the previous assistant's.
+		const modelKey = `${message.provider}/${message.model}`;
+		if (this.previousModel !== undefined && this.previousModel !== modelKey) {
+			this.contentContainer.addChild(new Text(theme.fg("muted", message.model), this.outputPad, 0));
 		}
 
 		// Render content in order
