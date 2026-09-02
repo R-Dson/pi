@@ -46,8 +46,9 @@ describe("getSupportedThinkingLevels", () => {
 	});
 
 	// Fork (earendil-works/pi#4344): Sonnet 4.5 ships no thinkingLevelMap, so its
-	// level vocabulary is uncurated and xhigh is offered; the Anthropic adapter maps
-	// it to effort "high" on the wire. max stays opt-in.
+	// level vocabulary is uncurated and xhigh is offered; the Anthropic adapter
+	// takes the budget path for it (same budget as high when no
+	// adaptive-thinking compat flag is set). max stays opt-in.
 	it("includes xhigh but not max for the uncurated Claude Sonnet 4.5", () => {
 		const model = getModel("anthropic", "claude-sonnet-4-5");
 		expect(model).toBeDefined();

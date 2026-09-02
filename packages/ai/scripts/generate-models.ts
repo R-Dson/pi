@@ -868,6 +868,16 @@ function applyThinkingLevelMetadata(model: Model<any>): void {
 	) {
 		mergeThinkingLevelMap(model, { off: null });
 	}
+	// The Azure mirror of the o-series and the realtime model is generated
+	// without models.dev reasoning options, leaving it mapless; their effort
+	// vocabulary is known to stop at high. Pin xhigh off so the mapless-unknown
+	// offer rule does not advertise a level the API rejects with a 400.
+	if (
+		model.api === "azure-openai-responses" &&
+		(model.id.startsWith("o1") || model.id.startsWith("o3") || model.id.startsWith("o4") || model.id === "gpt-realtime-2.1")
+	) {
+		mergeThinkingLevelMap(model, { xhigh: null });
+	}
 	if (model.provider === "github-copilot" && model.id.startsWith("gpt-5")) {
 		mergeThinkingLevelMap(model, { minimal: "low" });
 	}
