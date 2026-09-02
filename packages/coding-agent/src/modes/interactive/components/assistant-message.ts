@@ -325,13 +325,14 @@ export class AssistantMessageComponent extends Container {
 
 		if (hasVisibleContent) {
 			this.contentContainer.addChild(new Spacer(1));
-		}
 
-		// Model attribution for mixed-model sessions (#135): a muted id line
-		// when this message's model differs from the previous assistant's.
-		const modelKey = `${message.provider}/${message.model}`;
-		if (this.previousModel !== undefined && this.previousModel !== modelKey) {
-			this.contentContainer.addChild(new Text(theme.fg("muted", message.model), this.outputPad, 0));
+			// Model attribution for mixed-model sessions (#135): a muted id line
+			// when this message's model differs from the previous assistant's.
+			// Gated on visible content so an empty stub never renders a lone marker.
+			const modelKey = `${message.provider}/${message.model}`;
+			if (this.previousModel !== undefined && this.previousModel !== modelKey) {
+				this.contentContainer.addChild(new Text(theme.fg("muted", message.model), this.outputPad, 0));
+			}
 		}
 
 		// Render content in order
