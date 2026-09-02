@@ -23,7 +23,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
-import type { ExtensionAPI, ExtensionContext } from "../core/extensions/types.ts";
+import type { ExtensionAPI, ExtensionContext } from "../../core/extensions/types.ts";
 
 /** Raw tier entry from handoff.json. */
 interface TierConfig {

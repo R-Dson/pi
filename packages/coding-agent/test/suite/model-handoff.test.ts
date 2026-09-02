@@ -4,7 +4,7 @@ import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { fauxAssistantMessage, fauxToolCall, registerFauxProvider } from "@earendil-works/pi-ai/compat";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ExtensionAPI, ExtensionUIContext } from "../../src/core/extensions/types.ts";
-import modelHandoff, { handoffCallSummary } from "../../src/extensions/model-handoff.ts";
+import modelHandoff, { handoffCallSummary } from "../../src/extensions/model-handoff/index.ts";
 import { createHarness, getAssistantTexts, getMessageText, type Harness, type HarnessOptions } from "./harness.ts";
 
 // #107: machine-wide model handoff. The config is pointed at a temp file via
