@@ -10,7 +10,10 @@ const OSC133_ZONE_START = "\x1b]133;A\x07";
 const OSC133_ZONE_END = "\x1b]133;B\x07";
 const OSC133_ZONE_FINAL = "\x1b]133;C\x07";
 
-/** Lines of thinking tail shown under the preview header. */
+/**
+ * Lines of thinking tail shown under the preview header; also the height the
+ * live block reserves, so streaming never reflows what sits below it.
+ */
 const THINKING_PREVIEW_LINES = 6;
 
 /**
@@ -172,7 +175,11 @@ export class AssistantMessageComponent extends Container {
 	/**
 	 * Append the width-lazy tail block for a thinking run's text: the last
 	 * THINKING_PREVIEW_LINES visual lines; folded-away content above is
-	 * implied by the fade, no marker line. Fade path: when the terminal
+	 * implied by the fade, no marker line. While the run is live the block
+	 * reserves the full height — content top-aligned, blank rows below — so
+	 * the block never grows mid-stream and nothing below it moves; once the
+	 * run has ended it renders at its natural height, so short finished runs
+	 * carry no blank rows. Fade path: when the terminal
 	 * answered the OSC 11 background
 	 * query and the theme's gray is a hex value, the visible tail gets per-word
 	 * colors interpolated between the background and the gray — the oldest
@@ -180,7 +187,7 @@ export class AssistantMessageComponent extends Container {
 	 * word, so words darken continuously as newer text arrives. Without an
 	 * endpoint the block stays uniformly gray, styled before wrapping.
 	 */
-	private addThinkingTailBlock(rawText: string): void {
+	private addThinkingTailBlock(rawText: string, fixedHeight: boolean): void {
 		const previewText = rawText.replace(/\r\n|\r/g, "\n").replace(/\n+$/, "");
 		const fadeGray = thinkingGrayRgb();
 		const useFade = previewFadeBackground !== undefined && fadeGray !== undefined;
@@ -199,6 +206,11 @@ export class AssistantMessageComponent extends Container {
 					let bodyLines = result.visualLines;
 					if (useFade && fadeGray && previewFadeBackground) {
 						bodyLines = fadeTailLines(bodyLines, fadeGray, previewFadeBackground);
+					}
+					if (fixedHeight && bodyLines.length < THINKING_PREVIEW_LINES) {
+						bodyLines = bodyLines.concat(
+							Array.from({ length: THINKING_PREVIEW_LINES - bodyLines.length }, () => ""),
+						);
 					}
 					cachedLines = bodyLines;
 					cachedWidth = width;
@@ -381,7 +393,7 @@ export class AssistantMessageComponent extends Container {
 							new Text(`${theme.italic(theme.fg("thinkingText", header))} ${expandHint}`, this.outputPad, 0),
 						);
 					}
-					this.addThinkingTailBlock(thinkingBlocks.join("\n\n"));
+					this.addThinkingTailBlock(thinkingBlocks.join("\n\n"), this.isStreaming && !runEnded);
 				} else {
 					// Render each run of thinking blocks as one Markdown section.
 					this.contentContainer.addChild(
