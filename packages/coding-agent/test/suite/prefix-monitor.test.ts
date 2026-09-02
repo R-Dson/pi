@@ -200,10 +200,11 @@ describe("runtime prefix-stability monitor (issue #41)", () => {
 					};
 					register("one");
 					// Re-register between runs, like a config reload. A
-					// message_end-timed re-registration was tried first and its
-					// announce did not survive to the next request (observed
-					// empirically); attribution is pinned for the between-runs
-					// timing real re-registrations use.
+					// message_end-timed re-registration lands at the user-message
+					// boundary — before any request of the run — arming ahead of
+					// the trivially stable first request, which clears the latch
+					// per design (#127); attribution is pinned for the
+					// between-runs timing real re-registrations use.
 					pi.on("agent_settled", () => {
 						register("two");
 					});
