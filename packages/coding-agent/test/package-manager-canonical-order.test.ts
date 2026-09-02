@@ -120,4 +120,29 @@ describe("DefaultPackageManager canonical ordering under nondeterministic readdi
 		expect(reversed.extensions.map((r) => r.path)).toEqual(forward.extensions.map((r) => r.path));
 		expect(reversed.skills.map((r) => r.path)).toEqual(forward.skills.map((r) => r.path));
 	});
+
+	it("should sort discovery groups by path but keep manifest-declared order inside a package", async () => {
+		writeFixtures();
+		const pkgDir = join(agentDir, "extensions", "zeta-pkg");
+		mkdirSync(pkgDir, { recursive: true });
+		writeFileSync(
+			join(pkgDir, "package.json"),
+			JSON.stringify({ name: "zeta-pkg", pi: { extensions: ["./second.ts", "./first.ts"] } }),
+		);
+		writeFileSync(join(pkgDir, "second.ts"), "export default function() {}");
+		writeFileSync(join(pkgDir, "first.ts"), "export default function() {}");
+		readdirSimulation.reverse = true;
+
+		const result = await createPackageManager().resolve();
+
+		// Loose files sort by their own path; the package is one group at its
+		// directory path, its entries in manifest order regardless of sorting.
+		expect(result.extensions.map((r) => r.path)).toEqual([
+			join(agentDir, "extensions", "alpha.ts"),
+			join(agentDir, "extensions", "mid.ts"),
+			join(agentDir, "extensions", "zeta-pkg", "second.ts"),
+			join(agentDir, "extensions", "zeta-pkg", "first.ts"),
+			join(agentDir, "extensions", "zeta.ts"),
+		]);
+	});
 });
