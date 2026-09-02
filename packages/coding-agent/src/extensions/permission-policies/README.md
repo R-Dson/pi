@@ -32,8 +32,9 @@ un-deny a profile preset, so put allow-overrides in the project file.
 ## How it works
 
 At `session_start` the extension re-reads both files and re-applies
-visibility: tools whose rules say `hide: true` (or that a `deny` rule hides)
-leave the active tool list, so the model never sees them. Visibility changes
+visibility: a `deny` rule carrying `hide: true` removes the tool from the
+active list, so the model never sees it (a plain `deny` blocks the call but
+keeps the tool visible). Visibility changes
 land at the next `session_start` or `/reload`. At `tool_call` time every call
 is evaluated against the rules regardless of visibility; `deny` blocks with a
 reason naming the deciding file, and `ask` opens an interactive approval

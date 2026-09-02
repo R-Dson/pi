@@ -20,9 +20,10 @@ load before discovered extensions: their event handlers (for example
 rewrite what they allowed. `hidden: true` keeps the entry out of the startup
 Extensions list, which is right for built-ins that are inert unless configured.
 
-The array literal in `index.ts` is the only upstream-owned file this directory
-touches; everything else is fork-owned. Upstream merges conflict at most on the
-array, and an entry re-adds mechanically. See the fork ledger's placement
+`index.ts` is the only upstream-owned file this directory touches (the change
+within it is just the `builtInExtensions` array and its imports); everything
+else is fork-owned. Upstream merges conflict at most on that file, and an
+entry re-adds mechanically. See the fork ledger's placement
 ladder row (`docs/fork/upstream-integration.md`) for when a feature belongs
 here versus an example extension or core.
 
