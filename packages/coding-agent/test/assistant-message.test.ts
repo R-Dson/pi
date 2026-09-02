@@ -7,7 +7,7 @@ import {
 	setThinkingPreviewFadeBackground,
 } from "../src/modes/interactive/components/assistant-message.ts";
 import { UserMessageComponent } from "../src/modes/interactive/components/user-message.ts";
-import { initTheme } from "../src/modes/interactive/theme/theme.ts";
+import { getMarkdownTheme, initTheme } from "../src/modes/interactive/theme/theme.ts";
 import { stripAnsi } from "../src/utils/ansi.ts";
 
 const OSC133_ZONE_START = "\x1b]133;A\x07";
@@ -853,6 +853,56 @@ describe("AssistantMessageComponent", () => {
 			} finally {
 				vi.useRealTimers();
 			}
+		});
+	});
+
+	describe("model marker (#135)", () => {
+		test("shows the model id when the model differs from the previous assistant message", () => {
+			initTheme("dark");
+
+			const component = new AssistantMessageComponent(
+				undefined,
+				false,
+				getMarkdownTheme(),
+				"Thinking...",
+				1,
+				[],
+				false,
+				"google/gemini-2.5-pro",
+			);
+			component.updateContent(createAssistantMessage([{ type: "text", text: "hello" }]));
+
+			const lines = component.render(100).map(stripAnsi);
+			expect(lines.some((line) => line.trim() === "gpt-4o-mini")).toBe(true);
+		});
+
+		test("renders no marker when the model is unchanged", () => {
+			initTheme("dark");
+
+			const component = new AssistantMessageComponent(
+				undefined,
+				false,
+				getMarkdownTheme(),
+				"Thinking...",
+				1,
+				[],
+				false,
+				"openai/gpt-4o-mini",
+			);
+			component.updateContent(createAssistantMessage([{ type: "text", text: "hello" }]));
+
+			const lines = component.render(100).map(stripAnsi);
+			expect(lines.some((line) => line.trim() === "gpt-4o-mini")).toBe(false);
+		});
+
+		test("renders no marker without a previous model (first message, existing call sites)", () => {
+			initTheme("dark");
+
+			const component = new AssistantMessageComponent(undefined, false);
+			component.updateContent(createAssistantMessage([{ type: "text", text: "hello" }]));
+
+			const lines = component.render(100).map(stripAnsi);
+			expect(lines.some((line) => line.trim() === "gpt-4o-mini")).toBe(false);
 		});
 	});
 });

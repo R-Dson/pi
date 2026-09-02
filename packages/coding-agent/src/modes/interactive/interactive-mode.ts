@@ -474,6 +474,8 @@ export class InteractiveMode {
 	private streamingComponent: AssistantMessageComponent | undefined = undefined;
 	/** Set when the previous assistant message ended at a tool call: the next one renders its opening thinking headerless. */
 	private nextAssistantContinuesAfterToolCall = false;
+	/** Provider/model of the previous assistant message; a differing next model renders the attribution marker (#135). */
+	private lastAssistantModel: string | undefined = undefined;
 	private streamingMessage: AssistantMessage | undefined = undefined;
 
 	// Tool execution tracking: toolCallId -> component
@@ -3204,6 +3206,7 @@ export class InteractiveMode {
 						this.outputPad,
 						this.getMarkdownTransformers(),
 						this.nextAssistantContinuesAfterToolCall,
+						this.lastAssistantModel,
 					);
 					this.nextAssistantContinuesAfterToolCall = false;
 					this.streamingMessage = event.message;
@@ -3253,6 +3256,7 @@ export class InteractiveMode {
 				if (this.streamingComponent && event.message.role === "assistant") {
 					this.streamingMessage = event.message;
 					this.nextAssistantContinuesAfterToolCall = this.streamingMessage.stopReason === "toolUse";
+					this.lastAssistantModel = `${this.streamingMessage.provider}/${this.streamingMessage.model}`;
 					let errorMessage: string | undefined;
 					if (this.streamingMessage.stopReason === "aborted") {
 						const retryAttempt = this.session.retryAttempt;
@@ -3643,9 +3647,11 @@ export class InteractiveMode {
 					this.outputPad,
 					this.getMarkdownTransformers(),
 					this.nextAssistantContinuesAfterToolCall,
+					this.lastAssistantModel,
 				);
 				this.chatContainer.addChild(assistantComponent);
 				this.nextAssistantContinuesAfterToolCall = message.stopReason === "toolUse";
+				this.lastAssistantModel = `${message.provider}/${message.model}`;
 				break;
 			}
 			case "toolResult": {
@@ -3675,8 +3681,10 @@ export class InteractiveMode {
 			this.updateEditorBorderColor();
 		}
 
-		// Rebuilds start fresh: no message before the first one continued a tool call.
+		// Rebuilds start fresh: no message before the first one continued a tool call,
+		// and the first assistant message has no previous model to differ from.
 		this.nextAssistantContinuesAfterToolCall = false;
+		this.lastAssistantModel = undefined;
 		for (const item of items) {
 			if (isCustomSessionEntry(item)) {
 				this.addCustomEntryToChat(item);
