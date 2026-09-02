@@ -786,5 +786,73 @@ describe("AssistantMessageComponent", () => {
 			expect(rendered).toContain("start and then continued reasoning");
 			expect(rendered.match(/Thinking\.\.\./g)).toHaveLength(1);
 		});
+
+		test("the live preview reserves its full height from the first line", () => {
+			initTheme("dark");
+
+			const component = new AssistantMessageComponent(undefined, true);
+			component.updateContent(createAssistantMessage([{ type: "thinking", thinking: "first line" }]), true);
+			let lines = component.render(100).map(stripAnsi);
+			let headerIndex = lines.findIndex((line) => line.includes("Thinking..."));
+			// The block is a fixed THINKING_PREVIEW_LINES rows: content top-aligned,
+			// blank rows below — the block never grows as tokens arrive.
+			expect(lines.slice(headerIndex + 1)).toHaveLength(6);
+			expect(lines[headerIndex + 1]).toContain("first line");
+			expect(lines.slice(headerIndex + 2).every((line) => line.trim() === "")).toBe(true);
+			const height = lines.length;
+
+			component.updateContent(
+				createAssistantMessage([{ type: "thinking", thinking: "first line\nsecond line\nthird line" }]),
+				true,
+			);
+			lines = component.render(100).map(stripAnsi);
+			headerIndex = lines.findIndex((line) => line.includes("Thinking..."));
+			// New lines fill the reserved rows; the total height never changed, so
+			// nothing below the block reflowed while the run streamed.
+			expect(lines).toHaveLength(height);
+			expect(lines.slice(headerIndex + 1)).toHaveLength(6);
+			expect(lines[headerIndex + 1]).toContain("first line");
+			expect(lines[headerIndex + 2]).toContain("second line");
+			expect(lines[headerIndex + 3]).toContain("third line");
+			expect(lines.slice(headerIndex + 4).every((line) => line.trim() === "")).toBe(true);
+		});
+
+		test("the block shrinks to its natural height once the run ends", () => {
+			initTheme("dark");
+			vi.useFakeTimers();
+			vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+			try {
+				const component = new AssistantMessageComponent(undefined, true);
+				component.updateContent(
+					createAssistantMessage([{ type: "thinking", thinking: "short run line one\nshort run line two" }]),
+					true,
+				);
+				const first = component.render(100).map(stripAnsi);
+				const headerIndex = first.findIndex((line) => line.includes("Thinking..."));
+				// Live: the reserved block pads two content rows up to six.
+				expect(first.slice(headerIndex + 1)).toHaveLength(6);
+
+				vi.advanceTimersByTime(2100);
+				component.updateContent(
+					createAssistantMessage([
+						{ type: "thinking", thinking: "short run line one\nshort run line two" },
+						{ type: "text", text: "the answer" },
+					]),
+					true,
+				);
+				const lines = component.render(100).map(stripAnsi);
+				const markerIndex = lines.findIndex((line) => line.includes("Thought for 2s"));
+				// Ended: natural height — the two content rows, the section spacer,
+				// then the answer; no blank padding survives into the transcript.
+				expect(markerIndex).toBeGreaterThan(-1);
+				expect(lines[markerIndex + 1]).toContain("short run line one");
+				expect(lines[markerIndex + 2]).toContain("short run line two");
+				expect(lines[markerIndex + 3]).toBe("");
+				expect(lines[markerIndex + 4]).toContain("the answer");
+				expect(lines).toHaveLength(markerIndex + 5);
+			} finally {
+				vi.useRealTimers();
+			}
+		});
 	});
 });
