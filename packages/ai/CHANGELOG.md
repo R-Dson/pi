@@ -15,6 +15,7 @@
 
 ### Fixed
 
+- Fixed unmapped `xhigh`/`max` on Google models failing every request client-side: the Google resolver cannot send an unmapped level, so a persisted `xhigh` default crossing onto a mapless Google model (the catalog's Gemini 2.5-era entries) hit `Unsupported Google thinking level mapping` on every request. Unmapped `xhigh`/`max` now degrade to `high`, matching the Anthropic, Bedrock, and Mistral adapters; the footer still displays the requested level, so the degradation is a wire-only divergence like zai's label-only `xhigh`. Explicit garbage or `null` mappings still throw, and mapped values stay authoritative ([#124](https://github.com/R-Dson/pi/issues/124)).
 - Fixed the Qwen Token Plan Individual catalog to include Qwen3.8 Flash ([#9021](https://github.com/earendil-works/pi/issues/9021)).
 - Removed the unnecessary Chord dependency from pi-ai by defining its exported `JsonValue` type directly.
 - Fixed GitHub Copilot Claude Fable 5 requests to use the Anthropic Messages adapter so selected reasoning levels are sent ([#8961](https://github.com/earendil-works/pi/issues/8961)).
