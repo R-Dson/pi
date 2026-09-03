@@ -74,6 +74,8 @@ If rebase conflicts occur:
 
 See `CONTRIBUTING.md` for the contributor gate (auto-close workflows, `lgtm`/`lgtmi`, quality bar).
 
+Upstream (`earendil-works/pi`) is fetch-only: never open issues, PRs, or comments there, and never push to the upstream remote. Fork features stay in this fork; the relationship is one-way sync. If contributing upstream is ever wanted, the maintainer will say so explicitly.
+
 When reviewing PRs:
 
 - Do not run `gh pr checkout`, `git switch`, or otherwise move the worktree to the PR branch unless the user explicitly asks.
