@@ -492,7 +492,8 @@ export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = un
 	 * passes, the agent loop aborts the tool's signal and records a terminal
 	 * timeout error result; the run continues. Intended for extension/MCP tools
 	 * that may never settle (network calls, spawned processes); built-in tools
-	 * bound themselves already.
+	 * bound themselves already. Invalid values (NaN, negative, > 2^31-1) fail
+	 * the call with a terminal tool error rather than throwing in the loop.
 	 */
 	timeoutMs?: number;
 
