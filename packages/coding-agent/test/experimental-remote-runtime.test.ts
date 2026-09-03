@@ -669,7 +669,9 @@ describe("experimental durable server composition", () => {
 		await client.dispose();
 		clients.delete(client);
 		await expect.poll(() => runtime.workerPids.has("demo-1")).toBe(false);
-		expect(processExists(pid!)).toBe(false);
+		// The runtime drops the pid before the OS process finishes exiting; poll
+		// for the exit instead of asserting it synchronously.
+		await expect.poll(() => processExists(pid!)).toBe(false);
 	});
 
 	test("starts one process per attached session and stops them during shutdown", async () => {

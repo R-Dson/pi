@@ -8,6 +8,7 @@ import type { TUI } from "@earendil-works/pi-tui";
 import { setKeybindings } from "@earendil-works/pi-tui";
 import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
 import { KeybindingsManager } from "../src/core/keybindings.ts";
+import { createAllToolDefinitions, type ToolName } from "../src/core/tools/index.ts";
 import { ToolExecutionComponent } from "../src/modes/interactive/components/tool-execution.ts";
 import { initTheme } from "../src/modes/interactive/theme/theme.ts";
 import { stripAnsi } from "../src/utils/ansi.ts";
@@ -16,8 +17,10 @@ function createFakeTui(): TUI {
 	return { requestRender: () => {} } as unknown as TUI;
 }
 
-function createComponent(toolName: string, args: Record<string, unknown> = {}): ToolExecutionComponent {
-	return new ToolExecutionComponent(toolName, "call_1", args, {}, undefined, createFakeTui(), "/repo");
+const toolDefinitions = createAllToolDefinitions("/repo");
+
+function createComponent(toolName: ToolName, args: Record<string, unknown> = {}): ToolExecutionComponent {
+	return new ToolExecutionComponent(toolName, "call_1", args, {}, toolDefinitions[toolName], createFakeTui(), "/repo");
 }
 
 function renderText(component: ToolExecutionComponent, width = 100): string {

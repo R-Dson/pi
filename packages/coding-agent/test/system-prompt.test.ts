@@ -581,7 +581,7 @@ Current working directory: /workspace/project
 `);
 	});
 
-	test("customPrompt without the read tool omits the skills section and the docs section", () => {
+	test("customPrompt without the read tool keeps the skills section via bash and omits the docs section", () => {
 		const prompt = normalizeDocPaths(
 			buildSystemPrompt({
 				cwd: GOLDEN_CWD,
@@ -600,6 +600,18 @@ Current working directory: /workspace/project
 		);
 
 		expect(prompt).toBe(`You are a deployment checker.
+
+The following skills provide specialized instructions for specific tasks.
+Use bash to load a skill's file when the task matches its description.
+When a skill file references a relative path, resolve it against the skill directory (parent of SKILL.md / dirname of the path) and use that absolute path in tool commands.
+
+<available_skills>
+  <skill>
+    <name>review</name>
+    <description>Review diffs before merge</description>
+    <location>/workspace/project/.pi/skills/review/SKILL.md</location>
+  </skill>
+</available_skills>
 Current working directory: /workspace/project
 `);
 	});

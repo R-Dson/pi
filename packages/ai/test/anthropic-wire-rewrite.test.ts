@@ -43,6 +43,7 @@ vi.mock("@anthropic-ai/sdk", () => {
 				};
 			},
 		};
+		beta = { messages: this.messages };
 	}
 
 	return { default: FakeAnthropic };
