@@ -164,4 +164,17 @@ describe("getSupportedThinkingLevels", () => {
 		expect(getSupportedThinkingLevels(model!)).toContain("max");
 		expect(getSupportedThinkingLevels(model!)).not.toContain("off");
 	});
+
+	// #139: the Azure o-series mirror generates mapless; the generator pins
+	// xhigh:null so the offer rule cannot advertise a level the API rejects.
+	it("excludes xhigh on the pinned Azure o-series mirrors", () => {
+		const pinnedIds = ["o1", "o1-pro", "o3", "o3-mini", "o3-pro", "o4-mini", "gpt-realtime-2.1"] as const;
+		for (const id of pinnedIds) {
+			const model = getModel("azure-openai-responses", id);
+			expect(model, id).toBeDefined();
+			const levels = getSupportedThinkingLevels(model!);
+			expect(levels, id).not.toContain("xhigh");
+			expect(levels, id).toContain("high");
+		}
+	});
 });

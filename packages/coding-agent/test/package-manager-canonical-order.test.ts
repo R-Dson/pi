@@ -121,6 +121,7 @@ describe("DefaultPackageManager canonical ordering under nondeterministic readdi
 		expect(reversed.skills.map((r) => r.path)).toEqual(forward.skills.map((r) => r.path));
 	});
 
+	// #139
 	it("should sort discovery groups by path but keep manifest-declared order inside a package", async () => {
 		writeFixtures();
 		const pkgDir = join(agentDir, "extensions", "zeta-pkg");

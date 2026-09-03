@@ -1556,7 +1556,8 @@ describe("agentLoop tool timeouts", () => {
 		expect(toolResult?.role === "toolResult" ? toolResult.isError : false).toBe(true);
 	});
 
-	it("completes a tool that never settles at all, with no abort listener", async () => {
+	// #139
+	it("completes a tool that never settles at all, with no abort listener", { timeout: 5000 }, async () => {
 		// The feature's motivating case: execute returns a promise that never
 		// resolves or rejects, ignoring its signal entirely. The deadline must
 		// unblock the loop on its own.

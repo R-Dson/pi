@@ -614,8 +614,6 @@ function collectAutoExtensionEntries(dir: string): string[] {
 	addIgnoreRules(ig, dir, dir);
 
 	try {
-		// readdir order is filesystem-dependent; iterate and emit in path order so
-		// auto-discovered extensions enumerate identically on every machine.
 		const dirEntries = readdirSync(dir, { withFileTypes: true });
 		for (const entry of dirEntries) {
 			if (entry.name.startsWith(".")) continue;

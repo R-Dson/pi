@@ -731,7 +731,7 @@ async function executePreparedToolCall(
 						emit({
 							type: "tool_execution_update",
 							toolCallId: prepared.toolCall.id,
-							toolName: prepared.tool.name,
+							toolName: prepared.toolCall.name,
 							args: prepared.toolCall.arguments,
 							partialResult,
 						}),
