@@ -35,6 +35,7 @@
 ### Changed
 
 - Changed the live thinking preview to a fixed-height block: while a run streams, the tail block reserves its full height from the first line (content top-aligned, blank rows below), so the preview never grows mid-stream and nothing below it reflows as reasoning arrives; once the run ends the block shrinks to its natural height, so short finished runs carry no blank rows ([#129](https://github.com/R-Dson/pi/pull/129)).
+- Moved the streaming working indicator into the default editor border and matched its default spinner and label to the thinking-level border color. Custom editors retain the standalone indicator unless they opt in to embedding it ([earendil-works/pi#8799](https://github.com/earendil-works/pi/pull/8799)).
 
 ### Fixed
 
