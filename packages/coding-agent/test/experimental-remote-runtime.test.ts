@@ -671,7 +671,7 @@ describe("experimental durable server composition", () => {
 		await expect.poll(() => runtime.workerPids.has("demo-1")).toBe(false);
 		// The runtime drops the pid before the OS process finishes exiting; poll
 		// for the exit instead of asserting it synchronously.
-		await expect.poll(() => processExists(pid!)).toBe(false);
+		await expect.poll(() => processExists(pid!), { timeout: 5_000 }).toBe(false);
 	});
 
 	test("starts one process per attached session and stops them during shutdown", async () => {
@@ -753,7 +753,9 @@ describe("experimental durable server composition", () => {
 		expect(replacement.workerPids.get("demo-1")).toBe(workerPid);
 
 		await expect.poll(() => replacement.workerPids.has("demo-1"), { timeout: 5_000 }).toBe(false);
-		expect(processExists(workerPid!)).toBe(false);
+		// Same teardown race as the idle-worker test: the pid leaves the map
+		// before the OS process finishes exiting.
+		await expect.poll(() => processExists(workerPid!), { timeout: 5_000 }).toBe(false);
 	});
 
 	test("restores tracked sessions that are outside the replacement catalog", async () => {

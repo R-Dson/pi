@@ -47,6 +47,8 @@
 
 - Removed telemetry and tracking (the fork phones home for nothing): the install/version pings, the startup update check, automatic extension-update checks, the remote model-catalog refresh (catalogs restore from the local store only), the analytics opt-in and tracking id, and app-identification headers on provider requests; provider-required headers stay, and update commands run only when typed ([#32](https://github.com/R-Dson/pi/issues/32)).
 
+### Fixed
+
 - Fixed branch summaries failing when reasoning consumes the previous 2048-token output cap ([#8845](https://github.com/earendil-works/pi/issues/8845)).
 - Fixed the write tool reporting UTF-16 code-unit counts as byte counts by removing the misleading count ([#8979](https://github.com/earendil-works/pi/issues/8979)).
 - Fixed proxied plain-HTTP provider requests hanging after a tool call by tunneling them with CONNECT ([#8134](https://github.com/earendil-works/pi/issues/8134)).
