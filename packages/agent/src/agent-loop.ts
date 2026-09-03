@@ -691,6 +691,11 @@ async function executePreparedToolCall(
 	try {
 		// Inside the try: an invalid timeoutMs (NaN, negative, > 2^31-1) must
 		// become a terminal tool error, not an unhandled loop rejection.
+		// setTimeout would silently coerce these to a 1ms deadline, so validate
+		// explicitly — AbortSignal.timeout threw here, and the contract stays.
+		if (timeoutMs !== undefined && (!Number.isFinite(timeoutMs) || timeoutMs < 0 || timeoutMs > 2 ** 31 - 1)) {
+			throw new RangeError("timeoutMs is out of range: must be a finite non-negative number not exceeding 2^31-1");
+		}
 		const deadlineSignal = timeoutMs !== undefined ? new AbortController() : undefined;
 		if (timeoutMs !== undefined && deadlineSignal) {
 			deadlineTimer = setTimeout(() => deadlineSignal.abort(), timeoutMs);
