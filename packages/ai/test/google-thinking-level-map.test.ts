@@ -139,6 +139,14 @@ describe("Google thinking level maps", () => {
 		expect(resolveGoogleThinkingLevel(googleModel("gemini-2.5-flash", { low: "low" }), "xhigh")).toBe("high");
 	});
 
+	it("still throws for an explicit null mapping", () => {
+		// undefined means no opinion (degrade); null means deliberately
+		// unsupported (hide and error if forced).
+		expect(() => resolveGoogleThinkingLevel(googleModel("gemini-2.5-flash", { xhigh: null }), "xhigh")).toThrow(
+			"Unsupported Google thinking level mapping",
+		);
+	});
+
 	// #124: the degraded level reaches the wire, not just the resolver return.
 	it("sends the degraded thinking budget for a mapless Google model", async () => {
 		const payload = await captureGooglePayload(googleModel("gemini-2.5-flash"), "xhigh");

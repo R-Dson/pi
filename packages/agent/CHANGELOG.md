@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed the per-tool `timeoutMs` deadline leaving its timer, signal, and pending deadline promise alive for up to `timeoutMs` after the call returned: the deadline is now an `AbortController` with the timer cleared when the tool settles early ([#139](https://github.com/R-Dson/pi/issues/139)).
+
 ## [0.84.4] - 2026-08-28
 
 ### Breaking Changes

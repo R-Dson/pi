@@ -9,6 +9,7 @@
 ### Changed
 
 - Changed `getSupportedThinkingLevels` to offer `xhigh` for reasoning models that ship no `thinkingLevelMap` (their level vocabulary is uncurated): OpenAI-style adapters send the unmapped level raw, so a provider that does not support it rejects the request with an actionable error; the Anthropic, Bedrock, and Google adapters map it to effort `high` (see the `Fixed` entry below for how Google got there), and zai models without `supportsReasoningEffort` send no effort at all. Models with a map — including maps that omit the `xhigh` key — are unchanged, and `max` stays opt-in ([earendil-works/pi#4344](https://github.com/earendil-works/pi/issues/4344)).
+- Changed the generated Azure catalog to pin `xhigh: null` on the mapless o-series and realtime mirrors (`o1`, `o1-pro`, `o3`, `o3-mini`, `o3-pro`, `o4-mini`, `gpt-realtime-2.1`): the mapless-unknown offer rule advertised `xhigh` their API rejects with a 400 ([#139](https://github.com/R-Dson/pi/issues/139)).
 
 ### Fixed
 

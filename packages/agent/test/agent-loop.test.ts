@@ -1556,6 +1556,71 @@ describe("agentLoop tool timeouts", () => {
 		expect(toolResult?.role === "toolResult" ? toolResult.isError : false).toBe(true);
 	});
 
+	// #139
+	it("completes a tool that never settles at all, with no abort listener", { timeout: 5000 }, async () => {
+		// The feature's motivating case: execute returns a promise that never
+		// resolves or rejects, ignoring its signal entirely. The deadline must
+		// unblock the loop on its own.
+		const tool: AgentTool<typeof toolSchema, { value: string }> = {
+			name: "never-settles",
+			label: "Never settles",
+			description: "Ignores its signal entirely",
+			parameters: toolSchema,
+			timeoutMs: 20,
+			execute() {
+				return new Promise<never>(() => {});
+			},
+		};
+
+		const context: AgentContext = {
+			systemPrompt: "",
+			messages: [],
+			tools: [tool],
+		};
+
+		const config: AgentLoopConfig = {
+			model: createModel(),
+			convertToLlm: identityConverter,
+		};
+
+		let callIndex = 0;
+		const events: AgentEvent[] = [];
+		const stream = agentLoop([createUserMessage("hang")], context, config, undefined, () => {
+			const mockStream = new MockAssistantStream();
+			queueMicrotask(() => {
+				if (callIndex === 0) {
+					const message = createAssistantMessage(
+						[{ type: "toolCall", id: "tool-1", name: "never-settles", arguments: {} }],
+						"toolUse",
+					);
+					mockStream.push({ type: "done", reason: "toolUse", message });
+				} else {
+					const message = createAssistantMessage([{ type: "text", text: "done" }]);
+					mockStream.push({ type: "done", reason: "stop", message });
+				}
+				callIndex++;
+			});
+			return mockStream;
+		});
+
+		for await (const event of stream) {
+			events.push(event);
+		}
+
+		const toolEnd = events.find((e) => e.type === "tool_execution_end");
+		expect(toolEnd).toBeDefined();
+		if (toolEnd?.type === "tool_execution_end") {
+			expect(toolEnd.isError).toBe(true);
+			const text = toolEnd.result.content.find((c: { type: string }) => c.type === "text");
+			expect(text && "text" in text ? text.text : "").toContain("Tool never-settles timed out after 20ms");
+		}
+		const messages = await stream.result();
+		const final = messages[messages.length - 1];
+		expect(final?.role === "assistant" && final.content[0]?.type === "text" ? final.content[0].text : "").toBe(
+			"done",
+		);
+	});
+
 	it("turns an invalid timeoutMs into a terminal tool error instead of an unhandled rejection", async () => {
 		const tool: AgentTool<typeof toolSchema, { value: string }> = {
 			name: "bad-deadline",

@@ -596,8 +596,12 @@ function resolveExtensionEntries(dir: string): string[] | null {
 }
 
 function collectAutoExtensionEntries(dir: string): string[] {
-	const entries: string[] = [];
-	if (!existsSync(dir)) return entries;
+	// Groups keep their internal order: a package's manifest declares its
+	// extension order, which must survive discovery. Only the GROUPS are
+	// ordered, by their path — readdir order is filesystem-dependent, so
+	// auto-discovered extensions enumerate identically on every machine.
+	const groups: Array<{ path: string; entries: string[] }> = [];
+	if (!existsSync(dir)) return [];
 
 	// First check if this directory itself has explicit extension entries (package.json or index)
 	const rootEntries = resolveExtensionEntries(dir);
@@ -610,8 +614,6 @@ function collectAutoExtensionEntries(dir: string): string[] {
 	addIgnoreRules(ig, dir, dir);
 
 	try {
-		// readdir order is filesystem-dependent; iterate and emit in path order so
-		// auto-discovered extensions enumerate identically on every machine.
 		const dirEntries = readdirSync(dir, { withFileTypes: true });
 		for (const entry of dirEntries) {
 			if (entry.name.startsWith(".")) continue;
@@ -636,11 +638,11 @@ function collectAutoExtensionEntries(dir: string): string[] {
 			if (ig.ignores(ignorePath)) continue;
 
 			if (isFile && (entry.name.endsWith(".ts") || entry.name.endsWith(".js"))) {
-				entries.push(fullPath);
+				groups.push({ path: fullPath, entries: [fullPath] });
 			} else if (isDir) {
 				const resolvedEntries = resolveExtensionEntries(fullPath);
 				if (resolvedEntries) {
-					entries.push(...resolvedEntries);
+					groups.push({ path: fullPath, entries: resolvedEntries });
 				}
 			}
 		}
@@ -648,8 +650,8 @@ function collectAutoExtensionEntries(dir: string): string[] {
 		// Ignore errors
 	}
 
-	entries.sort(comparePaths);
-	return entries;
+	groups.sort((a, b) => comparePaths(a.path, b.path));
+	return groups.flatMap((group) => group.entries);
 }
 
 /**
