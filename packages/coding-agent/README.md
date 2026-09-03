@@ -675,6 +675,8 @@ pi --thinking high "Solve this complex problem"
 | `PI_CODING_AGENT_SESSION_DIR` | Override session storage directory (overridden by `--session-dir`) |
 | `PI_PACKAGE_DIR` | Override package directory (useful for Nix/Guix where store paths tokenize poorly) |
 | `PI_OFFLINE` | Disable startup network operations, including provider catalog/availability refreshes and managed-tool downloads |
+| `PI_SERVER_DIR` | Override experimental server profile and socket directory (default: `~/.pi/server`) |
+| `PI_SERVER_ID` | Select the logical experimental server ID when `--server-id` is omitted |
 | `PI_CACHE_RETENTION` | Set to `long` for extended prompt cache (Anthropic: 1h, OpenAI: 24h) |
 | `VISUAL`, `EDITOR` | Fallback external editor for Ctrl+G when `externalEditor` is unset; defaults to Notepad on Windows and `nano` elsewhere |
 

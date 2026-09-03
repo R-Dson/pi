@@ -82,6 +82,8 @@ These variables are read by Pi itself:
 | `PI_CODING_AGENT_SESSION_DIR` | Override session storage; overridden by `--session-dir` |
 | `PI_PACKAGE_DIR` | Override the package directory, useful for Nix/Guix store paths |
 | `PI_OFFLINE` | Disable startup network operations, including provider catalog/availability refreshes and managed-tool downloads |
+| `PI_SERVER_DIR` | Override the experimental server profile and socket directory; default is `~/.pi/server` |
+| `PI_SERVER_ID` | Select the logical experimental server ID when `--server-id` is omitted |
 | `PI_CACHE_RETENTION` | Set to `long` for extended provider prompt caching where supported |
 | `PI_SHARE_VIEWER_URL` | Override the base URL used by `/share` |
 | `PI_HARDWARE_CURSOR` | Set to `1` to show the hardware cursor; see [Terminal setup](terminal-setup.md) |

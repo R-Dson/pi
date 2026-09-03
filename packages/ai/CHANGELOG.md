@@ -6,6 +6,8 @@
 
 - Added an optional `onWireRewrite` observer to stream options: the Anthropic adapter reports wire-only rewrites the request context cannot reveal — `"provider-deferred-tool-load"` when a request first anchors a deferred tool load at its tool-result marker, and `"provider-auth-mode"` when the auth mode changes between requests. Transition tracking is keyed on the callback, so pass one stable function across a session's requests; interleaved sessions do not cross-report ([#56](https://github.com/R-Dson/pi/issues/56)).
 
+- Added Anthropic per-turn effort persistence, deterministic historical effort markers, and signed-thinking mismatch recovery for supported Claude models across Anthropic Messages transports, including OpenRouter.
+
 ### Changed
 
 - Changed `getSupportedThinkingLevels` to offer `xhigh` for reasoning models that ship no `thinkingLevelMap` (their level vocabulary is uncurated): OpenAI-style adapters send the unmapped level raw, so a provider that does not support it rejects the request with an actionable error; the Anthropic, Bedrock, and Google adapters map it to effort `high` (see the `Fixed` entry below for how Google got there), and zai models without `supportsReasoningEffort` send no effort at all. Models with a map — including maps that omit the `xhigh` key — are unchanged, and `max` stays opt-in ([earendil-works/pi#4344](https://github.com/earendil-works/pi/issues/4344)).
@@ -13,7 +15,10 @@
 
 ### Fixed
 
-- Fixed unmapped `xhigh`/`max` on Google models failing every request client-side: the Google resolver cannot send an unmapped level, so a persisted `xhigh` default crossing onto a mapless Google model (the catalog's Gemini 2.5-era entries) hit `Unsupported Google thinking level mapping` on every request. Unmapped `xhigh`/`max` now degrade to `high`, matching the Anthropic, Bedrock, and Mistral adapters; the footer still displays the requested level, so the degradation is a wire-only divergence like zai's label-only `xhigh`. Explicit garbage or `null` mappings still throw, and mapped values stay authoritative ([#124](https://github.com/R-Dson/pi/issues/124)).
+- Fixed the Qwen Token Plan Individual catalog to include Qwen3.8 Flash ([#9021](https://github.com/earendil-works/pi/issues/9021)).
+- Removed the unnecessary Chord dependency from pi-ai by defining its exported `JsonValue` type directly.
+- Fixed GitHub Copilot Claude Fable 5 requests to use the Anthropic Messages adapter so selected reasoning levels are sent ([#8961](https://github.com/earendil-works/pi/issues/8961)).
+- Fixed OpenAI Codex SSE parsing to process terminal events that are not followed by a blank line ([#9047](https://github.com/earendil-works/pi/issues/9047)).
 
 ## [0.84.4] - 2026-08-28
 
