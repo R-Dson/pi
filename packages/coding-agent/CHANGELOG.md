@@ -31,6 +31,7 @@
 - Added the `model-handoff` built-in: the active model hands the whole conversation to another configured tier mid-run by calling `switch_model`. Tiers live in `~/.pi/agent/handoff.json` (plus `.pi/handoff.json` in trusted projects, project entries winning name collisions); two or more registry-resolvable tiers activate the tool, which re-resolves its target per call. The next assistant turn of the same run comes from the target model, with the tool result as the baton; refusals (already-active tier, an earlier baton holder in the settled run, missing auth, a tier vanished from the registry) change nothing; `returnAfterRun` hands control back at `agent_settled` and a manual switch cancels it; the transcript call row shows tier, model, and reason ([#106](https://github.com/R-Dson/pi/issues/106)).
 - Added a per-message model marker for mixed-model sessions: when an assistant message's model differs from the previous assistant message's, a muted model-id line renders above its content; single-model sessions render identically to before ([#135](https://github.com/R-Dson/pi/issues/135)).
 - Added `tool-set-change` attribution for schema-only tool re-registrations: `setActiveToolsByName` fingerprints the active tools with the monitor's own serialization and arms the announcement when it changes, so a re-registered tool with a changed parameter schema (a regenerated `switch_model` target enum) counts under its true cause instead of surfacing as `unexpected-tools-change` with a diagnostic event; description-only changes stay unannounced exactly as the monitor ignores them ([#120](https://github.com/R-Dson/pi/issues/120)).
+- Added a clickable "Jump to latest message" label with the `tui.altScreen.bottom` shortcut to the fullscreen transcript while it is scrolled up ([#9080](https://github.com/earendil-works/pi/pull/9080) by [@rwachtler](https://github.com/rwachtler)).
 
 ### Changed
 
@@ -77,7 +78,7 @@
 - Added `fullscreenCopyOnSelect` to disable automatic fullscreen selection copy; when disabled, `Ctrl+X` copies the active text selection before falling back to the last assistant message, while `/tree` still copies the selected message ([#7720](https://github.com/earendil-works/pi/issues/7720)).
 
 ### Changed
-
+- Changed fullscreen scrollbars to reveal on pointer entry, support optional `scrollbarTrack` and `scrollbarThumb` theme colors with muted and text fallbacks, keep one thumb color across normal and expanded states, and support track-click jumping.
 - Changed fullscreen transcript search arrows to underline on hover and capitalized the search placeholder.
 - Changed selectors in `/thinking`, `/model`, `/scoped-models`, `/trust`, per-model thinking settings, and theme settings to keep active options marked while browsing. `/scoped-models` now uses consistent per-item toggles and strikes through unavailable models ([#8900](https://github.com/earendil-works/pi/pull/8900)).
 
