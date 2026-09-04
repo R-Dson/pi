@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### New Features
+
+- **Model handoff** — the active model can hand the whole conversation to a configured fast/smart tier mid-run via the `switch_model` tool; tiers live in `~/.pi/agent/handoff.json` (plus trusted-project `.pi/handoff.json`), the transcript shows who ran what, and the footer's cache stats keep the handoff cache-friendly ([#106](https://github.com/R-Dson/pi/issues/106); see [src/extensions/model-handoff/README.md](https://github.com/R-Dson/pi/tree/main/packages/coding-agent/src/extensions/model-handoff)).
+- **Permission policies** — opt-in allow/ask/deny rules with deny > ask > allow precedence, path and command prefixes, and `code`/`review`/`minimal` profiles from `~/.pi/agent/permissions.json` or trusted-project `.pi/permissions.json`; with no policy file present nothing changes ([#11](https://github.com/R-Dson/pi/issues/11); see [src/extensions/permission-policies/README.md](https://github.com/R-Dson/pi/tree/main/packages/coding-agent/src/extensions/permission-policies)).
+- **Session reliability** — `pi --validate-session <file>` reports torn tails, broken ancestry, orphaned tool results, and interrupted turns; loading skips a torn JSONL tail and repairs a dangling final turn so strict providers accept the next request ([#7](https://github.com/R-Dson/pi/issues/7), [#18](https://github.com/R-Dson/pi/issues/18)).
+- **Cache discipline** — a prefix-stability monitor attributes every request-prefix invalidation to its cause, `/session` shows run cache economics per request kind, compaction and branch summaries replay the prior request prefix to hit the provider prompt cache, and tool output is bounded with head-and-tail excerpts and artifact spill ([#40](https://github.com/R-Dson/pi/issues/40)–[#42](https://github.com/R-Dson/pi/issues/42), [#9](https://github.com/R-Dson/pi/issues/9), [#56](https://github.com/R-Dson/pi/issues/56)).
+- **Zero-configuration fork installer** — `curl -fsSL https://raw.githubusercontent.com/R-Dson/pi/main/scripts/install.sh | sh` installs from GitHub Releases with preflight checks, prefix selection, and downgrade/foreign-binary guards; releases publish to GitHub Releases and GitHub Packages only ([#97](https://github.com/R-Dson/pi/issues/97), [#98](https://github.com/R-Dson/pi/issues/98)).
+
 ### Breaking Changes
 
 - `compact()`, `generateSummary()`, and `generateSummaryWithUsage()` now require a `SummarizationPrefix` (the agent's real system prompt and tool list) and `GenerateBranchSummaryOptions.prefix` is required: compaction and branch-summary requests replay the prior request prefix with one appended instruction turn so they hit the provider prompt cache. SDK callers must pass the prefix ([#40](https://github.com/R-Dson/pi/issues/40)).
