@@ -11,6 +11,9 @@
 - **Session reliability** — `pi --validate-session <file>` reports torn tails, broken ancestry, orphaned tool results, and interrupted turns; loading skips a torn JSONL tail and repairs a dangling final turn so strict providers accept the next request ([#7](https://github.com/R-Dson/pi/issues/7), [#18](https://github.com/R-Dson/pi/issues/18)).
 - **Cache discipline** — a prefix-stability monitor attributes every request-prefix invalidation to its cause, `/session` shows run cache economics per request kind, compaction and branch summaries replay the prior request prefix to hit the provider prompt cache, and tool output is bounded with head-and-tail excerpts and artifact spill ([#40](https://github.com/R-Dson/pi/issues/40)–[#42](https://github.com/R-Dson/pi/issues/42), [#9](https://github.com/R-Dson/pi/issues/9), [#56](https://github.com/R-Dson/pi/issues/56)).
 - **Zero-configuration fork installer** — `curl -fsSL https://raw.githubusercontent.com/R-Dson/pi/main/scripts/install.sh | sh` installs from GitHub Releases with preflight checks, prefix selection, and downgrade/foreign-binary guards; releases publish to GitHub Releases and GitHub Packages only ([#97](https://github.com/R-Dson/pi/issues/97), [#98](https://github.com/R-Dson/pi/issues/98)).
+- **Persistent Claude thinking effort** — Supported Anthropic transports preserve per-turn effort and recover safely from signed-thinking mismatches. See [Model Configuration](docs/models.md#model-configuration).
+- **Fullscreen transcript controls** — Jump to the latest message from a scrolled transcript and use the embedded working indicator. See [TUI Fullscreen Viewport](docs/keybindings.md#tui-fullscreen-viewport).
+- **Restorable in-memory sessions** — Resume externally stored session entries through the SDK. See [Session Management](docs/sdk.md#session-management).
 
 ### Breaking Changes
 
@@ -20,7 +23,6 @@
 ### Added
 
 - Added manifest-order preservation to extension discovery: auto-discovered collection sorts path-keyed groups (a package's manifest entries keep their declared order within the group) instead of the flattened entry list, which had been reordering manifest-declared entries alphabetically. Group order can shift once versus the previous flattened sort for mixed loose-file/package directories, so the first request after upgrading may miss the cache once ([#139](https://github.com/R-Dson/pi/issues/139)).
-
 - Added a runtime prefix-stability monitor: every provider-bound request (regular turns, retries, and the replaying compaction/branch-summary calls) is compared against the previous one; invalidations are attributed to the subsystem that announced them (compaction, model change, tool-set change, settings change, extension override, session reset) or reported as unexpected, counted in the new `SessionStats.prefixInvalidationsByCause` field, and unannounced changes emit a `prefix_invalidated` session event with the first diverging message index ([#41](https://github.com/R-Dson/pi/issues/41)).
 - Added `settings-change` prefix-invalidation attribution: toggling `blockImages` mid-session is counted under its own cause instead of surfacing as an unexpected history change ([#53](https://github.com/R-Dson/pi/issues/53)).
 - Added provider wire-rewrite attribution: the prefix monitor injects the new packages/ai `onWireRewrite` seam callback into every provider request and counts adapter-reported wire-only rewrites (Anthropic deferred-tool anchoring, auth-mode switches) under the new `provider-deferred-tool-load` and `provider-auth-mode` causes; the reports count directly (they never appear in the context diff the monitor compares) and never arm the expectation latch, so later unannounced divergences keep their own attribution ([#56](https://github.com/R-Dson/pi/issues/56)).
@@ -44,25 +46,40 @@
 - Added a clickable "Jump to latest message" label with the `tui.altScreen.bottom` shortcut to the fullscreen transcript while it is scrolled up ([#9080](https://github.com/earendil-works/pi/pull/9080) by [@rwachtler](https://github.com/rwachtler)).
 - Added the fork's zero-configuration installer (`curl -fsSL https://raw.githubusercontent.com/R-Dson/pi/main/scripts/install.sh | sh`): preflight checks for curl, npm, and Node >= 22.19, install-prefix selection (npm global prefix or `~/.local`, `PI_INSTALL_PREFIX` override), a downgrade warning, guards against foreign binaries and version-managed npm prefixes, pinned or latest tarball fetch from GitHub Releases, install with `--ignore-scripts`, a post-install PATH note, and `--uninstall` ([#97](https://github.com/R-Dson/pi/issues/97), [#98](https://github.com/R-Dson/pi/issues/98)).
 - Added Anthropic per-turn thinking-effort persistence across turns and transports, including OpenRouter: the selected effort is sent on every turn for supported Claude models with deterministic historical effort markers, and signed-thinking mismatches are recovered instead of failing the request (pi-ai change).
+- Added `SessionManager.inMemory()` support for restoring externally managed session entries ([#8980](https://github.com/earendil-works/pi/pull/8980) by [@y-nk](https://github.com/y-nk)).
+- Added inherited OpenAI-compatible `vllmPriority` and `supportsMaxOutputTokens` model settings for vLLM scheduler priority and OpenAI Responses output-token limits ([#9004](https://github.com/earendil-works/pi/pull/9004) by [@AppleDannyClegg](https://github.com/AppleDannyClegg), [#8941](https://github.com/earendil-works/pi/pull/8941) by [@scturtle](https://github.com/scturtle)).
+- Added inherited LaTeX rendering for relational algebra join symbols ([#9050](https://github.com/earendil-works/pi/pull/9050) by [@haoqixu](https://github.com/haoqixu)).
 
 ### Changed
 
 - Changed the live thinking preview to a fixed-height block: while a run streams, the tail block reserves its full height from the first line (content top-aligned, blank rows below), so the preview never grows mid-stream and nothing below it reflows as reasoning arrives; once the run ends the block shrinks to its natural height, so short finished runs carry no blank rows ([#129](https://github.com/R-Dson/pi/pull/129)).
 - Moved the streaming working indicator into the default editor border and matched its default spinner and label to the thinking-level border color. Custom editors retain the standalone indicator unless they opt in to embedding it ([earendil-works/pi#8799](https://github.com/earendil-works/pi/pull/8799)).
 - Changed offered thinking levels for reasoning models without a `thinkingLevelMap`: `xhigh` is now offered, sent raw by OpenAI-style adapters, mapped to effort `high` by the Anthropic, Bedrock, and Google adapters, and degraded to `high` on mapless Google models instead of failing every request; the mapless Azure o-series and realtime mirrors whose API rejects it are pinned `xhigh: null` (pi-ai changes, [#124](https://github.com/R-Dson/pi/issues/124), [#139](https://github.com/R-Dson/pi/issues/139)).
+- Reduced inherited fullscreen transcript search latency on large transcripts by caching unchanged search results, indexing ASCII runs, and limiting highlight work to visible matches ([#8800](https://github.com/earendil-works/pi/pull/8800) by [@cristinaponcela](https://github.com/cristinaponcela)).
 
 ### Fixed
 
-- Fixed prompts racing `agent_settled` extension handlers: the session reports idle during those handlers by contract, so a prompt (or a trigger-turn custom message) submitted while the settle emission is still in flight started immediately and could be served by stale state — for model-handoff, by the delegatee instead of the model a `returnAfterRun` handler was returning control to. Runs now wait out the in-flight settle emission first, with the latch armed before the emission starts ([#122](https://github.com/R-Dson/pi/issues/122)).
-- Fixed branch-summary replay entries bypassing the projector's conversion hardening: the branch summarizer now converts session entries through the same `sessionEntryToContextMessages` the regular context path uses, so null-content messages replay as empty content and branch summaries with empty summaries are skipped instead of diverging from what a regular request would send.
-- Fixed auto-discovered extensions and skills enumerating in filesystem readdir order: collections now sort by resolved path so a restarted session replays an identical tool list and skills section instead of busting the provider prompt cache. Settings-declared order, package manifests, and builtin tool order are unchanged; the first request after upgrading may miss the cache once ([#49](https://github.com/R-Dson/pi/issues/49)).
-
-### Removed
-
-- Removed telemetry and tracking (the fork phones home for nothing): the install/version pings, the startup update check, automatic extension-update checks, the remote model-catalog refresh (catalogs restore from the local store only), the analytics opt-in and tracking id, and app-identification headers on provider requests; provider-required headers stay, and update commands run only when typed ([#32](https://github.com/R-Dson/pi/issues/32)).
-
-### Fixed
-
+- Fixed managed `fd` and ripgrep downloads on Linux musl systems ([#9070](https://github.com/earendil-works/pi/pull/9070) by [@Charlie0113-T](https://github.com/Charlie0113-T)).
+- Removed the unavailable inherited Grok Build 0.1 model from `/model` ([#9093](https://github.com/earendil-works/pi/pull/9093) by [@Jaaneek](https://github.com/Jaaneek)).
+- Fixed inherited provider streams emitting incompatible event sequences and custom tool-call deltas.
+- Restored the `@earendil-works/pi-coding-agent/client` compatibility entry point.
+- Fixed the inherited Qwen Token Plan Individual catalog to include Qwen3.8 Flash ([#9021](https://github.com/earendil-works/pi/issues/9021)).
+- Fixed inherited OpenAI Codex SSE parsing to process terminal events that are not followed by a blank line ([#9047](https://github.com/earendil-works/pi/issues/9047)).
+- Fixed inherited GitHub Copilot Claude Fable 5 requests so selected reasoning levels are sent ([#8961](https://github.com/earendil-works/pi/issues/8961)).
+- Fixed inherited Baseten GLM-5.2 models incorrectly advertising image input support ([#8293](https://github.com/earendil-works/pi/pull/8293) by [@Panoplos](https://github.com/Panoplos)).
+- Fixed skills being unavailable when Bash is the only enabled tool ([#8552](https://github.com/earendil-works/pi/pull/8552) by [@xl0](https://github.com/xl0)).
+- Fixed concurrent session shares overwriting one another ([#8613](https://github.com/earendil-works/pi/pull/8613) by [@wutongyuonce](https://github.com/wutongyuonce)).
+- Fixed image orientation detection skipping EXIF data after non-EXIF APP1 segments ([#8616](https://github.com/earendil-works/pi/pull/8616) by [@wutongyuonce](https://github.com/wutongyuonce)).
+- Fixed imported sessions overwriting an existing session with the same filename ([#8985](https://github.com/earendil-works/pi/pull/8985) by [@wutongyuonce](https://github.com/wutongyuonce)).
+- Fixed session forks losing their compaction boundary ([#8990](https://github.com/earendil-works/pi/pull/8990) by [@acmerfight](https://github.com/acmerfight)).
+- Fixed in-memory session forks before an active turn settled ([#8937](https://github.com/earendil-works/pi/pull/8937) by [@acmerfight](https://github.com/acmerfight)).
+- Fixed inherited Fireworks GLM models using the wrong API adapter.
+- Fixed inherited `NO_PROXY` matching for root domains and subdomains ([#8737](https://github.com/earendil-works/pi/pull/8737) by [@MeiSiristhebest](https://github.com/MeiSiristhebest)).
+- Fixed `bash`, `edit`, `find`, `grep`, `ls`, `read`, and `write` tools ignoring `ctx.cwd` ([#8627](https://github.com/earendil-works/pi/pull/8627) by [@vmizg](https://github.com/vmizg)).
+- Fixed inherited terminal startup under restricted seccomp policies that reject the `SIGWINCH` self-signal ([#8898](https://github.com/earendil-works/pi/pull/8898) by [@bartlomiejkida](https://github.com/bartlomiejkida)).
+- Fixed inherited Zed terminal image capability detection ([#8828](https://github.com/earendil-works/pi/pull/8828) by [@Perlence](https://github.com/Perlence)).
+- Fixed drag selection continuing over the fullscreen editor.
+- Fixed managed `fd` and ripgrep downloads requiring the GitHub Releases API ([#8708](https://github.com/earendil-works/pi/pull/8708) by [@Terminator666666](https://github.com/Terminator666666)).
 - Fixed branch summaries failing when reasoning consumes the previous 2048-token output cap ([#8845](https://github.com/earendil-works/pi/issues/8845)).
 - Fixed the write tool reporting UTF-16 code-unit counts as byte counts by removing the misleading count ([#8979](https://github.com/earendil-works/pi/issues/8979)).
 - Fixed proxied plain-HTTP provider requests hanging after a tool call by tunneling them with CONNECT ([#8134](https://github.com/earendil-works/pi/issues/8134)).
@@ -73,6 +90,9 @@
 - Fixed proxied assistant responses dropping persisted provider-native thinking levels (pi-agent-core).
 - Fixed provider handling in pi-ai: the Qwen Token Plan Individual catalog includes Qwen3.8 Flash ([#9021](https://github.com/earendil-works/pi/issues/9021)), GitHub Copilot Claude Fable 5 requests use the Anthropic Messages adapter so selected reasoning levels apply ([#8961](https://github.com/earendil-works/pi/issues/8961)), and OpenAI Codex SSE parsing processes terminal events not followed by a blank line ([#9047](https://github.com/earendil-works/pi/issues/9047)).
 
+### Removed
+
+- Removed telemetry and tracking (the fork phones home for nothing): the install/version pings, the startup update check, automatic extension-update checks, the remote model-catalog refresh (catalogs restore from the local store only), the analytics opt-in and tracking id, and app-identification headers on provider requests; provider-required headers stay, and update commands run only when typed ([#32](https://github.com/R-Dson/pi/issues/32)).
 ## [0.84.4] - 2026-08-28
 
 ### New Features

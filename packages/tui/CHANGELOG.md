@@ -11,6 +11,18 @@
 ### Added
 
 - Added a `TuiAltScreen` `scrollToEndIndicator` option that renders a clickable jump-to-end label on a follow-end primary scroll view while it is scrolled away from the end ([#9080](https://github.com/earendil-works/pi/pull/9080) by [@rwachtler](https://github.com/rwachtler)).
+- Added LaTeX rendering for relational algebra join symbols ([#9050](https://github.com/earendil-works/pi/pull/9050) by [@haoqixu](https://github.com/haoqixu)).
+
+### Changed
+
+- Changed the `Loader` animation and editor integration to support embedded working indicators ([#8799](https://github.com/earendil-works/pi/pull/8799) by [@cristinaponcela](https://github.com/cristinaponcela)).
+- Reduced fullscreen transcript search latency on large transcripts by caching unchanged search results, indexing ASCII runs, and limiting highlight work to visible matches ([#8800](https://github.com/earendil-works/pi/pull/8800) by [@cristinaponcela](https://github.com/cristinaponcela)).
+
+### Fixed
+
+- Fixed drag selection continuing over an editor.
+- Fixed terminal startup under restricted seccomp policies that reject the `SIGWINCH` self-signal ([#8898](https://github.com/earendil-works/pi/pull/8898) by [@bartlomiejkida](https://github.com/bartlomiejkida)).
+- Fixed Zed terminal image capability detection ([#8828](https://github.com/earendil-works/pi/pull/8828) by [@Perlence](https://github.com/Perlence)).
 
 ## [0.84.4] - 2026-08-28
 
