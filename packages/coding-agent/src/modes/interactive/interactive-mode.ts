@@ -28,8 +28,6 @@ import {
 	type Component,
 	Container,
 	fuzzyFilter,
-	getCapabilities,
-	hyperlink,
 	Markdown,
 	matchesKey,
 	Spacer,
@@ -88,16 +86,20 @@ import {
 	resolveModelScopeFromModels,
 } from "../../core/model-resolver.ts";
 import { CredentialSynchronizationError } from "../../core/model-runtime.ts";
-import { DefaultPackageManager } from "../../core/package-manager.ts";
 import type { ResourceDiagnostic } from "../../core/resource-loader.ts";
 import { formatMissingSessionCwdPrompt, MissingSessionCwdError } from "../../core/session-cwd.ts";
 import { type SessionEntry, SessionManager, sessionEntryToContextMessages } from "../../core/session-manager.ts";
+import {
+	type CacheUsageTotals,
+	cacheHitRate,
+	NON_TURN_REQUEST_KINDS,
+	type RequestKind,
+} from "../../core/sessions/cache-usage.ts";
 import type { FullscreenExitOutput, TuiMode } from "../../core/settings-manager.ts";
 import { BUILTIN_SLASH_COMMANDS } from "../../core/slash-commands.ts";
 import type { SourceInfo } from "../../core/source-info.ts";
-import { isInstallTelemetryEnabled } from "../../core/telemetry.ts";
 import { withBuiltInRenderers } from "../../core/tools/renderers/index.ts";
-import type { TruncationResult } from "../../core/tools/truncate.ts";
+import { formatSize, type TruncationResult } from "../../core/tools/truncate.ts";
 import { hasTrustRequiringProjectResources, ProjectTrustStore } from "../../core/trust-manager.ts";
 import { getUsageCostBreakdown } from "../../core/usage-totals.ts";
 import { getChangelogPath, getNewEntries, normalizeChangelogLinks, parseChangelog } from "../../utils/changelog.ts";
@@ -105,14 +107,12 @@ import { copyToClipboard, readClipboardText } from "../../utils/clipboard.ts";
 import { extensionForImageMimeType, readClipboardImage } from "../../utils/clipboard-image.ts";
 import { parseGitUrl } from "../../utils/git.ts";
 import { getCwdRelativePath } from "../../utils/paths.ts";
-import { getPiUserAgent } from "../../utils/pi-user-agent.ts";
 import { killTrackedDetachedChildren } from "../../utils/shell.ts";
 import { loadAllHighlightLanguages } from "../../utils/syntax-highlight.ts";
 import { ensureTool, type ToolStatus } from "../../utils/tools-manager.ts";
-import { checkForNewPiVersion, type LatestPiRelease } from "../../utils/version-check.ts";
 import { createChatViewport } from "./chat-viewport.ts";
 import { ArminComponent } from "./components/armin.ts";
-import { AssistantMessageComponent } from "./components/assistant-message.ts";
+import { AssistantMessageComponent, setThinkingPreviewFadeBackground } from "./components/assistant-message.ts";
 import { BashExecutionComponent } from "./components/bash-execution.ts";
 import { BranchSummaryMessageComponent } from "./components/branch-summary-message.ts";
 import { CompactionSummaryMessageComponent } from "./components/compaction-summary-message.ts";
@@ -425,6 +425,10 @@ export class InteractiveMode {
 
 	// Streaming message tracking
 	private streamingComponent: AssistantMessageComponent | undefined = undefined;
+	/** Set when the previous assistant message ended at a tool call: the next one renders its opening thinking headerless. */
+	private nextAssistantContinuesAfterToolCall = false;
+	/** Provider/model of the previous assistant message; a differing next model renders the attribution marker (#135). */
+	private lastAssistantModel: string | undefined = undefined;
 	private streamingMessage: AssistantMessage | undefined = undefined;
 
 	// Tool execution tracking: toolCallId -> component
@@ -1005,6 +1009,17 @@ export class InteractiveMode {
 		// Initialize available provider count for footer display
 		await this.updateAvailableProviderCount();
 
+		// Ask the terminal for its actual background (OSC 11) so the hidden
+		// thinking preview can fade its oldest words into it; terminals that
+		// do not answer within the timeout keep the uniform gray preview.
+		try {
+			void this.ui.queryTerminalBackgroundColor({ timeoutMs: 300 }).then((rgb) => {
+				setThinkingPreviewFadeBackground(rgb ?? undefined);
+			});
+		} catch {
+			// Query unsupported before the TUI is live; the preview stays uniform.
+		}
+
 		// Flush the completed startup state before loading the remaining syntax grammars.
 		this.ui.renderNow();
 		void loadAllHighlightLanguages().then(() => {
@@ -1042,28 +1057,6 @@ export class InteractiveMode {
 				.catch(() => {})
 				.finally(() => clearTimeout(timeout));
 		}
-
-		// Start version check asynchronously
-		checkForNewPiVersion(this.version).then((newRelease) => {
-			if (newRelease) {
-				this.showNewVersionNotification(newRelease);
-			}
-		});
-
-		// Start package update check asynchronously
-		this.checkForPackageUpdates()
-			.then((updates) => {
-				if (updates.length > 0) {
-					this.showPackageUpdateNotification(updates);
-				}
-			})
-			.finally(() => {
-				// On Windows, npm can overwrite the shared console title while checking
-				// extension package versions. Restore Pi's title after the startup check.
-				if (process.platform === "win32" && this.isInitialized) {
-					this.updateTerminalTitle();
-				}
-			});
 
 		// Check tmux keyboard setup asynchronously
 		this.checkTmuxKeyboardSetup().then((warning) => {
@@ -1140,24 +1133,6 @@ export class InteractiveMode {
 		}
 	}
 
-	private async checkForPackageUpdates(): Promise<string[]> {
-		if (process.env.PI_OFFLINE) {
-			return [];
-		}
-
-		try {
-			const packageManager = new DefaultPackageManager({
-				cwd: this.sessionManager.getCwd(),
-				agentDir: getAgentDir(),
-				settingsManager: this.settingsManager,
-			});
-			const updates = await packageManager.checkForAvailableUpdates();
-			return updates.map((update) => update.displayName);
-		} catch {
-			return [];
-		}
-	}
-
 	private async checkTmuxKeyboardSetup(): Promise<string | undefined> {
 		if (!process.env.TMUX) return undefined;
 
@@ -1220,39 +1195,18 @@ export class InteractiveMode {
 		const entries = parseChangelog(changelogPath);
 
 		if (!lastVersion) {
-			// Fresh install - record the version, send telemetry, don't show changelog
+			// Fresh install - record the version, don't show changelog
 			this.settingsManager.setLastChangelogVersion(VERSION);
-			this.reportInstallTelemetry(VERSION);
 			return undefined;
 		}
 
 		const newEntries = getNewEntries(entries, lastVersion);
 		if (newEntries.length > 0) {
 			this.settingsManager.setLastChangelogVersion(VERSION);
-			this.reportInstallTelemetry(VERSION);
 			return newEntries.map((e) => normalizeChangelogLinks(e.content, e)).join("\n\n");
 		}
 
 		return undefined;
-	}
-
-	private reportInstallTelemetry(version: string): void {
-		if (process.env.PI_OFFLINE) {
-			return;
-		}
-
-		if (!isInstallTelemetryEnabled(this.settingsManager)) {
-			return;
-		}
-
-		void fetch(`https://pi.dev/api/report-install?version=${encodeURIComponent(version)}`, {
-			headers: {
-				"User-Agent": getPiUserAgent(version),
-			},
-			signal: AbortSignal.timeout(5000),
-		})
-			.then(() => undefined)
-			.catch(() => undefined);
 	}
 
 	private getMarkdownThemeWithSettings(): MarkdownTheme {
@@ -3222,6 +3176,10 @@ export class InteractiveMode {
 					this.addMessageToChat(event.message);
 					this.ui.requestRender();
 				} else if (event.message.role === "user") {
+					// A new user turn ends any pending continuation: a tool call
+					// interrupted before its result must not suppress the next
+					// turn's opening header.
+					this.nextAssistantContinuesAfterToolCall = false;
 					this.addMessageToChat(event.message);
 					this.updatePendingMessagesDisplay();
 					this.ui.requestRender();
@@ -3233,7 +3191,10 @@ export class InteractiveMode {
 						this.hiddenThinkingLabel,
 						this.outputPad,
 						this.getMarkdownTransformers(),
+						this.nextAssistantContinuesAfterToolCall,
+						this.lastAssistantModel,
 					);
+					this.nextAssistantContinuesAfterToolCall = false;
 					this.streamingMessage = event.message;
 					this.chatContainer.addChild(this.streamingComponent);
 					this.streamingComponent.updateContent(this.streamingMessage, true);
@@ -3280,6 +3241,8 @@ export class InteractiveMode {
 				if (event.message.role === "user") break;
 				if (this.streamingComponent && event.message.role === "assistant") {
 					this.streamingMessage = event.message;
+					this.nextAssistantContinuesAfterToolCall = this.streamingMessage.stopReason === "toolUse";
+					this.lastAssistantModel = `${this.streamingMessage.provider}/${this.streamingMessage.model}`;
 					let errorMessage: string | undefined;
 					if (this.streamingMessage.stopReason === "aborted") {
 						const retryAttempt = this.session.retryAttempt;
@@ -3621,6 +3584,7 @@ export class InteractiveMode {
 				break;
 			}
 			case "user": {
+				this.nextAssistantContinuesAfterToolCall = false;
 				const textContent = this.getUserMessageText(message);
 				if (textContent) {
 					if (this.chatContainer.children.length > 0) {
@@ -3669,8 +3633,12 @@ export class InteractiveMode {
 					this.hiddenThinkingLabel,
 					this.outputPad,
 					this.getMarkdownTransformers(),
+					this.nextAssistantContinuesAfterToolCall,
+					this.lastAssistantModel,
 				);
 				this.chatContainer.addChild(assistantComponent);
+				this.nextAssistantContinuesAfterToolCall = message.stopReason === "toolUse";
+				this.lastAssistantModel = `${message.provider}/${message.model}`;
 				break;
 			}
 			case "toolResult": {
@@ -3700,6 +3668,10 @@ export class InteractiveMode {
 			this.updateEditorBorderColor();
 		}
 
+		// Rebuilds start fresh: no message before the first one continued a tool call,
+		// and the first assistant message has no previous model to differ from.
+		this.nextAssistantContinuesAfterToolCall = false;
+		this.lastAssistantModel = undefined;
 		for (const item of items) {
 			if (isCustomSessionEntry(item)) {
 				this.addCustomEntryToChat(item);
@@ -3920,6 +3892,11 @@ export class InteractiveMode {
 	}
 
 	private rebuildChatFromMessages(): void {
+		// Running tools are replaced by the rebuild; stop their tickers first
+		// so no orphaned interval keeps firing requestRender.
+		for (const component of this.pendingTools.values()) {
+			component.destroy();
+		}
 		this.chatContainer.clear();
 		this.renderSessionEntries(this.sessionManager.buildContextEntries());
 	}
@@ -4284,53 +4261,6 @@ export class InteractiveMode {
 		this.ui.requestRender();
 	}
 
-	showNewVersionNotification(release: LatestPiRelease): void {
-		const action = theme.fg("accent", `${APP_NAME} update`);
-		const updateInstruction = theme.fg("muted", `New version ${release.version} is available. Run `) + action;
-		const changelogUrl = "https://pi.dev/changelog";
-		const changelogLink = getCapabilities().hyperlinks
-			? hyperlink(theme.fg("accent", changelogUrl), changelogUrl)
-			: theme.fg("accent", changelogUrl);
-		const changelogLine = theme.fg("muted", "Changelog: ") + changelogLink;
-		const note = release.note?.trim();
-
-		this.chatContainer.addChild(new Spacer(1));
-		this.chatContainer.addChild(new DynamicBorder((text) => theme.fg("warning", text)));
-		this.chatContainer.addChild(
-			new Text(`${theme.bold(theme.fg("warning", "Update Available"))}\n${updateInstruction}`, 1, 0),
-		);
-		if (note) {
-			this.chatContainer.addChild(new Spacer(1));
-			this.chatContainer.addChild(
-				new Markdown(note, 1, 0, this.getMarkdownThemeWithSettings(), {
-					color: (text) => theme.fg("muted", text),
-				}),
-			);
-			this.chatContainer.addChild(new Spacer(1));
-		}
-		this.chatContainer.addChild(new Text(changelogLine, 1, 0));
-		this.chatContainer.addChild(new DynamicBorder((text) => theme.fg("warning", text)));
-		this.ui.requestRender();
-	}
-
-	showPackageUpdateNotification(packages: string[]): void {
-		const action = theme.fg("accent", `${APP_NAME} update --extensions`);
-		const updateInstruction = theme.fg("muted", "Package updates are available. Run ") + action;
-		const packageLines = packages.map((pkg) => `- ${pkg}`).join("\n");
-
-		this.chatContainer.addChild(new Spacer(1));
-		this.chatContainer.addChild(new DynamicBorder((text) => theme.fg("warning", text)));
-		this.chatContainer.addChild(
-			new Text(
-				`${theme.bold(theme.fg("warning", "Package Updates Available"))}\n${updateInstruction}\n${theme.fg("muted", "Packages:")}\n${packageLines}`,
-				1,
-				0,
-			),
-		);
-		this.chatContainer.addChild(new DynamicBorder((text) => theme.fg("warning", text)));
-		this.ui.requestRender();
-	}
-
 	/**
 	 * Get all queued messages (read-only).
 	 * Combines session queue and compaction queue.
@@ -4583,7 +4513,6 @@ export class InteractiveMode {
 					hideThinkingBlock: this.hideThinkingBlock,
 					mermaidRenderingMode: this.settingsManager.getMermaidRenderingMode(),
 					collapseChangelog: this.settingsManager.getCollapseChangelog(),
-					enableInstallTelemetry: this.settingsManager.getEnableInstallTelemetry(),
 					doubleEscapeAction: this.settingsManager.getDoubleEscapeAction(),
 					treeFilterMode: this.settingsManager.getTreeFilterMode(),
 					showHardwareCursor: this.settingsManager.getShowHardwareCursor(),
@@ -4689,9 +4618,6 @@ export class InteractiveMode {
 					},
 					onCollapseChangelogChange: (collapsed) => {
 						this.settingsManager.setCollapseChangelog(collapsed);
-					},
-					onEnableInstallTelemetryChange: (enabled) => {
-						this.settingsManager.setEnableInstallTelemetry(enabled);
 					},
 					onQuietStartupChange: (enabled) => {
 						this.settingsManager.setQuietStartup(enabled);
@@ -6207,7 +6133,16 @@ export class InteractiveMode {
 		info += `${theme.fg("dim", "Total:")} ${stats.totalMessages}\n`;
 		info += `${theme.fg("dim", "User:")} ${stats.userMessages}\n`;
 		info += `${theme.fg("dim", "Assistant:")} ${stats.assistantMessages}\n`;
-		info += `${theme.fg("dim", "Tools:")} ${stats.toolCalls} calls, ${stats.toolResults} results\n\n`;
+		info += `${theme.fg("dim", "Tools:")} ${stats.toolCalls} calls, ${stats.toolResults} results, ${formatSize(stats.toolOutputBytes)} output\n`;
+		if (stats.truncatedToolOutputBytes > 0) {
+			// Truncation/artifact counts cover the current session run only.
+			const artifacts =
+				stats.toolOutputArtifacts > 0
+					? `, ${stats.toolOutputArtifacts} artifact${stats.toolOutputArtifacts === 1 ? "" : "s"}`
+					: "";
+			info += `  ${theme.fg("dim", `(${formatSize(stats.truncatedToolOutputBytes)} truncated${artifacts})`)}\n`;
+		}
+		info += `\n`;
 		info += `${theme.bold("Tokens")}\n`;
 		// "Input" is the full prompt volume. With cache activity, split it into
 		// cached (served from cache) vs uncached (everything else) - the only
@@ -6225,6 +6160,38 @@ export class InteractiveMode {
 		}
 		info += `${theme.fg("dim", "Output:")} ${stats.tokens.output.toLocaleString()}\n`;
 		info += `${theme.fg("dim", "Total:")} ${stats.tokens.total.toLocaleString()}\n`;
+
+		// Cache economics (cache plan phase C, issue #42): run-scoped usage
+		// recorded per request kind at the streamFn boundary, plus the phase-B
+		// invalidation counts. Empty until this run's first provider request.
+		const cacheKinds = Object.entries(stats.cacheUsageByKind) as Array<[RequestKind, CacheUsageTotals]>;
+		if (cacheKinds.length > 0) {
+			const run = cacheKinds.reduce(
+				(acc, [, totals]) => ({
+					input: acc.input + totals.input,
+					cacheRead: acc.cacheRead + totals.cacheRead,
+					cacheWrite: acc.cacheWrite + totals.cacheWrite,
+				}),
+				{ input: 0, cacheRead: 0, cacheWrite: 0 },
+			);
+			const runHitRate = cacheHitRate(run);
+			const runHit = runHitRate === undefined ? "" : `${(runHitRate * 100).toFixed(1)}% hit `;
+			info += `\n${theme.bold("Cache")}\n`;
+			info += `${theme.fg("dim", "Run:")} ${runHit}(${formatTokens(run.cacheRead)} read, ${formatTokens(run.cacheWrite)} written, ${formatTokens(run.input)} uncached)\n`;
+			for (const kind of NON_TURN_REQUEST_KINDS) {
+				const kindTotals = stats.cacheUsageByKind[kind];
+				if (!kindTotals) continue;
+				const kindHitRate = cacheHitRate(kindTotals);
+				const kindHit = kindHitRate === undefined ? "" : `, ${(kindHitRate * 100).toFixed(1)}% hit`;
+				const requests = `${kindTotals.requests} request${kindTotals.requests === 1 ? "" : "s"}`;
+				info += `  ${theme.fg("dim", `${kind}:`)} ${requests}, ${formatTokens(kindTotals.cacheRead)} read, ${formatTokens(kindTotals.cacheWrite)} written${kindHit}\n`;
+			}
+			const invalidations = Object.entries(stats.prefixInvalidationsByCause);
+			if (invalidations.length > 0) {
+				const listed = invalidations.map(([cause, count]) => `${cause} ${count}`).join(", ");
+				info += `  ${theme.fg("dim", "Invalidations:")} ${listed}\n`;
+			}
+		}
 
 		if (stats.cost > 0 || cacheWaste.missedTokens > 0) {
 			info += `\n${theme.bold("Cost")}\n`;
