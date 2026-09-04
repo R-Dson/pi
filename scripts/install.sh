@@ -135,16 +135,39 @@ fi
 tmpdir="$(mktemp -d)"
 trap 'rm -rf "$tmpdir"' EXIT
 
+npm_install() {
+  if [ "$prefix" = "$npm_global_prefix" ]; then
+    npm install -g --ignore-scripts "$tmpdir/pi-fork.tgz"
+  else
+    mkdir -p "$bin_dir"
+    npm install -g --ignore-scripts --prefix "$prefix" "$tmpdir/pi-fork.tgz"
+  fi
+}
+
+starts() {
+  # Startup smoke test, not just a version read: --version imports the whole
+  # CLI (chord included), so a dependency npm failed to extract surfaces here
+  # instead of as a crash on the first real prompt.
+  "$bin_dir/pi" --version >/dev/null 2>&1
+}
+
 echo "Downloading ${url}"
 curl -fsSL "$url" -o "$tmpdir/pi-fork.tgz"
-if [ "$prefix" = "$npm_global_prefix" ]; then
-  npm install -g --ignore-scripts "$tmpdir/pi-fork.tgz"
-else
-  mkdir -p "$bin_dir"
-  npm install -g --ignore-scripts --prefix "$prefix" "$tmpdir/pi-fork.tgz"
-fi
+npm_install
 
 # --- Report ------------------------------------------------------------------
+
+if ! starts; then
+  # npm installs of this tarball have landed broken while npm still exits 0
+  # (v0.85.0-fork.8: an empty esbuild directory). Removing the package
+  # directory and reinstalling from the downloaded tarball has produced a
+  # correct tree in every reproduction, so retry once from clean state.
+  echo "warning: installed pi failed to start; retrying from a clean package directory." >&2
+  rm -rf "${prefix}/lib/node_modules/${package}"
+  npm_install
+  starts ||
+    die 1 "install finished but $bin_dir/pi does not start. Run '$bin_dir/pi --version' to see the error, then re-run this script."
+fi
 
 [ -x "$bin_dir/pi" ] || die 1 "install finished but $bin_dir/pi is missing; check the npm output above."
 installed="$("$bin_dir/pi" --version 2>/dev/null | tail -n 1 || true)"
