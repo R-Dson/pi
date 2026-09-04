@@ -54,6 +54,7 @@ export function createWriteToolDefinition(
 			"Write content to a file. Creates the file if it doesn't exist, overwrites if it does. Automatically creates parent directories.",
 		promptSnippet: writeToolSystemPromptContribution.snippet,
 		promptGuidelines: [...writeToolSystemPromptContribution.guidelines],
+		capability: "filesystem.write",
 		parameters: writeSchema,
 		constrainedSampling: getExperimentalToolSampling(),
 		async execute(

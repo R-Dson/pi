@@ -43,6 +43,16 @@ export {
 	type LsToolOptions,
 } from "./ls.ts";
 export {
+	evaluatePermission,
+	evaluatePermissionLayered,
+	type PermissionDecision,
+	type PermissionRule,
+	resolveProfileConfig,
+	TOOL_CAPABILITIES,
+	type ToolCapability,
+	type ToolProfile,
+} from "./permissions.ts";
+export {
 	createLocalPowerShellOperations,
 	createPowerShellTool,
 	createPowerShellToolDefinition,

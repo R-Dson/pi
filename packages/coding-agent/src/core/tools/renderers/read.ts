@@ -117,12 +117,20 @@ function formatReadResult(
 	_cwd: string,
 	isError: boolean,
 ): string {
-	if (!options.expanded && !isError) {
-		return "";
-	}
-
 	const rawPath = str(args?.file_path ?? args?.path);
 	const output = getTextOutput(result, showImages);
+
+	if (!options.expanded && !isError) {
+		// Counts-first summary, before any highlighting: the collapsed path
+		// must not tokenize a whole file just to count it. Image-only results
+		// render the image; counting text lines over them would read as "0 lines".
+		if (!output && result.content.some((block) => block.type === "image")) {
+			return "";
+		}
+		const count = trimTrailingEmptyLines(output.split("\n")).length;
+		return `\n${theme.fg("muted", `${count} lines (`)}${keyHint("app.tools.expand", "to expand")}${theme.fg("muted", ")")}`;
+	}
+
 	const lang = !isError && rawPath ? getLanguageFromPath(rawPath) : undefined;
 	const renderedLines = lang ? highlightCode(replaceTabs(output), lang) : output.split("\n");
 	const lines = trimTrailingEmptyLines(renderedLines);

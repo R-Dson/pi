@@ -189,6 +189,7 @@ export function createReadToolDefinition(
 				},
 			);
 		},
+		capability: "filesystem.read",
 		...readRenderers,
 	};
 }
