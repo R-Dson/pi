@@ -1,6 +1,6 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
-import { describe, expect, it } from "vitest";
 import { Type } from "typebox";
+import { describe, expect, it } from "vitest";
 import { createToolDefinitionFromAgentTool, wrapToolDefinition } from "../src/core/tools/tool-definition-wrapper.ts";
 
 const parameters = Type.Object({});
