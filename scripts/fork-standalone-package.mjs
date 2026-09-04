@@ -4,9 +4,11 @@
 // the coding-agent release bundle and packs it to a stable pi-fork.tgz. The bundle
 // inlines every workspace package except the ones the bundler keeps external
 // (chord: its worker and bundler entry URLs must stay real files) — those are
-// vendored into the tarball as bundled dependencies instead. The remaining
-// dependencies are non-workspace (verbatim pins) and installs resolve them from
-// the public npm registry — no GitHub authentication, no registry configuration.
+// vendored into the tarball as bundled dependencies instead, with their own
+// dependencies hoisted to the root manifest (npm never reifies a bundled
+// package's dependency closure). The remaining dependencies are non-workspace
+// (verbatim pins) and installs resolve them from the public npm registry — no
+// GitHub authentication, no registry configuration.
 
 import { spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
@@ -44,7 +46,9 @@ export function deriveStandaloneManifest(manifest, { version, bundledDependencie
 	// node_modules/ by stageStandaloneDirectory, so installs never resolve them
 	// from a registry: npm uses the bundled copy. npm does not reify a bundled
 	// package's own dependencies, so vendoredDependencies hoists their pinned
-	// specs into the manifest's dependencies for registry resolution.
+	// specs into the manifest's dependencies for registry resolution — and the
+	// staged vendored manifest drops them (see stageStandaloneDirectory), or
+	// npm skips extracting the root-level copies entirely.
 	const derived = {
 		name: STANDALONE_NAME,
 		version,
@@ -91,13 +95,32 @@ export function stageStandaloneDirectory(sourcePackageDir, packDirectory, manife
 		const packageManifest = JSON.parse(readFileSync(join(packageDir, "package.json"), "utf8"));
 		const target = join(packDirectory, "node_modules", packageName);
 		mkdirSync(target, { recursive: true });
-		const entries = ["package.json", ...(packageManifest.files ?? [])];
-		for (const entry of entries) {
+		for (const entry of packageManifest.files ?? []) {
 			const source = join(packageDir, entry);
 			if (existsSync(source)) {
 				cpSync(source, join(target, entry), { recursive: true });
 			}
 		}
+		// The staged manifest drops the vendored package's `dependencies`. npm
+		// counts a bundled package's dependency closure as covered by the
+		// bundle, so leaving them declared makes npm skip extracting the
+		// root-level copies: v0.85.0-fork.8 installs on npm 11.13 shipped an
+		// empty node_modules/esbuild and crashed at startup (chord imports
+		// esbuild; the requirement is identical at the root, so npm deduped
+		// the extraction away). Every dependency is hoisted into the root
+		// manifest's dependencies by deriveStandaloneManifest, and Node still
+		// resolves them from the root node_modules for the vendored code.
+		const unhoisted = Object.keys(packageManifest.dependencies ?? {}).filter(
+			(name) => manifest.dependencies?.[name] === undefined,
+		);
+		if (unhoisted.length > 0) {
+			throw new Error(
+				`Vendored ${packageName} declares dependencies not hoisted into the standalone manifest: ${unhoisted.join(", ")}`,
+			);
+		}
+		const staged = { ...packageManifest };
+		delete staged.dependencies;
+		writeFileSync(join(target, "package.json"), `${JSON.stringify(staged, null, "\t")}\n`);
 	}
 	writeFileSync(join(packDirectory, "package.json"), `${JSON.stringify(manifest, null, "\t")}\n`);
 }

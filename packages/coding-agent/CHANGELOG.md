@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed standalone-tarball installs crashing at startup with `Cannot find package .../esbuild/index.js`: the vendored chord still declared its dependencies, so npm (11.13) treated them as covered by the bundle and skipped extracting the root-level copies, leaving an empty `esbuild` directory while exiting 0. The packager now strips the hoisted dependencies from the vendored manifest and refuses any vendored dependency missing from the root manifest; `install.sh` runs the installed binary as a startup smoke test and retries once from a clean package directory when it fails to start ([#150](https://github.com/R-Dson/pi/issues/150), v0.85.0-fork.8 regression).
+
 ### Changed
 
 - Rewrote the `custom-compaction` example and the compaction extension docs around the prefix-replaying summarizer request: the example replays the session model, system prompt, active tools, and `replayMessages` with the instruction appended as one final turn and carries the session routing id, instead of serializing the conversation into a standalone cache-opt-out request under a different (cache-forfeiting) model; a dedicated example test pins the request shape ([#146](https://github.com/R-Dson/pi/issues/146)).

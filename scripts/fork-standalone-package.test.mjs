@@ -199,11 +199,20 @@ test("stageStandaloneDirectory vendors bundled packages under node_modules per t
 		await writeFile(join(chordDir, "README.md"), "chord\n");
 		// Outside the files list: must not be staged.
 		await writeFile(join(chordDir, "tsconfig.build.json"), "{}\n");
-		await writeFile(join(chordDir, "package.json"), JSON.stringify({ name: "@earendil-works/chord", version: "0.85.0", files: ["dist", "README.md"] }));
+		await writeFile(
+			join(chordDir, "package.json"),
+			JSON.stringify({
+				name: "@earendil-works/chord",
+				version: "0.85.0",
+				files: ["dist", "README.md"],
+				dependencies: { esbuild: "0.28.1" },
+			}),
+		);
 
 		const manifest = deriveStandaloneManifest(sourceManifest, {
 			version: "0.85.0-fork.6",
 			bundledDependencies: { "@earendil-works/chord": "0.85.0" },
+			vendoredDependencies: { esbuild: "0.28.1" },
 		});
 		const packDirectory = join(root, "staged");
 		stageStandaloneDirectory(packageDir, packDirectory, manifest, { "@earendil-works/chord": chordDir });
@@ -213,6 +222,52 @@ test("stageStandaloneDirectory vendors bundled packages under node_modules per t
 		assert.ok(existsSync(join(chordTarget, "dist", "context", "index.js")), "expected the files-listed dist to be staged");
 		assert.ok(existsSync(join(chordTarget, "README.md")), "expected the files-listed README to be staged");
 		assert.ok(!existsSync(join(chordTarget, "tsconfig.build.json")), "expected non-files entries to stay out");
+
+		// The vendored manifest drops `dependencies` (they are hoisted to the
+		// root manifest): npm counts a bundled package's dependency closure as
+		// covered by the bundle and skips extracting the root-level copies when
+		// the vendored manifest still declares them (v0.85.0-fork.8 regression:
+		// empty node_modules/esbuild, crash at startup).
+		const stagedChord = JSON.parse(readFileSync(join(chordTarget, "package.json"), "utf8"));
+		assert.ok(!("dependencies" in stagedChord), "expected the vendored manifest to drop dependencies");
+		assert.equal(manifest.dependencies.esbuild, "0.28.1");
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test("stageStandaloneDirectory refuses a vendored package with unhoisted dependencies", async () => {
+	const root = await mkdtemp(join(tmpdir(), "pi-standalone-unhoisted-"));
+	try {
+		const packageDir = join(root, "source");
+		await mkdir(join(packageDir, "dist", "bundle"), { recursive: true });
+		await writeFile(join(packageDir, "dist", "bundle", "cli.js"), "#!/usr/bin/env node\n");
+		const chordDir = join(root, "chord");
+		await mkdir(join(chordDir, "dist"), { recursive: true });
+		await writeFile(join(chordDir, "dist", "index.js"), "export {};\n");
+		await writeFile(
+			join(chordDir, "package.json"),
+			JSON.stringify({
+				name: "@earendil-works/chord",
+				version: "0.85.0",
+				files: ["dist"],
+				dependencies: { esbuild: "0.28.1", "not-hoisted-pkg": "1.0.0" },
+			}),
+		);
+
+		const manifest = deriveStandaloneManifest(sourceManifest, {
+			version: "0.85.0-fork.6",
+			bundledDependencies: { "@earendil-works/chord": "0.85.0" },
+			vendoredDependencies: { esbuild: "0.28.1" },
+		});
+
+		// A vendored dependency missing from the root manifest would be
+		// uninstallable (npm skips the bundle closure), so staging must fail
+		// loudly instead of shipping a broken tarball.
+		assert.throws(
+			() => stageStandaloneDirectory(packageDir, join(root, "staged"), manifest, { "@earendil-works/chord": chordDir }),
+			/not-hoisted-pkg/,
+		);
 	} finally {
 		await rm(root, { recursive: true, force: true });
 	}
