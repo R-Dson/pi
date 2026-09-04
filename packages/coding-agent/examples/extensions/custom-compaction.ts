@@ -2,27 +2,17 @@
  * Custom Compaction Extension (cache-disciplined)
  *
  * Replaces the default compaction summary while keeping the provider prompt
- * cache intact. A cached input token costs a fraction of an uncached one, and
- * the cache only hits when the summarizer request extends the previous request
- * byte for byte. So instead of serializing the conversation into a standalone
- * blob under a dedicated system prompt (a full cache miss at the exact moment
- * the context is largest), this extension:
- *
- * 1. Replays the same prefix the model just saw: the session model (provider
- *    caches are per model — a cheaper summarizer model forfeits the cache),
- *    the agent's system prompt, the active tool list, and the replayed
- *    history, converted the same way regular requests are.
- * 2. Appends the summarization instruction as one final user turn.
- * 3. Carries the session routing id so providers with session-scoped cache
- *    buckets (OpenAI prompt_cache_key, Mistral affinity) keep the call in the
- *    same bucket, and does not opt out of caching.
+ * cache intact: the summarizer request replays the same prefix the model just
+ * saw (session model, system prompt, active tools, replayed history) and
+ * appends the instruction as one final user turn, instead of paying a full
+ * cache miss on a standalone serialized blob at the exact moment the context
+ * is largest. The inline comments mark each replay piece.
  *
  * Byte-exactness caveats: `ctx.getSystemPrompt()` excludes per-turn chained
  * rewrites and `before_provider_request` payload rewrites, and `ToolInfo` does
  * not carry constrained-sampling config, so an extension replay can drift from
- * the wire request. The default compaction replays the prefix exactly and is
- * the better default; copy this shape only when you need custom summary
- * semantics.
+ * the wire request. The default compaction replays the prefix exactly; copy
+ * this shape only when you need custom summary semantics.
  *
  * Usage:
  *   pi --extension examples/extensions/custom-compaction.ts
