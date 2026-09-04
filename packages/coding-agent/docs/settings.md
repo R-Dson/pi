@@ -57,9 +57,6 @@ Use `/trust` in interactive mode to save a project trust decision for future ses
 | `quietStartup` | boolean | `false` | Hide startup header |
 | `defaultProjectTrust` | string | `"ask"` | Fallback project trust behavior: `"ask"`, `"always"`, or `"never"`. Global setting only |
 | `collapseChangelog` | boolean | `false` | Show condensed changelog after updates |
-| `enableInstallTelemetry` | boolean | `true` | Send the anonymous install/update ping and selected provider attribution headers. This does not control update checks |
-| `enableAnalytics` | boolean | `false` | Opt-in analytics data sharing. Currently only asked for during the experimental first-time setup (`PI_EXPERIMENTAL=1`) |
-| `trackingId` | string | - | Analytics tracking identifier, generated when `enableAnalytics` is turned on |
 | `doubleEscapeAction` | string | `"tree"` | Action for double-escape: `"tree"`, `"fork"`, or `"none"` |
 | `treeFilterMode` | string | `"default"` | Default filter for `/tree`: `"default"`, `"no-tools"`, `"user-only"`, `"labeled-only"`, `"all"` |
 | `editorPaddingX` | number | `0` | Horizontal padding for input editor (0-3) |
@@ -81,9 +78,7 @@ For VS Code, include `--wait` so pi resumes after the editor exits:
 
 ### Telemetry and update checks
 
-`enableInstallTelemetry` controls the anonymous install/update ping to `https://pi.dev/api/report-install` and Pi attribution headers for OpenRouter, NVIDIA NIM, and Cloudflare provider requests. Opting out disables both. It does not disable update checks; Pi can still fetch `https://pi.dev/api/latest-version` to look for the latest version.
-
-Set `PI_SKIP_VERSION_CHECK=1` to disable the Pi version update check. Use `--offline` or `PI_OFFLINE=1` to disable all startup network operations described here, including update checks, package update checks, and install/update telemetry.
+This fork performs no telemetry or tracking network calls: there is no install/update ping, no `pi.dev` version check, and no automatic extension-package update check at startup. Outbound traffic is limited to user-configured LLM provider API requests and explicit user actions such as `pi install` and `pi update`. Use `--offline` or `PI_OFFLINE=1` to disable the remaining startup network operations (provider catalog/availability refreshes and managed-tool downloads).
 
 ### Network
 
@@ -224,6 +219,7 @@ Windows paths in JSON must use forward slashes or escaped backslashes:
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
 | `defaultTools` | string[] | - | Built-in tools enabled initially. When omitted, Pi uses its standard defaults |
+| `tools.maxToolOutputBytes` | number | `204800` | Max UTF-8 bytes of tool result text sent to the model before it is replaced by a head+tail excerpt. The full output spills to a file under `<sessionDir>/artifacts/<sessionId>/` (persisted sessions). `0` or less disables the cap |
 
 `defaultTools` selects the built-in tools enabled at startup. Extension and SDK custom tools remain enabled. Available built-ins are `read`, `bash`, `powershell`, `edit`, `write`, `grep`, `find`, and `ls`:
 
@@ -242,6 +238,10 @@ On Windows, select `powershell` instead of `bash`, or include both:
 ```
 
 An empty array starts with no built-in tools while preserving extension and SDK custom tools. `--tools` replaces this behavior with a strict allowlist for all tools, `--no-tools` disables all tools, and `--no-builtin-tools` disables the built-in defaults. `--exclude-tools` filters the resulting list. A project `defaultTools` array replaces the global array.
+
+`tools.maxToolOutputBytes` bounds what the model sees, not what the tool did: over the cap the model receives the first ~60% and last ~40% of the budget around a marker reporting the omitted bytes and the artifact path. Built-in tools (`read`, `grep`, `bash`) truncate their own output already, so in practice the cap governs extension tools.
+
+Permission rules are not a setting: the built-in `permission-policies` extension enforces them from `~/.pi/agent/permissions.json` (global) and `.pi/permissions.json` (trusted projects) policy files, with capability matching, deny > ask > allow precedence, profiles, and interactive `ask` approval. It activates only when one of those files exists; otherwise it does nothing.
 
 ### Sessions
 

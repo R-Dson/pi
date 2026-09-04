@@ -14,18 +14,22 @@
 
 ### Added
 
+- Added an optional `onWireRewrite` observer to stream options: the Anthropic adapter reports wire-only rewrites the request context cannot reveal — `"provider-deferred-tool-load"` when a request first anchors a deferred tool load at its tool-result marker, and `"provider-auth-mode"` when the auth mode changes between requests. Transition tracking is keyed on the callback, so pass one stable function across a session's requests; interleaved sessions do not cross-report ([#56](https://github.com/R-Dson/pi/issues/56)).
+- Added Anthropic per-turn effort persistence, deterministic historical effort markers, and signed-thinking mismatch recovery for supported Claude models across Anthropic Messages transports, including OpenRouter.
 - Added compact, persistable assistant-message frames with `AssistantMessageFrameEncoder` and `reduceAssistantMessageFrames()`.
 - Added the `vllmPriority` OpenAI-compatible model setting for forwarding scheduler priority to vLLM ([#9004](https://github.com/earendil-works/pi/pull/9004) by [@AppleDannyClegg](https://github.com/AppleDannyClegg)).
 - Added the `supportsMaxOutputTokens` OpenAI Responses compatibility setting ([#8941](https://github.com/earendil-works/pi/pull/8941) by [@scturtle](https://github.com/scturtle)).
 - Added an optional timestamp argument to `uuidv7()` for follower IDs.
 - Added narrow `api`, `providers`, and `utils` subpath exports for direct imports without loading the package barrel.
-- Added Anthropic per-turn effort persistence, deterministic historical effort markers, and signed-thinking mismatch recovery for supported Claude models across Anthropic Messages transports, including OpenRouter.
+
+### Changed
+
+- Changed `getSupportedThinkingLevels` to offer `xhigh` for reasoning models that ship no `thinkingLevelMap` (their level vocabulary is uncurated): OpenAI-style adapters send the unmapped level raw, so a provider that does not support it rejects the request with an actionable error; the Anthropic, Bedrock, and Google adapters map it to effort `high` (see the `Fixed` entry below for how Google got there), and zai models without `supportsReasoningEffort` send no effort at all. Models with a map — including maps that omit the `xhigh` key — are unchanged, and `max` stays opt-in ([earendil-works/pi#4344](https://github.com/earendil-works/pi/issues/4344)).
+- Changed the generated Azure catalog to pin `xhigh: null` on the mapless o-series and realtime mirrors (`o1`, `o1-pro`, `o3`, `o3-mini`, `o3-pro`, `o4-mini`, `gpt-realtime-2.1`): the mapless-unknown offer rule advertised `xhigh` their API rejects with a 400 ([#139](https://github.com/R-Dson/pi/issues/139)).
 
 ### Fixed
 
-- Removed the unavailable Grok Build 0.1 model from the built-in xAI catalog ([#9093](https://github.com/earendil-works/pi/pull/9093) by [@Jaaneek](https://github.com/Jaaneek)).
-- Fixed assistant-message frames preserving the provider thinking level.
-- Fixed simple provider streams to consistently emit standard stream events and custom tool-call deltas.
+- Fixed unmapped `xhigh`/`max` on Google models failing every request client-side: the Google resolver cannot send an unmapped level, so a persisted `xhigh` default crossing onto a mapless Google model (the catalog's Gemini 2.5-era entries) hit `Unsupported Google thinking level mapping` on every request. Unmapped `xhigh`/`max` now degrade to `high`, matching the Anthropic, Bedrock, and Mistral adapters; the footer still displays the requested level, so the degradation is a wire-only divergence like zai's label-only `xhigh`. Explicit garbage or `null` mappings still throw, and mapped values stay authoritative ([#124](https://github.com/R-Dson/pi/issues/124)).
 - Fixed the Qwen Token Plan Individual catalog to include Qwen3.8 Flash ([#9021](https://github.com/earendil-works/pi/issues/9021)).
 - Fixed Baseten GLM-5.2 models incorrectly advertising image input support ([#8293](https://github.com/earendil-works/pi/pull/8293) by [@Panoplos](https://github.com/Panoplos)).
 - Fixed Fireworks GLM models using the wrong API adapter.
@@ -33,7 +37,9 @@
 - Fixed GitHub Copilot Claude Fable 5 requests to use the Anthropic Messages adapter so selected reasoning levels are sent ([#8961](https://github.com/earendil-works/pi/issues/8961)).
 - Fixed OpenAI Codex SSE parsing to process terminal events that are not followed by a blank line ([#9047](https://github.com/earendil-works/pi/issues/9047)).
 - Fixed `NO_PROXY` matching for both root domains and subdomains ([#8737](https://github.com/earendil-works/pi/pull/8737) by [@MeiSiristhebest](https://github.com/MeiSiristhebest)).
-
+- Removed the unavailable Grok Build 0.1 model from the built-in xAI catalog ([#9093](https://github.com/earendil-works/pi/pull/9093) by [@Jaaneek](https://github.com/Jaaneek)).
+- Fixed assistant-message frames preserving the provider thinking level.
+- Fixed simple provider streams to consistently emit standard stream events and custom tool-call deltas.
 ## [0.84.4] - 2026-08-28
 
 ### Added

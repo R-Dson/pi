@@ -45,6 +45,7 @@ export {
 	generateSummaryWithUsage,
 	getLastAssistantUsage,
 	prepareBranchEntries,
+	type SummarizationPrefix,
 	serializeConversation,
 	shouldCompact,
 } from "./core/compaction/index.ts";
@@ -255,6 +256,7 @@ export {
 	sessionEntryToContextMessages,
 	type ThinkingLevelChangeEntry,
 } from "./core/session-manager.ts";
+export type { CacheUsageTotals, RequestKind } from "./core/sessions/cache-usage.ts";
 export {
 	type CompactionSettings,
 	type DefaultProjectTrust,
@@ -302,6 +304,8 @@ export {
 	type EditToolDetails,
 	type EditToolInput,
 	type EditToolOptions,
+	evaluatePermission,
+	evaluatePermissionLayered,
 	type FindOperations,
 	type FindToolDetails,
 	type FindToolInput,
@@ -315,6 +319,8 @@ export {
 	type LsToolDetails,
 	type LsToolInput,
 	type LsToolOptions,
+	type PermissionDecision,
+	type PermissionRule,
 	type PowerShellOperations,
 	type PowerShellSpawnContext,
 	type PowerShellSpawnHook,
@@ -325,6 +331,10 @@ export {
 	type ReadToolDetails,
 	type ReadToolInput,
 	type ReadToolOptions,
+	resolveProfileConfig,
+	TOOL_CAPABILITIES,
+	type ToolCapability,
+	type ToolProfile,
 	type ToolsOptions,
 	type TruncationOptions,
 	type TruncationResult,

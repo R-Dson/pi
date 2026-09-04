@@ -37,6 +37,7 @@ export interface Args {
 	noExtensions?: boolean;
 	print?: boolean;
 	export?: string;
+	validateSession?: string;
 	noSkills?: boolean;
 	skills?: string[];
 	promptTemplates?: string[];
@@ -163,6 +164,12 @@ export function parseArgs(args: string[]): Args {
 			}
 		} else if (arg === "--export" && i + 1 < args.length) {
 			result.export = args[++i];
+		} else if (arg === "--validate-session") {
+			if (i + 1 < args.length) {
+				result.validateSession = args[++i];
+			} else {
+				result.diagnostics.push({ type: "error", message: "--validate-session requires a path" });
+			}
 		} else if ((arg === "--extension" || arg === "-e") && i + 1 < args.length) {
 			result.extensions = result.extensions ?? [];
 			result.extensions.push(args[++i]);
@@ -310,6 +317,7 @@ ${chalk.bold("Options:")}
   --no-themes                    Disable theme discovery and loading
   --no-context-files, -nc        Disable AGENTS.md and CLAUDE.md discovery and loading
   --export <file>                Export session file to HTML and exit
+  --validate-session <path>      Validate a session file and print a report, then exit
   --list-models [search]         List available models (with optional fuzzy search)
   --verbose                      Force verbose startup (overrides quietStartup setting)
   --tui-mode <mode>              TUI mode: regular (default) or fullscreen
@@ -433,7 +441,6 @@ ${chalk.bold("Environment Variables:")}
   PI_SERVER_DIR                    - Experimental server profile and socket directory (default: ~/.pi/server)
   PI_SERVER_ID                     - Logical experimental server ID (overridden by --server-id)
   PI_OFFLINE                       - Disable startup network operations when set to 1/true/yes
-  PI_TELEMETRY                     - Override install telemetry when set to 1/true/yes or 0/false/no
   PI_SHARE_VIEWER_URL              - Base URL for /share command (default: https://pi.dev/session/)
 
 ${chalk.bold("Built-in Tool Names:")}

@@ -1,7 +1,6 @@
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { Transport } from "@earendil-works/pi-ai";
 import type { TuiMode as RendererTuiMode, ScrollViewScrollbar, TerminalCapabilities } from "@earendil-works/pi-tui";
-import { randomUUID } from "crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 import lockfile from "proper-lockfile";
@@ -9,6 +8,7 @@ import { CONFIG_DIR_NAME, getAgentDir } from "../config.ts";
 import { normalizePath, resolvePath } from "../utils/paths.ts";
 import { stripBom } from "../utils/text.ts";
 import { DEFAULT_HTTP_IDLE_TIMEOUT_MS, parseHttpIdleTimeoutMs } from "./http-dispatcher.ts";
+import { DEFAULT_MAX_TOOL_OUTPUT_BYTES } from "./tools/output-bounds.ts";
 
 export interface CompactionSettings {
 	enabled?: boolean; // default: true
@@ -70,6 +70,15 @@ export interface WarningSettings {
 	anthropicExtraUsage?: boolean; // default: true
 }
 
+export interface ToolsSettings {
+	/**
+	 * Max UTF-8 bytes of tool result text content sent to the model before it is
+	 * bounded to a head+tail excerpt with the full output spilled to an artifact
+	 * file (persisted sessions). Default: 204800 (200KB). Values <= 0 disable bounding.
+	 */
+	maxToolOutputBytes?: number;
+}
+
 export type DefaultProjectTrust = "ask" | "always" | "never";
 
 export type TransportSetting = Transport;
@@ -113,9 +122,6 @@ export interface Settings {
 	shellCommandPrefix?: string; // Prefix prepended to every bash command (e.g., "shopt -s expand_aliases" for alias support)
 	npmCommand?: string[]; // Command used for npm package lookup/install operations, argv-style (e.g., ["mise", "exec", "node@20", "--", "npm"])
 	collapseChangelog?: boolean; // Show condensed changelog after update (use /changelog for full)
-	enableInstallTelemetry?: boolean; // default: true - anonymous version/update ping after changelog-detected updates
-	enableAnalytics?: boolean; // default: false - opt-in analytics data sharing
-	trackingId?: string; // analytics tracking identifier, generated when analytics is enabled
 	packages?: PackageSource[]; // Array of npm/git package sources (string or object with filtering)
 	extensions?: string[]; // Array of local extension file paths or directories
 	skills?: string[]; // Array of local skill file paths or directories
@@ -126,6 +132,7 @@ export interface Settings {
 	images?: ImageSettings;
 	enabledModels?: string[]; // Model patterns for cycling (same format as --models CLI flag)
 	defaultTools?: string[]; // Initial built-in tool selection
+	tools?: ToolsSettings; // Tool result output bounding
 	doubleEscapeAction?: "fork" | "tree" | "none"; // Action for double-escape with empty editor (default: "tree")
 	treeFilterMode?: "default" | "no-tools" | "user-only" | "labeled-only" | "all"; // Default filter when opening /tree
 	thinkingBudgets?: ThinkingBudgetsSettings; // Custom token budgets for thinking levels
@@ -1006,35 +1013,6 @@ export class SettingsManager {
 		this.save();
 	}
 
-	getEnableInstallTelemetry(): boolean {
-		return this.settings.enableInstallTelemetry ?? true;
-	}
-
-	setEnableInstallTelemetry(enabled: boolean): void {
-		this.globalSettings.enableInstallTelemetry = enabled;
-		this.markModified("enableInstallTelemetry");
-		this.save();
-	}
-
-	getEnableAnalytics(): boolean {
-		return this.settings.enableAnalytics ?? false;
-	}
-
-	getTrackingId(): string | undefined {
-		return this.settings.trackingId;
-	}
-
-	/** Set the analytics opt-in preference; generates a tracking identifier on first opt-in */
-	setEnableAnalytics(enabled: boolean): void {
-		this.globalSettings.enableAnalytics = enabled;
-		this.markModified("enableAnalytics");
-		if (enabled && !this.globalSettings.trackingId) {
-			this.globalSettings.trackingId = randomUUID();
-			this.markModified("trackingId");
-		}
-		this.save();
-	}
-
 	getPackages(): PackageSource[] {
 		return [...(this.settings.packages ?? [])];
 	}
@@ -1273,6 +1251,11 @@ export class SettingsManager {
 	getDefaultTools(): string[] | undefined {
 		const tools = this.settings.defaultTools;
 		return tools ? [...tools] : undefined;
+	}
+
+	getMaxToolOutputBytes(): number {
+		const value = this.settings.tools?.maxToolOutputBytes;
+		return typeof value === "number" && Number.isFinite(value) ? value : DEFAULT_MAX_TOOL_OUTPUT_BYTES;
 	}
 
 	setEnabledModels(patterns: string[] | undefined): void {

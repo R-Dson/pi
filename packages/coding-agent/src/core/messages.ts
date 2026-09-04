@@ -193,3 +193,39 @@ export function convertToLlm(messages: AgentMessage[]): Message[] {
 		})
 		.filter((m) => m !== undefined);
 }
+
+/**
+ * Replace image content in converted messages with text placeholders (the
+ * `images.blockImages` setting). Applies to ALL messages, including ones the
+ * provider already saw — removing image tokens from context is the point —
+ * so toggling the setting mid-session rewrites history and busts the prefix
+ * cache. Exported so the SDK assembly and the test harness apply the
+ * identical rewrite.
+ */
+export function replaceImagesWithPlaceholders(converted: Message[]): Message[] {
+	return converted.map((msg) => {
+		if (msg.role === "user" || msg.role === "toolResult") {
+			const content = msg.content;
+			if (Array.isArray(content)) {
+				const hasImages = content.some((c) => c.type === "image");
+				if (hasImages) {
+					const filteredContent = content
+						.map((c) => (c.type === "image" ? { type: "text" as const, text: "Image reading is disabled." } : c))
+						.filter(
+							(c, i, arr) =>
+								// Dedupe consecutive "Image reading is disabled." texts
+								!(
+									c.type === "text" &&
+									c.text === "Image reading is disabled." &&
+									i > 0 &&
+									arr[i - 1].type === "text" &&
+									(arr[i - 1] as { type: "text"; text: string }).text === "Image reading is disabled."
+								),
+						);
+					return { ...msg, content: filteredContent };
+				}
+			}
+		}
+		return msg;
+	});
+}

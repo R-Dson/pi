@@ -6,6 +6,8 @@
 
 ### Fixed
 
+- Fixed the per-tool `timeoutMs` deadline leaving its timer, signal, and pending deadline promise alive for up to `timeoutMs` after the call returned: the deadline is now an `AbortController` with the timer cleared when the tool settles early ([#139](https://github.com/R-Dson/pi/issues/139)).
+- Fixed signal-killed tool processes reporting exit code zero: a process terminated by a signal now maps to a non-zero exit code derived from the signal ([earendil-works/pi#8994](https://github.com/earendil-works/pi/issues/8994)).
 - Fixed proxied assistant responses dropping persisted provider-native thinking levels.
 - Fixed the write tool reporting UTF-16 code-unit counts as byte counts by removing the misleading count ([#8979](https://github.com/earendil-works/pi/issues/8979)).
 
@@ -13,7 +15,11 @@
 
 ### Breaking Changes
 
-- Changed `prepareNextTurn` and `prepareNextTurnWithContext` to run only after `shouldStopAfterTurn` and queued-message checks determine that the agent loop will start another assistant turn. They no longer run after final or terminating turns; move end-of-run work to `agent_end` handling ([#6879](https://github.com/earendil-works/pi/issues/6879)).
+- Changed inherited `prepareNextTurn` and `prepareNextTurnWithContext` to run only after `shouldStopAfterTurn` and queued-message checks determine that the agent loop will start another assistant turn. They no longer run after final or terminating turns; move end-of-run work to `agent_end` handling ([#6879](https://github.com/earendil-works/pi/issues/6879)).
+
+### Added
+
+- Added optional per-tool `timeoutMs`: past the deadline the agent loop aborts the tool's signal and records a terminal timeout error result, and the run continues; tools without a deadline behave as before ([#8](https://github.com/R-Dson/pi/issues/8)).
 
 ### Fixed
 

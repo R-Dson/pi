@@ -14,7 +14,7 @@
  */
 
 import { readFileSync } from "node:fs";
-import { basename, dirname } from "node:path";
+import { basename, dirname, join } from "node:path";
 import type {
 	Agent,
 	AgentContext,
@@ -104,12 +104,16 @@ import type { ResourceExtensionPaths, ResourceLoader } from "./resource-loader.t
 import { exportSessionToJsonl } from "./session-export.ts";
 import type { BranchSummaryEntry, CompactionEntry, SessionEntry, SessionManager } from "./session-manager.ts";
 import { getLatestCompactionEntry } from "./session-manager.ts";
+import type { CacheUsageTotals, RequestKind } from "./sessions/cache-usage.ts";
+import { type PrefixInvalidationCause, serializeTools } from "./sessions/prefix-stability.ts";
+import { ProviderRequestObserver, unwrapStreamFn } from "./sessions/request-observer.ts";
 import type { SettingsManager } from "./settings-manager.ts";
 import type { SlashCommandInfo } from "./slash-commands.ts";
 import { createSyntheticSourceInfo, type SourceInfo } from "./source-info.ts";
 import { type BuildSystemPromptOptions, buildSystemPrompt } from "./system-prompt.ts";
 import { type BashOperations, createLocalBashOperations } from "./tools/bash.ts";
 import { createAllToolDefinitions } from "./tools/index.ts";
+import { boundToolResultText } from "./tools/output-bounds.ts";
 import { createToolDefinitionFromAgentTool } from "./tools/tool-definition-wrapper.ts";
 import { addUsageToTotals, createUsageTotals } from "./usage-totals.ts";
 
@@ -182,7 +186,13 @@ export type AgentSessionEvent =
 			reason: "manual" | "threshold" | "overflow";
 	  }
 	| { type: "summarization_retry_finished" }
-	| { type: "bash_execution_update"; id?: string; delta: string };
+	| { type: "bash_execution_update"; id?: string; delta: string }
+	| {
+			/** Prefix monitor (issue #41): an unannounced request-prefix invalidation. */
+			type: "prefix_invalidated";
+			cause: PrefixInvalidationCause;
+			firstDivergenceIndex?: number;
+	  };
 
 /** Listener function for agent session events */
 export type AgentSessionEventListener = (event: AgentSessionEvent) => void;
@@ -274,6 +284,29 @@ export interface SessionStats {
 	assistantMessages: number;
 	toolCalls: number;
 	toolResults: number;
+	/** Total UTF-8 bytes of text content across toolResult messages. Session-wide (derived from entries, survives resume). */
+	toolOutputBytes: number;
+	/**
+	 * UTF-8 bytes removed from tool results by output bounding. Covers the
+	 * current session run only; counters are not resumed.
+	 */
+	truncatedToolOutputBytes: number;
+	/** Tool results spilled to artifact files by output bounding. Current session run only; not resumed. */
+	toolOutputArtifacts: number;
+	/**
+	 * Prefix invalidations by cause (issue #41): every provider request whose
+	 * prefix diverged from the previous one, attributed to the announcing
+	 * subsystem or to the unexpected change. Current session run only; not resumed.
+	 */
+	prefixInvalidationsByCause: Partial<Record<PrefixInvalidationCause, number>>;
+	/**
+	 * Cache usage split by request kind (issue #42): regular turns, the
+	 * compaction and branch-summary summarizer calls, and retried requests,
+	 * each with the request count and its final message's usage. Current
+	 * session run only; not resumed (the session log carries no
+	 * high-frequency per-request telemetry).
+	 */
+	cacheUsageByKind: Partial<Record<RequestKind, CacheUsageTotals>>;
 	totalMessages: number;
 	tokens: {
 		input: number;
@@ -346,6 +379,28 @@ export class AgentSession {
 	private readonly _bashAbortControllers = new Set<AbortController>();
 	private _pendingBashMessages: BashExecutionMessage[] = [];
 
+	// Tool output diagnostics, accumulated at the output-bounding hook.
+	// In-memory only: a resumed session restarts these counters from zero.
+	private _truncatedToolOutputBytes = 0;
+	private _toolOutputArtifacts = 0;
+
+	// Provider-request observer (fork module `core/sessions/request-observer.ts`):
+	// prefix-stability monitoring (issue #41), cache-usage attribution (issue
+	// #42), blockImages flip detection (issue #53), and wire-rewrite consumption
+	// (issue #56), all observed at the streamFn boundary. In-memory only: a
+	// resumed session restarts these counters from zero.
+	private readonly _requestObserver = new ProviderRequestObserver(
+		(event) => this._emit(event),
+		() => this.settingsManager.getBlockImages(),
+	);
+	// Last serialized active-tool set (monitor's own serialization): schema-only
+	// re-registrations announce tool-set-change instead of surfacing as
+	// unexpected invalidations on the next prefix diff.
+	private _lastActiveToolsFingerprint: string | undefined;
+	// The in-flight agent_settled emission, if any: a prompt arriving while the
+	// session already reports idle waits for it before starting its run.
+	private _settleWait: Promise<void> | undefined;
+
 	// Extension system
 	private _extensionRunner!: ExtensionRunner;
 	private _turnIndex = 0;
@@ -402,6 +457,7 @@ export class AgentSession {
 		this._unsubscribeAgent = this.agent.subscribe(this._handleAgentEvent);
 		this._installAgentToolHooks();
 		this._installAgentNextTurnRefresh();
+		this.agent.streamFunction = this._requestObserver.wrap(this.agent.streamFunction);
 
 		this._buildRuntime({
 			activeToolNames: this._initialActiveToolNames,
@@ -456,7 +512,7 @@ export class AgentSession {
 		headers?: Record<string, string>;
 		env?: Record<string, string>;
 	}> {
-		if (this.agent.streamFunction === streamSimple) {
+		if (unwrapStreamFn(this.agent.streamFunction) === streamSimple) {
 			return this._getRequiredRequestAuth(model);
 		}
 
@@ -526,12 +582,29 @@ export class AgentSession {
 				autoResizeImages: this.settingsManager.getImageAutoResize(),
 			});
 
-			if (!hookResult && normalizedContent === content) {
+			// Runs last so bounding applies to the final model-visible text.
+			const bounded = await boundToolResultText(normalizedContent, {
+				maxBytes: this.settingsManager.getMaxToolOutputBytes(),
+				toolName: toolCall.name,
+				toolCallId: toolCall.id,
+				artifactsDir: this.sessionManager.isPersisted()
+					? join(this.sessionManager.getSessionDir(), "artifacts", this.sessionManager.getSessionId())
+					: undefined,
+			});
+
+			if (bounded.bounded) {
+				this._truncatedToolOutputBytes += bounded.totalBytes - bounded.shownBytes;
+				if (bounded.artifactPath) {
+					this._toolOutputArtifacts++;
+				}
+			}
+
+			if (!hookResult && normalizedContent === content && !bounded.bounded) {
 				return undefined;
 			}
 
 			return {
-				content: normalizedContent,
+				content: bounded.content,
 				details: hookResult?.details,
 				isError: hookResult?.isError ?? isError,
 				usage: hookResult?.usage,
@@ -953,6 +1026,7 @@ export class AgentSession {
 			description: definition.description,
 			parameters: definition.parameters,
 			promptGuidelines: definition.promptGuidelines,
+			capability: definition.capability,
 			sourceInfo,
 		}));
 	}
@@ -978,6 +1052,19 @@ export class AgentSession {
 			}
 		}
 		this.agent.state.tools = tools;
+		// Announce on any serialized tool change, not just name-list changes: a
+		// re-registered tool with a changed schema (e.g. a regenerated enum)
+		// rewrites the request's tools section with the same names. The
+		// fingerprint reuses the monitor's own serialization, so it flags
+		// exactly the rewrites the prefix diff will see — no more. The first
+		// computation initializes silently, like the blockImages tracker.
+		const toolsFingerprint = JSON.stringify(serializeTools(tools));
+		if (this._lastActiveToolsFingerprint === undefined) {
+			this._lastActiveToolsFingerprint = toolsFingerprint;
+		} else if (toolsFingerprint !== this._lastActiveToolsFingerprint) {
+			this._requestObserver.expectInvalidation("tool-set-change");
+			this._lastActiveToolsFingerprint = toolsFingerprint;
+		}
 
 		// Rebuild base system prompt with new tool set
 		this._baseSystemPrompt = this._rebuildSystemPrompt(validToolNames);
@@ -1103,6 +1190,13 @@ export class AgentSession {
 	// =========================================================================
 
 	private async _runAgentPrompt(messages: AgentMessage | AgentMessage[]): Promise<void> {
+		// Wait out any in-flight settle emission before starting: idle is
+		// already reported during settle handlers (pinned contract, #6363), so
+		// a run started now — from prompt() or a trigger-turn message — would
+		// race the handlers, e.g. a model-handoff return switching the model.
+		if (this._settleWait) {
+			await this._settleWait;
+		}
 		this._isAgentRunActive = true;
 		try {
 			await this.agent.prompt(messages);
@@ -1113,7 +1207,19 @@ export class AgentSession {
 			this._systemPromptOverride = undefined;
 			this._flushPendingBashMessages();
 			this._flushPendingCustomMessages();
-			await this._emitAgentSettled();
+			// Armed before the emission starts so even a message triggered from
+			// the first handler's synchronous body parks instead of racing the
+			// remaining handlers.
+			let releaseSettle: () => void = () => {};
+			this._settleWait = new Promise<void>((resolve) => {
+				releaseSettle = resolve;
+			});
+			try {
+				await this._emitAgentSettled();
+			} finally {
+				this._settleWait = undefined;
+				releaseSettle();
+			}
 		}
 	}
 
@@ -1296,10 +1402,16 @@ export class AgentSession {
 			}
 			// Apply extension-modified system prompt, or reset to base
 			if (result?.systemPrompt !== undefined) {
+				if (result.systemPrompt !== this.agent.state.systemPrompt) {
+					this._requestObserver.expectInvalidation("extension-override");
+				}
 				this._systemPromptOverride = result.systemPrompt;
 				this.agent.state.systemPrompt = result.systemPrompt;
 			} else {
 				// Ensure we're using the base prompt (in case previous turn had modifications)
+				if (this._baseSystemPrompt !== this.agent.state.systemPrompt) {
+					this._requestObserver.expectInvalidation("extension-override");
+				}
 				this._systemPromptOverride = undefined;
 				this.agent.state.systemPrompt = this._baseSystemPrompt;
 			}
@@ -1663,6 +1775,9 @@ export class AgentSession {
 		const previousModel = this.model;
 		const thinkingLevel = this._getThinkingLevelForModelSwitch(model);
 		this.agent.state.model = model;
+		if (!modelsAreEqual(previousModel, model)) {
+			this._requestObserver.expectInvalidation("model-change");
+		}
 		this.sessionManager.appendModelChange(model.provider, model.id);
 		if (options.persist) {
 			this.settingsManager.setDefaultModelAndProvider(model.provider, model.id);
@@ -1730,6 +1845,7 @@ export class AgentSession {
 
 		// Apply model
 		this.agent.state.model = next.model;
+		this._requestObserver.expectInvalidation("model-change");
 		this.sessionManager.appendModelChange(next.model.provider, next.model.id);
 		if (options.persist) {
 			this.settingsManager.setDefaultModelAndProvider(next.model.provider, next.model.id);
@@ -1765,6 +1881,7 @@ export class AgentSession {
 
 		const thinkingLevel = this._getThinkingLevelForModelSwitch(nextModel);
 		this.agent.state.model = nextModel;
+		this._requestObserver.expectInvalidation("model-change");
 		this.sessionManager.appendModelChange(nextModel.provider, nextModel.id);
 		if (options.persist) {
 			this.settingsManager.setDefaultModelAndProvider(nextModel.provider, nextModel.id);
@@ -1907,19 +2024,33 @@ export class AgentSession {
 		env: Record<string, string> | undefined,
 		reason: "manual" | "threshold" | "overflow",
 	): Promise<CompactionResult> {
-		return compact(
-			preparation,
-			requestModel,
-			apiKey,
-			headers,
-			customInstructions,
-			signal,
-			this.thinkingLevel,
-			this.agent.streamFunction,
-			env,
-			this.settingsManager.getRetrySettings(),
-			this._summarizationRetryCallbacks({ source: "compaction", reason }),
-			undefined, // sessionId
+		// Announce before the call: the phase-A replay request is NOT append-only
+		// relative to the previous regular request (it swaps the trailing user
+		// turn for the summarizer instruction, and the split-turn turn-prefix
+		// summary is a standalone context), so the replay calls must attribute
+		// to "compaction" rather than surface as unexpected.
+		this._requestObserver.expectInvalidation("compaction");
+		return this._requestObserver.withRequestKind("compaction", () =>
+			compact(
+				preparation,
+				requestModel,
+				{
+					// Replay the agent's live request prefix so the summarizer call hits
+					// the provider prompt cache instead of a full uncached context.
+					systemPrompt: this.agent.state.systemPrompt,
+					tools: this.agent.state.tools,
+				},
+				apiKey,
+				headers,
+				customInstructions,
+				signal,
+				this.thinkingLevel,
+				this.agent.streamFunction,
+				env,
+				this.settingsManager.getRetrySettings(),
+				this._summarizationRetryCallbacks({ source: "compaction", reason }),
+				this.agent.sessionId,
+			),
 		);
 	}
 
@@ -2032,6 +2163,9 @@ export class AgentSession {
 			const newEntries = this.sessionManager.getEntries();
 			const sessionContext = this.sessionManager.buildSessionContext();
 			this.agent.state.messages = sessionContext.messages;
+			// The rebuilt context (checkpoint + kept tail) starts a new prefix; the
+			// next regular request must attribute to compaction, not surprise us.
+			this._requestObserver.expectInvalidation("compaction");
 			const estimatedTokensAfter = estimateMessagesTokens(sessionContext.messages);
 
 			// Get the saved compaction entry for the extension event
@@ -2357,6 +2491,9 @@ export class AgentSession {
 			const newEntries = this.sessionManager.getEntries();
 			const sessionContext = this.sessionManager.buildSessionContext();
 			this.agent.state.messages = sessionContext.messages;
+			// The rebuilt context (checkpoint + kept tail) starts a new prefix; the
+			// next regular request must attribute to compaction, not surprise us.
+			this._requestObserver.expectInvalidation("compaction");
 			const estimatedTokensAfter = estimateMessagesTokens(sessionContext.messages);
 
 			// Get the saved compaction entry for the extension event
@@ -2394,6 +2531,9 @@ export class AgentSession {
 				if (lastMsg?.role === "assistant" && (lastMsg.stopReason === "error" || lastMsg.stopReason === "length")) {
 					this.agent.state.messages = messages.slice(0, -1);
 				}
+				// The continuation re-issues the interrupted turn: mark it for
+				// cache-usage attribution (issue #42).
+				this._requestObserver.markNextRequestAsRetry();
 				return true;
 			}
 
@@ -2488,7 +2628,11 @@ export class AgentSession {
 		};
 
 		this._resourceLoader.extendResources(extensionPaths);
-		this._baseSystemPrompt = this._rebuildSystemPrompt(this.getActiveToolNames());
+		const rebuiltPrompt = this._rebuildSystemPrompt(this.getActiveToolNames());
+		if (rebuiltPrompt !== this.agent.state.systemPrompt) {
+			this._requestObserver.expectInvalidation("extension-override");
+		}
+		this._baseSystemPrompt = rebuiltPrompt;
 		this.agent.state.systemPrompt = this._baseSystemPrompt;
 	}
 
@@ -2876,6 +3020,9 @@ export class AgentSession {
 				});
 			},
 			onRetryAttemptStart: () => {
+				// Fires immediately before the retried summarizer call re-issues
+				// the failed request: mark it for cache-usage attribution (issue #42).
+				this._requestObserver.markNextRequestAsRetry();
 				this._emit({
 					type: "summarization_retry_attempt_start",
 					...source,
@@ -2940,6 +3087,9 @@ export class AgentSession {
 			this._retryAbortController = undefined;
 		}
 
+		// The caller continues the agent, whose next provider request re-issues
+		// the failed one: mark it for cache-usage attribution (issue #42).
+		this._requestObserver.markNextRequestAsRetry();
 		return true;
 	}
 
@@ -3201,20 +3351,34 @@ export class AgentSession {
 			if (options.summarize && entriesToSummarize.length > 0 && !extensionSummary) {
 				const model = this.model!;
 				const { model: requestModel, apiKey, headers, env } = await this._getSummarizationRequestAuth(model);
+				// The branch-summary replay request reorders history around the
+				// abandoned branch; it is an expected invalidation of the prefix.
+				this._requestObserver.expectInvalidation("session-reset");
 				const branchSummarySettings = this.settingsManager.getBranchSummarySettings();
-				const result = await generateBranchSummary(entriesToSummarize, {
-					model: requestModel,
-					apiKey,
-					headers,
-					env,
-					signal: this._branchSummaryAbortController.signal,
-					customInstructions,
-					replaceInstructions,
-					reserveTokens: branchSummarySettings.reserveTokens,
-					streamFn: this.agent.streamFunction,
-					retry: this.settingsManager.getRetrySettings(),
-					callbacks: this._summarizationRetryCallbacks({ source: "branchSummary" }),
-				});
+				const branchSummarySignal = this._branchSummaryAbortController.signal;
+				const result = await this._requestObserver.withRequestKind("branch-summary", () =>
+					generateBranchSummary(entriesToSummarize, {
+						model: requestModel,
+						apiKey,
+						headers,
+						env,
+						signal: branchSummarySignal,
+						customInstructions,
+						replaceInstructions,
+						reserveTokens: branchSummarySettings.reserveTokens,
+						streamFn: this.agent.streamFunction,
+						retry: this.settingsManager.getRetrySettings(),
+						callbacks: this._summarizationRetryCallbacks({ source: "branchSummary" }),
+						// Replay the agent's live request prefix so the branch-summary call
+						// hits the provider prompt cache instead of a full uncached context,
+						// under the same session routing id regular requests carry.
+						sessionId: this.agent.sessionId,
+						prefix: {
+							systemPrompt: this.agent.state.systemPrompt,
+							tools: this.agent.state.tools,
+						},
+					}),
+				);
 				if (result.aborted) {
 					return { cancelled: true, aborted: true };
 				}
@@ -3284,6 +3448,9 @@ export class AgentSession {
 			// Update agent state
 			const sessionContext = this.sessionManager.buildSessionContext();
 			this.agent.state.messages = sessionContext.messages;
+			// Tree navigation jumps to a different point in history: an expected
+			// full-prefix reset for the next regular request.
+			this._requestObserver.expectInvalidation("session-reset");
 
 			// Emit session_tree event
 			await this._extensionRunner.emit({
@@ -3334,6 +3501,7 @@ export class AgentSession {
 		let toolResults = 0;
 		let totalMessages = 0;
 		let toolCalls = 0;
+		let toolOutputBytes = 0;
 		const usageTotals = createUsageTotals();
 
 		for (const entry of this.sessionManager.getEntries()) {
@@ -3347,6 +3515,11 @@ export class AgentSession {
 				userMessages++;
 			} else if (message.role === "toolResult") {
 				toolResults++;
+				for (const block of message.content) {
+					if (block.type === "text") {
+						toolOutputBytes += Buffer.byteLength(block.text, "utf-8");
+					}
+				}
 				if (message.usage) {
 					addUsageToTotals(usageTotals, message.usage);
 				}
@@ -3367,6 +3540,11 @@ export class AgentSession {
 			assistantMessages,
 			toolCalls,
 			toolResults,
+			toolOutputBytes,
+			truncatedToolOutputBytes: this._truncatedToolOutputBytes,
+			toolOutputArtifacts: this._toolOutputArtifacts,
+			prefixInvalidationsByCause: this._requestObserver.prefixInvalidationsByCause,
+			cacheUsageByKind: this._requestObserver.cacheUsageByKind,
 			totalMessages,
 			tokens: {
 				input: usageTotals.input,

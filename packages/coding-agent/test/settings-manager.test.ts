@@ -3,7 +3,7 @@ import { homedir } from "os";
 import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DEFAULT_HTTP_IDLE_TIMEOUT_MS } from "../src/core/http-dispatcher.ts";
-import { type Settings, SettingsManager } from "../src/core/settings-manager.ts";
+import { type Settings, SettingsManager, type ToolsSettings } from "../src/core/settings-manager.ts";
 
 describe("SettingsManager", () => {
 	const testDir = join(process.cwd(), "test-settings-tmp");
@@ -623,6 +623,37 @@ describe("SettingsManager", () => {
 			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ shellPath: "~" }));
 			const manager = SettingsManager.create(projectDir, agentDir);
 			expect(manager.getShellPath()).toBe(homedir());
+		});
+	});
+
+	describe("tools.maxToolOutputBytes", () => {
+		it("should default to 200KB", () => {
+			expect(SettingsManager.inMemory().getMaxToolOutputBytes()).toBe(200 * 1024);
+		});
+
+		it("should return the configured value", () => {
+			const manager = SettingsManager.inMemory({ tools: { maxToolOutputBytes: 4096 } });
+			expect(manager.getMaxToolOutputBytes()).toBe(4096);
+		});
+
+		it("should fall back to the default when the value is not a finite number", () => {
+			const manager = SettingsManager.inMemory({
+				tools: { maxToolOutputBytes: "lots" as unknown as number },
+			});
+			expect(manager.getMaxToolOutputBytes()).toBe(200 * 1024);
+		});
+	});
+
+	describe("removed tools.permissions setting (fork issue #70)", () => {
+		it("loads settings carrying tools.permissions keys and ignores them", () => {
+			// The keys model a settings file written by v0.84.3-fork.3; they are
+			// untyped JSON at runtime and unknown to the current Settings type.
+			const staleTools = {
+				permissions: { mode: "policy", rules: [{ effect: "deny" }], profile: "review" },
+				maxToolOutputBytes: 1000,
+			} as unknown as ToolsSettings;
+			const manager = SettingsManager.inMemory({ tools: staleTools });
+			expect(manager.getMaxToolOutputBytes()).toBe(1000);
 		});
 	});
 });

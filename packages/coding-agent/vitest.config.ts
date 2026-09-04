@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import { defineConfig, mergeConfig } from "vitest/config";
 import baseConfig, { workspaceSourcePaths } from "../../vitest.base.ts";
 
@@ -21,6 +22,21 @@ export default mergeConfig(
 		},
 		resolve: {
 			alias: [
+				// Examples and some tests import the package by its own name;
+				// without this alias they resolve the stale dist/ build instead
+				// of the sources under test.
+				{
+					find: /^@earendil-works\/pi-coding-agent$/,
+					replacement: fileURLToPath(new URL("./src/index.ts", import.meta.url)),
+				},
+				{
+					find: /^@earendil-works\/pi-client$/,
+					replacement: fileURLToPath(new URL("../client/src/index.ts", import.meta.url)),
+				},
+				{
+					find: /^@earendil-works\/pi-protocol$/,
+					replacement: fileURLToPath(new URL("../protocol/src/index.ts", import.meta.url)),
+				},
 				{ find: /^@earendil-works\/pi-ai$/, replacement: workspaceSourcePaths.aiIndex },
 				{ find: /^@earendil-works\/pi-agent-core$/, replacement: workspaceSourcePaths.agentIndex },
 				{ find: /^@mariozechner\/pi-ai$/, replacement: workspaceSourcePaths.aiIndex },

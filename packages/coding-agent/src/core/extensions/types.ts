@@ -84,6 +84,7 @@ import type {
 	ReadToolInput,
 	WriteToolInput,
 } from "../tools/index.ts";
+import type { ToolCapability } from "../tools/permissions.ts";
 
 export type { ExecOptions, ExecResult } from "../exec.ts";
 export type { BuildSystemPromptOptions } from "../system-prompt.ts";
@@ -459,6 +460,14 @@ export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = un
 	promptSnippet?: string;
 	/** Optional guideline bullets appended to the default system prompt Guidelines section when this tool is active. */
 	promptGuidelines?: string[];
+	/**
+	 * Capability this tool exercises (e.g. "filesystem.read"), reported on
+	 * `ToolInfo` so extensions can match tools by capability (see the built-in
+	 * permission-policies extension and the read-only-mode example). Undefined
+	 * for tools without a fixed capability; such tools match only permission
+	 * rules that do not specify a `capability`.
+	 */
+	capability?: ToolCapability;
 	/** Parameter schema (TypeBox) */
 	parameters: TParams;
 	/** Optional provider-side constrained sampling request for this tool. Set false to explicitly disable it, equivalent to leaving it undefined. */
@@ -477,6 +486,16 @@ export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = un
 	 * If omitted, the default execution mode applies.
 	 */
 	executionMode?: ToolExecutionMode;
+
+	/**
+	 * Deadline for a single `execute()` call in milliseconds. When the deadline
+	 * passes, the agent loop aborts the tool's signal and records a terminal
+	 * timeout error result; the run continues. Intended for extension/MCP tools
+	 * that may never settle (network calls, spawned processes); built-in tools
+	 * bound themselves already. Invalid values (NaN, negative, > 2^31-1) fail
+	 * the call with a terminal tool error rather than throwing in the loop.
+	 */
+	timeoutMs?: number;
 
 	/** Execute the tool. */
 	execute(
@@ -788,7 +807,7 @@ export interface MessageUpdateEvent {
 	assistantMessageEvent: AssistantMessageEvent;
 }
 
-/** Fired when a message ends */
+/** Fired when a message ends (user, assistant, or toolResult) */
 export interface MessageEndEvent {
 	type: "message_end";
 	message: AgentMessage;
@@ -1641,8 +1660,11 @@ export type GetSessionNameHandler = () => string | undefined;
 
 export type GetActiveToolsHandler = () => string[];
 
-/** Tool info with name, description, parameter schema, prompt guidelines, and source metadata. */
-export type ToolInfo = Pick<ToolDefinition, "name" | "description" | "parameters" | "promptGuidelines"> & {
+/** Tool info with name, description, parameter schema, prompt guidelines, capability, and source metadata. */
+export type ToolInfo = Pick<
+	ToolDefinition,
+	"name" | "description" | "parameters" | "promptGuidelines" | "capability"
+> & {
 	sourceInfo: SourceInfo;
 };
 

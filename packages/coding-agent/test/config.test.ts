@@ -8,6 +8,8 @@ import {
 	getSelfUpdateCommand,
 	getSelfUpdateUnavailableInstruction,
 	getUpdateInstruction,
+	npmAllowRemoteArgsForInstallSpec,
+	parseNpmMajorVersion,
 } from "../src/config.ts";
 
 const execPathDescriptor = Object.getOwnPropertyDescriptor(process, "execPath");
@@ -146,6 +148,25 @@ function createFakeBunScript(bunBin: string): string {
 	return `#!/bin/sh\nif [ "$1" = "pm" ] && [ "$2" = "bin" ] && [ "$3" = "-g" ]; then\n\tprintf '%s\\n' '${escapedBunBin}'\n\texit 0\nfi\nexit 1\n`;
 }
 
+function createFakeNpmScript(version: string, root: string): string {
+	if (process.platform === "win32") {
+		return `@echo off\r\nif "%1"=="--version" echo ${version}\r\nif "%1"=="root" echo ${root}\r\n`;
+	}
+	const escapedRoot = root.replaceAll("'", "'\\''");
+	return `#!/bin/sh\nif [ "$1" = "--version" ]; then\n\tprintf '%s\\n' '${version}'\n\texit 0\nfi\nif [ "$1" = "root" ] && [ "$2" = "-g" ]; then\n\tprintf '%s\\n' '${escapedRoot}'\n\texit 0\nfi\nexit 1\n`;
+}
+
+function createNpmVersionedInstall(version: string): { prefix: string } {
+	const { prefix } = createNpmPrefixInstall("pi-npm-version-");
+	const root = join(prefix, "lib", "node_modules");
+	const binDir = join(prefix, "bin");
+	mkdirSync(binDir, { recursive: true });
+	writeFileSync(join(binDir, process.platform === "win32" ? "npm.cmd" : "npm"), createFakeNpmScript(version, root));
+	chmodSync(join(binDir, process.platform === "win32" ? "npm.cmd" : "npm"), 0o755);
+	process.env.PATH = `${binDir}${delimiter}${originalPath ?? ""}`;
+	return { prefix };
+}
+
 describe("findNodePackageDir", () => {
 	test("skips binary metadata copied into dist", () => {
 		tempDir = mkdtempSync(join(tmpdir(), "pi-package-dir-"));
@@ -156,6 +177,27 @@ describe("findNodePackageDir", () => {
 		writeFileSync(join(distDir, "package.json"), "{}");
 
 		expect(findNodePackageDir(bundleDir)).toBe(tempDir);
+	});
+});
+
+describe("npm allow-remote flag", () => {
+	test("parses the major from npm version output", () => {
+		expect(parseNpmMajorVersion("11.4.2")).toBe(11);
+		expect(parseNpmMajorVersion("12.0.0")).toBe(12);
+		expect(parseNpmMajorVersion("13.1.0-beta.1")).toBe(13);
+		expect(parseNpmMajorVersion("")).toBeUndefined();
+		expect(parseNpmMajorVersion("not-a-version")).toBeUndefined();
+	});
+
+	test("appends --allow-remote=all only for remote tarball specs on npm >= 12", () => {
+		const tarballUrl = "https://github.com/R-Dson/pi/releases/latest/download/pi-fork.tgz";
+		expect(npmAllowRemoteArgsForInstallSpec(tarballUrl, "12.3.4")).toEqual(["--allow-remote=all"]);
+		expect(npmAllowRemoteArgsForInstallSpec(tarballUrl, "13.0.0")).toEqual(["--allow-remote=all"]);
+		expect(npmAllowRemoteArgsForInstallSpec(tarballUrl, "11.9.1")).toEqual([]);
+		expect(npmAllowRemoteArgsForInstallSpec(tarballUrl, undefined)).toEqual([]);
+		expect(npmAllowRemoteArgsForInstallSpec(tarballUrl, "unparseable")).toEqual([]);
+		expect(npmAllowRemoteArgsForInstallSpec("@r-dson/pi-coding-agent@latest", "12.3.4")).toEqual([]);
+		expect(npmAllowRemoteArgsForInstallSpec("@earendil-works/pi-coding-agent@latest", "12.3.4")).toEqual([]);
 	});
 });
 
@@ -293,6 +335,39 @@ describe("detectInstallMethod", () => {
 		expect(command?.display).toBe(
 			`npm --prefix "${prefix}" install -g --ignore-scripts --min-release-age=0 @earendil-works/pi-coding-agent`,
 		);
+	});
+
+	test("appends --allow-remote=all to remote tarball self-updates on npm >= 12", () => {
+		const { prefix } = createNpmVersionedInstall("12.3.4");
+		const tarballUrl = "https://github.com/R-Dson/pi/releases/latest/download/pi-fork.tgz";
+
+		const command = getSelfUpdateCommand("@earendil-works/pi-coding-agent", undefined, {
+			packageName: "@earendil-works/pi-coding-agent",
+			installSpec: tarballUrl,
+		});
+
+		expect(command?.args).toEqual([
+			"--prefix",
+			prefix,
+			"install",
+			"-g",
+			"--ignore-scripts",
+			"--min-release-age=0",
+			"--allow-remote=all",
+			tarballUrl,
+		]);
+	});
+
+	test("keeps remote tarball self-updates flag-free on npm < 12", () => {
+		createNpmVersionedInstall("11.4.2");
+		const tarballUrl = "https://github.com/R-Dson/pi/releases/latest/download/pi-fork.tgz";
+
+		const command = getSelfUpdateCommand("@earendil-works/pi-coding-agent", undefined, {
+			packageName: "@earendil-works/pi-coding-agent",
+			installSpec: tarballUrl,
+		});
+
+		expect(command?.args).not.toContain("--allow-remote=all");
 	});
 
 	test("does not infer Windows npm custom prefixes from package paths", () => {

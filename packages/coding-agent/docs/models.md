@@ -268,6 +268,8 @@ Values are tristate:
 | string | Level is supported and this value is sent to the provider |
 | `null` | Level is unsupported and hidden/skipped/clamped away |
 
+A model with no `thinkingLevelMap` at all has an uncurated vocabulary: `xhigh` is offered (the provider arbitrates — OpenAI-compatible APIs send it raw, adapters that must translate degrade it to their top effort), and `max` clamps to `xhigh`. Add `"xhigh": null` to a map to hide it on a model known not to support it.
+
 Example for a model that only supports off, high, and max reasoning:
 
 ```json

@@ -77,7 +77,9 @@ describe("AgentSession model and extension characterization", () => {
 
 		harness.session.setThinkingLevel("max", { persist: true });
 
-		expect(harness.session.thinkingLevel).toBe("high");
+		// Mapless reasoning models offer xhigh since 73dd4f751, so "max" clamps
+		// to xhigh, not high; the requested default still persists untouched.
+		expect(harness.session.thinkingLevel).toBe("xhigh");
 		expect(harness.settingsManager.getDefaultThinkingLevel()).toBe("max");
 	});
 
@@ -514,5 +516,29 @@ describe("AgentSession model and extension characterization", () => {
 		await harness.session.reload();
 
 		expect(lifecycleEvents).toEqual(["start:startup", "shutdown:reload", "start:reload"]);
+	});
+
+	it("emits message_end for user messages too", async () => {
+		// #127: MessageEndEvent.message is the full AgentMessage union, so the
+		// event fires at the user-message boundary as well — before any provider
+		// request of the run. Extensions re-registering tools from message_end
+		// land there, not mid-stream; the handoff attribution tests drive
+		// agent_settled accordingly.
+		const roles: string[] = [];
+		const harness = await createHarness({
+			extensionFactories: [
+				(pi) => {
+					pi.on("message_end", async (event) => {
+						roles.push(event.message.role);
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+
+		harness.setResponses([fauxAssistantMessage("reply")]);
+		await harness.session.prompt("hello");
+
+		expect(roles).toEqual(["user", "assistant"]);
 	});
 });

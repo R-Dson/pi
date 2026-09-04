@@ -6,7 +6,7 @@ import { createInMemoryModelRegistry, createModelRegistry, getModelRuntime } fro
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AgentMessage, AgentTool } from "@earendil-works/pi-agent-core";
+import type { AgentMessage, AgentTool, StreamFn } from "@earendil-works/pi-agent-core";
 import { Agent } from "@earendil-works/pi-agent-core";
 import type {
 	FauxModelDefinition,
@@ -18,7 +18,7 @@ import { registerFauxProvider, streamSimple } from "@earendil-works/pi-ai/compat
 import { AgentSession, type AgentSessionEvent } from "../../src/core/agent-session.ts";
 import { AuthStorage } from "../../src/core/auth-storage.ts";
 import type { ExtensionRunner } from "../../src/core/extensions/index.ts";
-import { convertToLlm } from "../../src/core/messages.ts";
+import { convertToLlm, replaceImagesWithPlaceholders } from "../../src/core/messages.ts";
 import { SessionManager } from "../../src/core/session-manager.ts";
 import type { Settings } from "../../src/core/settings-manager.ts";
 import { SettingsManager } from "../../src/core/settings-manager.ts";
@@ -72,6 +72,14 @@ export interface HarnessOptions {
 	extensionFactories?: Array<InlineExtension | CreateTestExtensionsResultInput>;
 	withConfiguredAuth?: boolean;
 	modelsJson?: Record<string, unknown>;
+	/** Custom session manager (e.g. a persisted one); defaults to an in-memory session. */
+	sessionManager?: SessionManager;
+	/**
+	 * Custom agent stream function. Default: the faux provider's `streamSimple`.
+	 * The AgentSession monitor wrapper sits above it, so a custom streamFn sees
+	 * the options object the monitor injected (e.g. `onWireRewrite`).
+	 */
+	streamFn?: StreamFn;
 }
 
 export interface Harness {
@@ -109,7 +117,7 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 	const withConfiguredAuth = options.withConfiguredAuth ?? true;
 	const extensionRunnerRef: { current?: ExtensionRunner } = {};
 
-	const sessionManager = SessionManager.inMemory();
+	const sessionManager = options.sessionManager ?? SessionManager.inMemory();
 	const settingsManager = SettingsManager.inMemory(options.settings);
 
 	const authStorage = AuthStorage.inMemory();
@@ -142,13 +150,19 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 
 	const agent = new Agent({
 		getApiKey: () => (withConfiguredAuth ? "faux-key" : undefined),
-		streamFn: streamSimple,
+		streamFn: options.streamFn ?? streamSimple,
 		initialState: {
 			model,
 			systemPrompt: options.systemPrompt ?? "You are a test assistant.",
 			tools: [],
 		},
-		convertToLlm,
+		// Mirror the production assembly (sdk.ts's convertToLlmWithBlockImages):
+		// the images.blockImages gate is read per request so mid-session setting
+		// changes take effect exactly as they do in real sessions.
+		convertToLlm: (messages) => {
+			const converted = convertToLlm(messages);
+			return settingsManager.getBlockImages() ? replaceImagesWithPlaceholders(converted) : converted;
+		},
 		onPayload: async (payload) => {
 			const runner = extensionRunnerRef.current;
 			if (!runner?.hasHandlers("before_provider_request")) {

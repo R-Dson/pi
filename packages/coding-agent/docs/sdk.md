@@ -372,8 +372,8 @@ import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 
 const modelRuntime = await ModelRuntime.create();
 
-// create() restores cached catalogs but does not refresh them from pi.dev by default.
-// Opt in to a create-time network refresh and bound how long it may take:
+// create() restores cached catalogs; there is no remote catalog fetch in this fork.
+// allowModelNetwork only enables provider availability checks at create time:
 const refreshedRuntime = await ModelRuntime.create({
   allowModelNetwork: true,
   modelRefreshTimeoutMs: 15_000,
@@ -909,6 +909,33 @@ Project overrides global. Nested objects merge keys. Setters modify global setti
 - `SettingsManager` does not print settings I/O errors. Use `settingsManager.drainErrors()` and report them in your app layer.
 
 > See [examples/sdk/10-settings.ts](../examples/sdk/10-settings.ts)
+
+### Compaction
+
+The exported summarizer functions (`compact()`, `generateSummary()`, `generateSummaryWithUsage()`, `generateBranchSummary()`) take a required `SummarizationPrefix`: the system prompt and tool list the model saw on its last regular request. They replay that prefix and append one instruction turn, so the summarizer request extends the previous request byte for byte and runs almost entirely as a provider prompt-cache hit instead of a full miss on the whole conversation.
+
+Build the prefix from the agent state at call time, the same way the built-in compaction flow does:
+
+```typescript
+import { generateSummary, type SummarizationPrefix } from "@earendil-works/pi-coding-agent";
+
+const prefix: SummarizationPrefix = {
+  systemPrompt: session.agent.state.systemPrompt,
+  tools: session.agent.state.tools,
+};
+
+const auth = await session.modelRuntime.getAuth(session.model!);
+
+const summary = await generateSummary(
+  session.agent.state.messages, // conversation to summarize
+  session.model!,
+  prefix,
+  16384, // reserveTokens: budget for prompt + summary response
+  auth?.auth.apiKey,
+);
+```
+
+The prefix must be the same system prompt and tool list the model saw on its last regular request. A `transformContext` extension that rewrites history breaks that equivalence and the cache win with it.
 
 ## ResourceLoader
 

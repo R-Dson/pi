@@ -155,7 +155,7 @@ pi uninstall <source> [-l]   # Alias for remove
 pi update [source|self|pi]   # Update pi only, or one package source
 pi update --all              # Update pi and packages; reconcile pinned git refs
 pi update --extensions       # Update packages only; reconcile pinned git refs
-pi update --models           # Refresh model catalogs only
+pi update --models           # Restore model catalogs from the local store
 pi update --self             # Update pi only
 pi update --extension <src>  # Update one package
 pi list                      # List installed packages
@@ -204,6 +204,7 @@ cat README.md | pi -p "Summarize this text"
 | `--session-dir <dir>` | Custom session storage directory |
 | `--no-session` | Ephemeral mode; do not save |
 | `--name <name>`, `-n <name>` | Set session display name at startup |
+| `--validate-session <file>` | Validate a session file and print a report, then exit. Checks structure (torn tails, malformed lines, duplicate ids, broken or cyclic ancestry, orphaned or duplicate tool results) and history consistency (compactions summarizing from the wrong point, interrupted turns). Exits 0 when clean or warnings-only, 1 on errors. Diagnostic only: loading tolerates all of these, so run it when a session resumes oddly |
 
 ### Tool Options
 

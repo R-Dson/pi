@@ -42,4 +42,7 @@ plans/
 .pi/hf-sessions/
 .pi/hf-sessions-backup/
 collect.sh
+
+# Fork release staging (scripts/fork-publish-github.mjs)
+.fork-publish/
 packages/agent/docs/extensions/pi-server-artifact/index.md

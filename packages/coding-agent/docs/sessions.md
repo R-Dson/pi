@@ -17,6 +17,10 @@ pi --fork <path|id>    # Fork a session file or partial session ID into a new se
 
 Use `/session` in interactive mode to see the current session file, session ID, message count, tokens, and cost.
 
+The Tools line reports total tool output volume for the session. When the output cap (`tools.maxToolOutputBytes`, see [Settings](settings.md)) truncated results in the current run, a sub-line reports the removed bytes and how many full outputs spilled to artifact files.
+
+Below the token totals, a Cache block appears after this run's first provider request. It shows the run's cache hit rate with read, written, and uncached totals; a line per non-turn request kind (`compaction`, `branch-summary`, `retry`) with that kind's request count and cache usage; and a prefix invalidation count by cause. The invalidation line names what rewrote the request history (for example `settings-change` or `unexpected-history-change`), which is how you find an extension busting the provider prompt cache. Run-scoped counters reset on resume.
+
 For the JSONL file format and SessionManager API, see [Session Format](session-format.md).
 
 ## Session Commands
