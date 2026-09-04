@@ -167,3 +167,53 @@ test("stageStandaloneDirectory stages dist, docs, and the derived manifest", asy
 		await rm(root, { recursive: true, force: true });
 	}
 });
+
+test("deriveStandaloneManifest declares vendored packages and hoists their pinned deps", () => {
+	const derived = deriveStandaloneManifest(sourceManifest, {
+		version: "0.85.0-fork.6",
+		bundledDependencies: { "@earendil-works/chord": "0.85.0" },
+		vendoredDependencies: { esbuild: "0.28.1" },
+	});
+
+	assert.deepEqual(derived.bundleDependencies, ["@earendil-works/chord"]);
+	assert.deepEqual(derived.dependencies, {
+		"@silvia-odwyer/photon-node": "0.3.4",
+		chalk: "5.6.2",
+		jiti: "2.7.0",
+		undici: "8.9.0",
+		esbuild: "0.28.1",
+		"@earendil-works/chord": "0.85.0",
+	});
+});
+
+test("stageStandaloneDirectory vendors bundled packages under node_modules per their files list", async () => {
+	const root = await mkdtemp(join(tmpdir(), "pi-standalone-bundled-"));
+	try {
+		const packageDir = join(root, "source");
+		await mkdir(join(packageDir, "dist", "bundle"), { recursive: true });
+		await writeFile(join(packageDir, "dist", "bundle", "cli.js"), "#!/usr/bin/env node\n");
+		const chordDir = join(root, "chord");
+		await mkdir(join(chordDir, "dist", "context"), { recursive: true });
+		await writeFile(join(chordDir, "dist", "index.js"), "export {};\n");
+		await writeFile(join(chordDir, "dist", "context", "index.js"), "export {};\n");
+		await writeFile(join(chordDir, "README.md"), "chord\n");
+		// Outside the files list: must not be staged.
+		await writeFile(join(chordDir, "tsconfig.build.json"), "{}\n");
+		await writeFile(join(chordDir, "package.json"), JSON.stringify({ name: "@earendil-works/chord", version: "0.85.0", files: ["dist", "README.md"] }));
+
+		const manifest = deriveStandaloneManifest(sourceManifest, {
+			version: "0.85.0-fork.6",
+			bundledDependencies: { "@earendil-works/chord": "0.85.0" },
+		});
+		const packDirectory = join(root, "staged");
+		stageStandaloneDirectory(packageDir, packDirectory, manifest, { "@earendil-works/chord": chordDir });
+
+		const chordTarget = join(packDirectory, "node_modules", "@earendil-works", "chord");
+		assert.ok(existsSync(join(chordTarget, "package.json")), "expected the vendored manifest to be staged");
+		assert.ok(existsSync(join(chordTarget, "dist", "context", "index.js")), "expected the files-listed dist to be staged");
+		assert.ok(existsSync(join(chordTarget, "README.md")), "expected the files-listed README to be staged");
+		assert.ok(!existsSync(join(chordTarget, "tsconfig.build.json")), "expected non-files entries to stay out");
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});

@@ -2,8 +2,10 @@
 
 // Fork-only packager: stages a self-contained @r-dson/pi-standalone package from
 // the coding-agent release bundle and packs it to a stable pi-fork.tgz. The bundle
-// already inlines every workspace package, so the derived manifest keeps only the
-// non-workspace dependencies (verbatim pins) and installs resolve everything from
+// inlines every workspace package except the ones the bundler keeps external
+// (chord: its worker and bundler entry URLs must stay real files) — those are
+// vendored into the tarball as bundled dependencies instead. The remaining
+// dependencies are non-workspace (verbatim pins) and installs resolve them from
 // the public npm registry — no GitHub authentication, no registry configuration.
 
 import { spawnSync } from "node:child_process";
@@ -23,7 +25,7 @@ const SEMVER_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 // cover; their keys reference external packages only, so no scope rewrite.
 const COPIED_SECTIONS = ["description", "license", "type", "engines", "overrides"];
 
-export function deriveStandaloneManifest(manifest, { version }) {
+export function deriveStandaloneManifest(manifest, { version, bundledDependencies = {}, vendoredDependencies = {} }) {
 	const filterWorkspaceDeps = (deps) => {
 		const filtered = {};
 		for (const [name, specifier] of Object.entries(deps ?? {})) {
@@ -37,14 +39,28 @@ export function deriveStandaloneManifest(manifest, { version }) {
 	// The CLI reads package-relative assets at runtime (themes, export templates,
 	// assets, docs, examples) outside dist/bundle, so the standalone ships the
 	// same file set as the upstream npm package, minus the shrinkwrap.
+	// bundledDependencies (the bundler's external workspace packages) are also
+	// declared as regular dependencies and physically vendored under
+	// node_modules/ by stageStandaloneDirectory, so installs never resolve them
+	// from a registry: npm uses the bundled copy. npm does not reify a bundled
+	// package's own dependencies, so vendoredDependencies hoists their pinned
+	// specs into the manifest's dependencies for registry resolution.
 	const derived = {
 		name: STANDALONE_NAME,
 		version,
 		bin: { pi: "dist/bundle/cli.js" },
 		files: ["dist", "docs", "examples", "containerization.md", "CHANGELOG.md"],
-		dependencies: filterWorkspaceDeps(manifest.dependencies),
+		dependencies: {
+			...filterWorkspaceDeps(manifest.dependencies),
+			...vendoredDependencies,
+			...bundledDependencies,
+		},
 		optionalDependencies: filterWorkspaceDeps(manifest.optionalDependencies),
 	};
+
+	if (Object.keys(bundledDependencies).length > 0) {
+		derived.bundleDependencies = Object.keys(bundledDependencies);
+	}
 
 	if (Object.keys(derived.optionalDependencies).length === 0) {
 		delete derived.optionalDependencies;
@@ -59,13 +75,28 @@ export function deriveStandaloneManifest(manifest, { version }) {
 	return derived;
 }
 
-export function stageStandaloneDirectory(sourcePackageDir, packDirectory, manifest) {
+export function stageStandaloneDirectory(sourcePackageDir, packDirectory, manifest, bundledPackageDirs = {}) {
 	rmSync(packDirectory, { recursive: true, force: true });
 	mkdirSync(packDirectory, { recursive: true });
 	for (const entry of ["dist", "docs", "examples", "containerization.md", "CHANGELOG.md"]) {
 		const source = join(sourcePackageDir, entry);
 		if (existsSync(source)) {
 			cpSync(source, join(packDirectory, entry), { recursive: true });
+		}
+	}
+	for (const [packageName, packageDir] of Object.entries(bundledPackageDirs)) {
+		// Stage each vendored package under node_modules/<name> with package.json
+		// plus its own `files` entries, matching what npm pack would include for
+		// it as a bundled dependency.
+		const packageManifest = JSON.parse(readFileSync(join(packageDir, "package.json"), "utf8"));
+		const target = join(packDirectory, "node_modules", packageName);
+		mkdirSync(target, { recursive: true });
+		const entries = ["package.json", ...(packageManifest.files ?? [])];
+		for (const entry of entries) {
+			const source = join(packageDir, entry);
+			if (existsSync(source)) {
+				cpSync(source, join(target, entry), { recursive: true });
+			}
 		}
 	}
 	writeFileSync(join(packDirectory, "package.json"), `${JSON.stringify(manifest, null, "\t")}\n`);
@@ -156,13 +187,28 @@ function main() {
 	}
 
 	const sourceManifest = JSON.parse(readFileSync(join(CODING_AGENT_DIR, "package.json"), "utf8"));
-	const manifest = deriveStandaloneManifest(sourceManifest, { version: options.version });
+	// The bundler keeps chord external (real worker/bundler entry files), so the
+	// standalone tarball vendors it — see the header comment.
+	const CHORD_DIR = join(REPO_ROOT, "packages", "chord");
+	const chordEntry = join(CHORD_DIR, "dist", "index.js");
+	if (!existsSync(chordEntry)) {
+		throw new Error(`${relative(REPO_ROOT, chordEntry)} does not exist. Run npm run build before packaging the standalone tarball.`);
+	}
+	const chordManifest = JSON.parse(readFileSync(join(CHORD_DIR, "package.json"), "utf8"));
+	const bundledDependencies = { "@earendil-works/chord": chordManifest.version };
+	const manifest = deriveStandaloneManifest(sourceManifest, {
+		version: options.version,
+		bundledDependencies,
+		vendoredDependencies: chordManifest.dependencies ?? {},
+	});
 
 	const packDirectory = resolve(REPO_ROOT, options.packDirectory);
 	const output = resolve(REPO_ROOT, options.output);
 	// Only the standalone staging directory is wiped, never .fork-publish itself:
 	// the release workflow still reads .fork-publish/summary.json afterwards.
-	stageStandaloneDirectory(CODING_AGENT_DIR, packDirectory, manifest);
+	stageStandaloneDirectory(CODING_AGENT_DIR, packDirectory, manifest, {
+		"@earendil-works/chord": CHORD_DIR,
+	});
 
 	const packed = pack(packDirectory);
 	mkdirSync(dirname(output), { recursive: true });
@@ -172,7 +218,11 @@ function main() {
 	console.log(`  ${packed.fileCount} files, ${packed.size} bytes packed, ${packed.unpackedSize} bytes unpacked`);
 	console.log("Dependencies resolved from the public npm registry:");
 	for (const [name, specifier] of Object.entries(manifest.dependencies)) {
-		console.log(`  ${name}@${specifier}`);
+		if (manifest.bundleDependencies?.includes(name)) {
+			console.log(`  ${name}@${specifier} (vendored into the tarball)`);
+		} else {
+			console.log(`  ${name}@${specifier}`);
+		}
 	}
 }
 
