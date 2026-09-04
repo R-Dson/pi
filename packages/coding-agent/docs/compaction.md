@@ -254,9 +254,11 @@ path/to/changed.ts
 </modified-files>
 ```
 
-### Message Serialization
+### Summarizer Requests and Caching
 
-Before summarization, messages are serialized to text via [`serializeConversation()`](https://github.com/earendil-works/pi-mono/blob/main/packages/coding-agent/src/core/compaction/utils.ts):
+The history-summary and branch-summary requests replay the prior request prefix: the same system prompt, tool list, and converted history the model just saw, with the summarization instruction appended as one final user turn, and carrying the session routing id. The provider prompt cache therefore covers nearly the whole call, which is what keeps long sessions cheap.
+
+The split-turn turn-prefix summary is the exception: it summarizes a fragment, not a replayable request, so it serializes messages to text via [`serializeConversation()`](https://github.com/earendil-works/pi-mono/blob/main/packages/coding-agent/src/core/compaction/utils.ts) (also exported for extension use):
 
 ```
 [User]: What they said
@@ -311,42 +313,38 @@ pi.on("session_before_compact", async (event, ctx) => {
 });
 ```
 
-#### Converting Messages to Text
+#### Building the Summarizer Request
 
-To generate a summary with your own model, convert messages to text using `serializeConversation`:
+There are two shapes, and the cache pays for the difference:
+
+**Same model (cache-disciplined).** Replay the prefix the model just saw and append the instruction as one final user turn: the session model (`ctx.model` — provider caches are per model), `ctx.getSystemPrompt()`, the active tools in active order, `convertToLlm(preparation.replayMessages)`, and `ctx.sessionManager.getSessionId()` as the routing id, with no cache opt-out. `preparation.replayMessages` is the exact prefix the model saw (headed by the previous checkpoint message when updating). Caveats: `ctx.getSystemPrompt()` excludes per-turn chained rewrites and `before_provider_request` payload rewrites, and `ToolInfo` does not carry constrained-sampling config, so an extension replay can drift from the wire request. The default compaction replays the prefix exactly.
+
+**Different model.** A cheaper summarizer model forfeits the cache (each model has its own cache bucket) and pays the uncached premium on the whole context. When that trade is still worth it, serialize messages to text with `serializeConversation(convertToLlm(...))` so the model does not treat the transcript as a conversation to continue.
 
 ```typescript
-import { convertToLlm, serializeConversation } from "@earendil-works/pi-coding-agent";
+import { convertToLlm } from "@earendil-works/pi-coding-agent";
 
 pi.on("session_before_compact", async (event, ctx) => {
-  const { preparation } = event;
-  
-  // Convert AgentMessage[] to Message[], then serialize to text
-  const conversationText = serializeConversation(
-    convertToLlm(preparation.messagesToSummarize)
-  );
-  // Returns:
-  // [User]: message text
-  // [Assistant thinking]: thinking content
-  // [Assistant]: response text
-  // [Assistant tool calls]: read(path="..."); bash(command="...")
-  // [Tool result]: output text
+  const { preparation, signal } = event;
+  const model = ctx.model;
+  if (!model) return; // no active model: fall back to default compaction
 
-  // Now send to your model for summarization
-  const { summary, usage } = await myModel.summarize(conversationText);
-  
-  return {
-    compaction: {
-      summary,
-      firstKeptEntryId: preparation.firstKeptEntryId,
-      tokensBefore: preparation.tokensBefore,
-      usage,
-    }
-  };
+  // tools: the active tool list in active order, serialized to
+  // { name, description, parameters } — see the example for the exact build
+  const messages = [
+    ...convertToLlm([...preparation.replayMessages, ...preparation.turnPrefixMessages]),
+    { role: "user", content: "Summarize the conversation above...", timestamp: Date.now() },
+  ];
+  const response = await ctx.modelRegistry.complete(
+    model,
+    { systemPrompt: ctx.getSystemPrompt(), tools, messages },
+    { maxTokens: 8192, signal, sessionId: ctx.sessionManager.getSessionId() },
+  );
+  // ... return { compaction: { summary, firstKeptEntryId, tokensBefore, usage } }
 });
 ```
 
-See [custom-compaction.ts](../examples/extensions/custom-compaction.ts) for a complete example using a different model.
+See [custom-compaction.ts](../examples/extensions/custom-compaction.ts) for a complete example replaying the session prefix.
 
 ### session_compact_failed
 

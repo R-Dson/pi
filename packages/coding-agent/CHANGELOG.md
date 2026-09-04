@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Rewrote the `custom-compaction` example and the compaction extension docs around the prefix-replaying summarizer request: the example replays the session model, system prompt, active tools, and `replayMessages` with the instruction appended as one final turn and carries the session routing id, instead of serializing the conversation into a standalone cache-opt-out request under a different (cache-forfeiting) model; a dedicated example test pins the request shape ([#146](https://github.com/R-Dson/pi/issues/146)).
+
 ## [0.85.0] - 2026-09-04
 
 ### New Features
