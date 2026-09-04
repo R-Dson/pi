@@ -32,11 +32,14 @@
 - Added a per-message model marker for mixed-model sessions: when an assistant message's model differs from the previous assistant message's, a muted model-id line renders above its content; single-model sessions render identically to before ([#135](https://github.com/R-Dson/pi/issues/135)).
 - Added `tool-set-change` attribution for schema-only tool re-registrations: `setActiveToolsByName` fingerprints the active tools with the monitor's own serialization and arms the announcement when it changes, so a re-registered tool with a changed parameter schema (a regenerated `switch_model` target enum) counts under its true cause instead of surfacing as `unexpected-tools-change` with a diagnostic event; description-only changes stay unannounced exactly as the monitor ignores them ([#120](https://github.com/R-Dson/pi/issues/120)).
 - Added a clickable "Jump to latest message" label with the `tui.altScreen.bottom` shortcut to the fullscreen transcript while it is scrolled up ([#9080](https://github.com/earendil-works/pi/pull/9080) by [@rwachtler](https://github.com/rwachtler)).
+- Added the fork's zero-configuration installer (`curl -fsSL https://raw.githubusercontent.com/R-Dson/pi/main/scripts/install.sh | sh`): preflight checks for curl, npm, and Node >= 22.19, install-prefix selection (npm global prefix or `~/.local`, `PI_INSTALL_PREFIX` override), a downgrade warning, guards against foreign binaries and version-managed npm prefixes, pinned or latest tarball fetch from GitHub Releases, install with `--ignore-scripts`, a post-install PATH note, and `--uninstall` ([#97](https://github.com/R-Dson/pi/issues/97), [#98](https://github.com/R-Dson/pi/issues/98)).
+- Added Anthropic per-turn thinking-effort persistence across turns and transports, including OpenRouter: the selected effort is sent on every turn for supported Claude models with deterministic historical effort markers, and signed-thinking mismatches are recovered instead of failing the request (pi-ai change).
 
 ### Changed
 
 - Changed the live thinking preview to a fixed-height block: while a run streams, the tail block reserves its full height from the first line (content top-aligned, blank rows below), so the preview never grows mid-stream and nothing below it reflows as reasoning arrives; once the run ends the block shrinks to its natural height, so short finished runs carry no blank rows ([#129](https://github.com/R-Dson/pi/pull/129)).
 - Moved the streaming working indicator into the default editor border and matched its default spinner and label to the thinking-level border color. Custom editors retain the standalone indicator unless they opt in to embedding it ([earendil-works/pi#8799](https://github.com/earendil-works/pi/pull/8799)).
+- Changed offered thinking levels for reasoning models without a `thinkingLevelMap`: `xhigh` is now offered, sent raw by OpenAI-style adapters, mapped to effort `high` by the Anthropic, Bedrock, and Google adapters, and degraded to `high` on mapless Google models instead of failing every request; the mapless Azure o-series and realtime mirrors whose API rejects it are pinned `xhigh: null` (pi-ai changes, [#124](https://github.com/R-Dson/pi/issues/124), [#139](https://github.com/R-Dson/pi/issues/139)).
 
 ### Fixed
 
@@ -54,6 +57,11 @@
 - Fixed the write tool reporting UTF-16 code-unit counts as byte counts by removing the misleading count ([#8979](https://github.com/earendil-works/pi/issues/8979)).
 - Fixed proxied plain-HTTP provider requests hanging after a tool call by tunneling them with CONNECT ([#8134](https://github.com/earendil-works/pi/issues/8134)).
 - Fixed RPC `abort` reporting success without cancelling an in-progress manual compaction ([#8920](https://github.com/earendil-works/pi/issues/8920)).
+- Fixed Linux tool bootstrap to download statically linked musl builds of fd and ripgrep, so a host glibc older than the build machine cannot break `find` and `grep` ([earendil-works/pi#9070](https://github.com/earendil-works/pi/issues/9070)).
+- Fixed signal-killed tool processes reporting exit code zero: a process terminated by a signal now maps to a non-zero exit code derived from the signal ([earendil-works/pi#8994](https://github.com/earendil-works/pi/issues/8994), in pi-agent-core).
+- Fixed the per-tool `timeoutMs` deadline leaking its timer, signal, and pending promise for up to `timeoutMs` after a tool returns early (pi-agent-core, [#139](https://github.com/R-Dson/pi/issues/139)).
+- Fixed proxied assistant responses dropping persisted provider-native thinking levels (pi-agent-core).
+- Fixed provider handling in pi-ai: the Qwen Token Plan Individual catalog includes Qwen3.8 Flash ([#9021](https://github.com/earendil-works/pi/issues/9021)), GitHub Copilot Claude Fable 5 requests use the Anthropic Messages adapter so selected reasoning levels apply ([#8961](https://github.com/earendil-works/pi/issues/8961)), and OpenAI Codex SSE parsing processes terminal events not followed by a blank line ([#9047](https://github.com/earendil-works/pi/issues/9047)).
 
 ## [0.84.4] - 2026-08-28
 
