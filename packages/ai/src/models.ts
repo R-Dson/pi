@@ -915,10 +915,15 @@ const EXTENDED_THINKING_LEVELS: ModelThinkingLevel[] = ["off", "minimal", "low",
 export function getSupportedThinkingLevels<TApi extends Api>(model: Model<TApi>): ModelThinkingLevel[] {
 	if (!model.reasoning) return ["off"];
 
+	// Fork (earendil-works/pi#4344): a model with no thinkingLevelMap has an unknown
+	// level vocabulary, so xhigh stays selectable and the provider rejects the request
+	// if it does not support it. A map — even one omitting the xhigh key — stays
+	// authoritative, since catalog maps omit known-unsupported levels.
 	return EXTENDED_THINKING_LEVELS.filter((level) => {
 		const mapped = model.thinkingLevelMap?.[level];
 		if (mapped === null) return false;
-		if (level === "xhigh" || level === "max") return mapped !== undefined;
+		if (level === "xhigh") return mapped !== undefined || !model.thinkingLevelMap;
+		if (level === "max") return mapped !== undefined;
 		return true;
 	});
 }
