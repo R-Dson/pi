@@ -1,0 +1,185 @@
+name: Fork Release
+
+# Manual fork-only release to GitHub Packages (npm.pkg.github.com). Never runs on
+# push/PR. Publishes all public workspace packages as @r-dson/* at a publish-time
+# version, then tags v<version> and creates a GitHub Release that also carries a
+# self-contained pi-fork.tgz asset (installable from the release URL with no
+# registry configuration). Ordering is release-safety-critical: the version is
+# checked against existing tags BEFORE anything is published (a colliding version
+# must fail while the release is still retryable), and the GitHub Release stays a
+# draft until the asset is uploaded, so releases/latest/download/pi-fork.tgz never
+# resolves to a release without its tarball. Repo files (manifests, changelogs)
+# are never modified; the only git object created is the tag.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version; empty = <upstream-version>-fork.<run number>'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  packages: write
+
+concurrency:
+  group: fork-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      FORK_VERSION_INPUT: ${{ inputs.version }}
+    steps:
+      - name: "Guard: main branch only"
+        run: |
+          if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
+            echo "::error::Refusing to release from ${GITHUB_REF}. Dispatch this workflow from refs/heads/main only."
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libcairo2-dev libpango1.0-dev libjpeg-dev libgif-dev librsvg2-dev fd-find ripgrep
+          sudo ln -s $(which fdfind) /usr/local/bin/fd
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Hydrate model data
+        run: npm run hydrate:model-data
+
+      - name: Build
+        run: npm run build
+
+      - name: Compute release version
+        id: version
+        run: |
+          set -euo pipefail
+
+          if [[ -n "${FORK_VERSION_INPUT}" ]]; then
+            VERSION="${FORK_VERSION_INPUT}"
+          else
+            VERSION="$(node -p 'require("./packages/coding-agent/package.json").version')-fork.${{ github.run_number }}"
+          fi
+          echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
+
+      - name: Ensure release tag is free
+        env:
+          FORK_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          TAG="v${FORK_VERSION}"
+
+          # Query the remote: the shallow checkout has no pre-existing tags
+          # locally, and this check must run before anything is published so a
+          # colliding version fails while the release is still retryable.
+          if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
+            echo "::error::Tag ${TAG} already exists; version ${FORK_VERSION} was already released. Dispatch again with a new version."
+            exit 1
+          fi
+
+      - name: Publish packages to GitHub Packages
+        env:
+          NODE_AUTH_TOKEN: ${{ github.token }}
+          FORK_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          if [[ -n "${FORK_VERSION_INPUT}" ]]; then
+            node scripts/fork-publish-github.mjs --version "$FORK_VERSION"
+          else
+            node scripts/fork-publish-github.mjs --auto "${{ github.run_number }}"
+          fi
+
+      - name: Tag release
+        env:
+          FORK_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          TAG="v${FORK_VERSION}"
+
+          git tag "${TAG}"
+          git push origin "${TAG}"
+
+      - name: Build standalone tarball
+        env:
+          FORK_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          node scripts/fork-standalone-package.mjs --version "$FORK_VERSION"
+
+      - name: Create draft GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          FORK_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          VERSION="$FORK_VERSION"
+          TAG="v${VERSION}"
+
+          jq -r '.packages[] | "- \(.name)@\(.version) (\(.outcome))"' .fork-publish/summary.json > release-packages.md
+          {
+            echo "Fork release ${TAG}."
+            echo
+            echo "Published to the GitHub Packages npm registry (scope \`@r-dson\`):"
+            echo
+            cat release-packages.md
+            echo
+            echo "## Standalone install (no registry configuration)"
+            echo
+            echo "Install the CLI from the release asset alone; dependencies resolve from the public npm registry, no PAT needed:"
+            echo
+            echo '```sh'
+            echo "npm install -g https://github.com/R-Dson/pi/releases/latest/download/pi-fork.tgz"
+            echo "curl -fsSL https://raw.githubusercontent.com/R-Dson/pi/main/scripts/install.sh | sh"
+            echo '```'
+            echo
+            echo "Install instructions: [\`docs/fork/install-from-github.md\`](docs/fork/install-from-github.md)"
+          } > RELEASE_NOTES.md
+
+          # Draft: invisible to releases/latest until the asset is uploaded and
+          # the release is promoted, so the stable download URL only ever
+          # resolves to a complete release.
+          gh release create "${TAG}" \
+            --verify-tag \
+            --draft \
+            --title "${TAG}" \
+            --notes-file RELEASE_NOTES.md
+
+      - name: Upload standalone tarball
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          FORK_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          gh release upload "v${FORK_VERSION}" .fork-publish/pi-fork.tgz --clobber
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          FORK_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          gh release edit "v${FORK_VERSION}" --draft=false --latest

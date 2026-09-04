@@ -218,6 +218,14 @@ function toPosixPath(p: string): string {
 	return p.split(sep).join("/");
 }
 
+/**
+ * Lexicographic (code-unit) path comparator used for canonical resource ordering.
+ * Locale-independent so identical directory trees order identically on every machine.
+ */
+function comparePaths(a: string, b: string): number {
+	return a < b ? -1 : a > b ? 1 : 0;
+}
+
 function getHomeDir(): string {
 	return process.env.HOME || homedir();
 }
@@ -293,7 +301,7 @@ function expandPackageGlob(pattern: string, root: string): string[] {
 				.split(sep)
 				.every((segment) => segment === ".." || !segment.startsWith(".")),
 		)
-		.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+		.sort(comparePaths);
 }
 
 function splitPatterns(entries: string[]): { plain: string[]; patterns: string[] } {
@@ -438,6 +446,9 @@ function collectSkillEntries(
 		// Ignore errors
 	}
 
+	// readdir order is filesystem-dependent; sort by path so auto-discovered
+	// skills enumerate identically on every machine.
+	entries.sort(comparePaths);
 	return entries;
 }
 
@@ -585,8 +596,12 @@ function resolveExtensionEntries(dir: string): string[] | null {
 }
 
 function collectAutoExtensionEntries(dir: string): string[] {
-	const entries: string[] = [];
-	if (!existsSync(dir)) return entries;
+	// Groups keep their internal order: a package's manifest declares its
+	// extension order, which must survive discovery. Only the GROUPS are
+	// ordered, by their path — readdir order is filesystem-dependent, so
+	// auto-discovered extensions enumerate identically on every machine.
+	const groups: Array<{ path: string; entries: string[] }> = [];
+	if (!existsSync(dir)) return [];
 
 	// First check if this directory itself has explicit extension entries (package.json or index)
 	const rootEntries = resolveExtensionEntries(dir);
@@ -623,11 +638,11 @@ function collectAutoExtensionEntries(dir: string): string[] {
 			if (ig.ignores(ignorePath)) continue;
 
 			if (isFile && (entry.name.endsWith(".ts") || entry.name.endsWith(".js"))) {
-				entries.push(fullPath);
+				groups.push({ path: fullPath, entries: [fullPath] });
 			} else if (isDir) {
 				const resolvedEntries = resolveExtensionEntries(fullPath);
 				if (resolvedEntries) {
-					entries.push(...resolvedEntries);
+					groups.push({ path: fullPath, entries: resolvedEntries });
 				}
 			}
 		}
@@ -635,7 +650,8 @@ function collectAutoExtensionEntries(dir: string): string[] {
 		// Ignore errors
 	}
 
-	return entries;
+	groups.sort((a, b) => comparePaths(a.path, b.path));
+	return groups.flatMap((group) => group.entries);
 }
 
 /**
