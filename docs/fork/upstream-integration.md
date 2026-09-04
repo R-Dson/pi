@@ -201,3 +201,5 @@ Removal set today: the core `tools.permissions` policy mode (removed 2026-08-29,
 2. Rebase or merge stacked fork branches onto the updated fork `main` afterwards.
 3. Run `npm run check` and `./test.sh` from the repo root; fix fallout before continuing.
 4. If a sync invalidated an assumption recorded in the table above, update that row and the associated test in the same change.
+
+Tag namespace: fork releases live only in the `v<version>-fork.N` namespace, created by the manual Fork Release workflow (GitHub Packages + GitHub Release with `pi-fork.tgz`); nothing auto-publishes on a tag push, and bare `vX.Y.Z` tags must never be pushed to this repo — upstream tags the same names, so a fork `vX.Y.Z` collides on the next `git fetch upstream --tags`. The 2026-09-04 `release:minor` run (inherited upstream script) pushed a bare `v0.85.0` before this was noticed; the tag was deleted immediately (the `Release v0.85.0` and `Add [Unreleased] section` commits on `main` remain valid). The version bump and changelog fold from that run are the fork's inputs to the Fork Release workflow, which derives `0.85.0-fork.<run>` from the package version.
