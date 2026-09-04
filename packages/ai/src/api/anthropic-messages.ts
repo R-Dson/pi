@@ -37,7 +37,6 @@ import { appendAssistantMessageDiagnostic } from "../utils/diagnostics.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { parseJsonWithRepair, parseStreamingJson } from "../utils/json-parse.ts";
-import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
@@ -283,10 +282,6 @@ function mergeHeaders(...headerSources: (ProviderHeaders | undefined)[]): Provid
 		}
 	}
 	return merged;
-}
-
-function mergeClientHeaders(...headerSources: (ProviderHeaders | undefined)[]): ProviderHeaders {
-	return mergeHeaders({ "User-Agent": getPiUserAgent() }, ...headerSources);
 }
 
 function hasHeader(headers: ProviderHeaders | undefined, name: string): boolean {
@@ -898,6 +893,33 @@ function isOAuthToken(apiKey: string): boolean {
 	return apiKey.includes("sk-ant-oat");
 }
 
+/**
+ * Previous wire-shaping state for `onWireRewrite` reporting (issue #56 seam).
+ * The prefix monitor in coding-agent diffs the request context; the transforms
+ * below are recomputed from state the context does not carry (auth mode,
+ * deferred-tool anchoring), so the adapter reports them itself. Keyed weakly
+ * on the observer callback: the coding-agent monitor injects one stable
+ * callback per session, so interleaved sessions track their own transitions,
+ * state dies with the observer, and requests without an observer track
+ * nothing. Reports feed diagnostic counters only.
+ */
+interface WireRewriteState {
+	lastOAuth: boolean | undefined;
+	/** Deferred tool names an earlier request of this observer already anchored with a tool_reference. */
+	anchoredDeferredToolNames: Set<string>;
+}
+const wireRewriteStates = new WeakMap<(cause: string) => void, WireRewriteState>();
+
+function wireRewriteStateFor(onWireRewrite: ((cause: string) => void) | undefined): WireRewriteState | undefined {
+	if (!onWireRewrite) return undefined;
+	let state = wireRewriteStates.get(onWireRewrite);
+	if (!state) {
+		state = { lastOAuth: undefined, anchoredDeferredToolNames: new Set() };
+		wireRewriteStates.set(onWireRewrite, state);
+	}
+	return state;
+}
+
 function createClient(
 	model: Model<"anthropic-messages">,
 	apiKey: string | undefined,
@@ -914,7 +936,7 @@ function createClient(
 			baseURL: model.baseUrl,
 			dangerouslyAllowBrowser: true,
 			fetch,
-			defaultHeaders: mergeClientHeaders(
+			defaultHeaders: mergeHeaders(
 				{
 					accept: "application/json",
 					"anthropic-dangerous-direct-browser-access": "true",
@@ -936,7 +958,7 @@ function createClient(
 			baseURL: model.baseUrl,
 			dangerouslyAllowBrowser: true,
 			fetch,
-			defaultHeaders: mergeClientHeaders(
+			defaultHeaders: mergeHeaders(
 				{
 					accept: "application/json",
 					"anthropic-dangerous-direct-browser-access": "true",
@@ -954,7 +976,7 @@ function createClient(
 	// API key or header-owned auth.
 	const sessionAffinityHeaders: ProviderHeaders =
 		sessionId && getAnthropicCompat(model).sendSessionAffinityHeaders ? { "x-session-affinity": sessionId } : {};
-	const defaultHeaders = mergeClientHeaders(
+	const defaultHeaders = mergeHeaders(
 		{
 			accept: "application/json",
 			"anthropic-dangerous-direct-browser-access": "true",
@@ -1046,6 +1068,7 @@ function buildParams(
 		compat.allowEmptySignature,
 		deferredToolNames,
 		normalizeToolName,
+		options?.onWireRewrite,
 		model.compat?.supportsMidConvoEffort === true ? model.provider : undefined,
 	);
 	const activeEffort = options?.effort ?? "high";
@@ -1060,6 +1083,18 @@ function buildParams(
 		stream: true,
 		...(betaFeatures.length > 0 ? { betas: betaFeatures } : {}),
 	};
+
+	// Report an auth-mode switch before the mode-dependent shaping below runs:
+	// the mode reshapes the whole wire (Claude Code identity system block plus
+	// tool-name canonicalization across tools and history), a full prefix
+	// rewrite the request context alone cannot reveal.
+	const wireRewriteState = wireRewriteStateFor(options?.onWireRewrite);
+	if (wireRewriteState?.lastOAuth !== undefined && wireRewriteState.lastOAuth !== isOAuthToken) {
+		options?.onWireRewrite?.("provider-auth-mode");
+	}
+	if (wireRewriteState) {
+		wireRewriteState.lastOAuth = isOAuthToken;
+	}
 
 	// For OAuth tokens, we MUST include Claude Code identity
 	if (isOAuthToken) {
@@ -1185,12 +1220,22 @@ function convertToolResult(
 	deferredToolNames: ReadonlySet<string>,
 	loadedToolNames: Set<string>,
 	normalizeToolName: (name: string) => string,
+	onWireRewrite?: (cause: string) => void,
 ): { toolResult: ContentBlockParam; siblingContent: ContentBlockParam[] } {
 	const references: Array<{ type: "tool_reference"; tool_name: string }> = [];
 	for (const name of msg.addedToolNames ?? []) {
 		const normalizedName = normalizeToolName(name);
 		if (!deferredToolNames.has(normalizedName) || loadedToolNames.has(normalizedName)) continue;
 		loadedToolNames.add(normalizedName);
+		// The first request that anchors this deferred load changes the wire
+		// relative to every earlier request (the tool_reference appears and the
+		// tools-array placement shifts); subsequent requests repeat the same
+		// shape. Report the transition only.
+		const wireRewriteState = wireRewriteStateFor(onWireRewrite);
+		if (wireRewriteState && !wireRewriteState.anchoredDeferredToolNames.has(normalizedName)) {
+			wireRewriteState.anchoredDeferredToolNames.add(normalizedName);
+			onWireRewrite?.("provider-deferred-tool-load");
+		}
 		references.push({
 			type: "tool_reference",
 			tool_name: isOAuthToken ? toClaudeCodeName(name) : name,
@@ -1226,6 +1271,7 @@ function convertMessages(
 	allowEmptySignature = false,
 	deferredToolNames: ReadonlySet<string> = new Set(),
 	normalizeToolName: (name: string) => string = (name) => name,
+	onWireRewrite?: (cause: string) => void,
 	managedProvider?: string,
 ): ConvertedAnthropicMessages {
 	const params: MessageParam[] = [];
@@ -1353,6 +1399,7 @@ function convertMessages(
 					deferredToolNames,
 					loadedToolNames,
 					normalizeToolName,
+					onWireRewrite,
 				);
 				toolResults.push(converted.toolResult);
 				siblingContent.push(...converted.siblingContent);

@@ -209,6 +209,21 @@ export interface StreamOptions extends ProviderRequestOptions<Model<Api>> {
 	 */
 	sessionId?: string;
 	/**
+	 * Optional observer for provider-layer wire rewrites: transforms the adapter
+	 * applies to the outgoing request that are not derivable from `context`
+	 * alone (for example auth-mode shaping or deferred-tool placement on
+	 * Anthropic). Invoked during request serialization, before the request is
+	 * sent, with a stable cause tag (e.g. `"provider-auth-mode"`). Adapters that
+	 * report nothing never invoke it; it must never affect the request.
+	 *
+	 * Transition detection is stateful and keyed on the callback: pass one
+	 * stable function across a session's requests (the coding-agent monitor
+	 * injects a single bound method) so transitions are observed per session
+	 * and the tracking dies with the callback. A fresh closure per request
+	 * observes nothing.
+	 */
+	onWireRewrite?: (cause: string) => void;
+	/**
 	 * WebSocket connect timeout in milliseconds for providers that support
 	 * WebSocket transports. This covers the connection/open handshake only;
 	 * stream idleness after connection uses timeoutMs.

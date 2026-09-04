@@ -150,6 +150,18 @@ export function serializeConversation(messages: Message[]): string {
 }
 
 // ============================================================================
+// Summarizer Persona
+// ============================================================================
+
+/**
+ * Persona line carried by prefix-replaying summarizer instructions (cache plan
+ * phase A). The summarizer request replays the agent's real system prompt and
+ * tools, so the appended instruction turn must tell the model to summarize
+ * instead of continuing the conversation.
+ */
+export const SUMMARIZER_PERSONA = "Act as a summarizer for this single turn; do not continue the conversation.";
+
+// ============================================================================
 // Summarization System Prompt
 // ============================================================================
 

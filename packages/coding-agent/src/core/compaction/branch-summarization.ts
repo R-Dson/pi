@@ -8,23 +8,24 @@
 import type { AgentMessage, StreamFn } from "@earendil-works/pi-agent-core";
 import type { RetryCallbacks, RetryPolicy } from "@earendil-works/pi-ai";
 import { contentText } from "@earendil-works/pi-ai";
-import type { Model, SimpleStreamOptions, Usage } from "@earendil-works/pi-ai/compat";
-import {
-	convertToLlm,
-	createBranchSummaryMessage,
-	createCompactionSummaryMessage,
-	createCustomMessage,
-} from "../messages.ts";
+import type { Context, Model, SimpleStreamOptions, Usage } from "@earendil-works/pi-ai/compat";
+import { convertToLlm } from "../messages.ts";
 import type { ReadonlySessionManager, SessionEntry } from "../session-manager.ts";
-import { completeSummarization, estimateTokens, getSummarizationFailure } from "./compaction.ts";
+import { sessionEntryToContextMessages } from "../sessions/projector.ts";
+import { INTERRUPTED_TOOL_RESULT_TEXT } from "../sessions/recovery.ts";
+import {
+	completeSummarization,
+	estimateTokens,
+	getSummarizationFailure,
+	type SummarizationPrefix,
+} from "./compaction.ts";
 import {
 	computeFileLists,
 	createFileOps,
 	extractFileOpsFromMessage,
 	type FileOperations,
 	formatFileOperations,
-	SUMMARIZATION_SYSTEM_PROMPT,
-	serializeConversation,
+	SUMMARIZER_PERSONA,
 } from "./utils.ts";
 
 // ============================================================================
@@ -87,6 +88,19 @@ export interface GenerateBranchSummaryOptions {
 	retry?: RetryPolicy;
 	/** Optional callbacks for retry reporting (e.g. TUI retry indicators). */
 	callbacks?: RetryCallbacks;
+	/**
+	 * Routing session id carried on the replaying request (cache plan phase A):
+	 * the same value the session's regular requests use, so providers with
+	 * session-scoped cache routing (OpenAI's `prompt_cache_key` and friends)
+	 * keep the replay on the regular requests' cache. Never minted here.
+	 */
+	sessionId?: string;
+	/**
+	 * Agent request prefix (system prompt + tool list) replayed as the summarizer
+	 * request prefix (cache plan phase A). Must be the same content the last
+	 * regular request used.
+	 */
+	prefix: SummarizationPrefix;
 }
 
 // ============================================================================
@@ -150,39 +164,92 @@ export function collectEntriesForBranchSummary(
 // ============================================================================
 
 /**
- * Extract AgentMessage from a session entry.
- * Similar to getMessageFromEntry in compaction.ts but also handles compaction entries.
+ * Extract the conversation message for a session entry by delegating to the
+ * projector's conversion, so the replay mirrors the regular context projection
+ * exactly — including its hardening (null-content messages, empty summaries)
+ * and its entry-type filtering. Tool results are included: the replay sends
+ * structured messages, and a strict provider (Anthropic) rejects a tool_use
+ * whose tool_result never arrives.
  */
 function getMessageFromEntry(entry: SessionEntry): AgentMessage | undefined {
-	switch (entry.type) {
-		case "message":
-			// Skip tool results - context is in assistant's tool call
-			if (entry.message.role === "toolResult") return undefined;
-			return entry.message;
+	const [message] = sessionEntryToContextMessages(entry);
+	return message;
+}
 
-		case "custom_message":
-			return createCustomMessage(entry.customType, entry.content, entry.display, entry.details, entry.timestamp);
+/** A replay unit: messages that must enter (or leave) the budget window together. */
+interface BranchUnit {
+	messages: AgentMessage[];
+	/** Compaction/branch-summary entries keep the fit-anyway budget exception. */
+	important: boolean;
+}
 
-		case "branch_summary":
-			return createBranchSummaryMessage(entry.summary, entry.fromId, entry.timestamp);
+/**
+ * Group branch messages into replay units: an assistant message carrying tool
+ * calls and its trailing tool results replay together or not at all, because a
+ * strict provider (Anthropic) rejects a tool_use whose tool_result is missing —
+ * splitting a pair at the budget edge would rebuild exactly that. A dangling
+ * call at a branch tail (session died mid-turn) gets one synthesized terminal
+ * result per unanswered id, mirroring core/sessions/recovery.ts; an orphan
+ * result whose call fell outside the window is dropped rather than replayed
+ * unpaired.
+ */
+function groupBranchUnits(entries: SessionEntry[]): BranchUnit[] {
+	const units: BranchUnit[] = [];
+	for (const entry of entries) {
+		const message = getMessageFromEntry(entry);
+		if (!message) continue;
 
-		case "compaction":
-			return createCompactionSummaryMessage(entry.summary, entry.tokensBefore, entry.timestamp);
+		if (message.role === "toolResult") {
+			const last = units[units.length - 1];
+			const head = last?.messages[0];
+			if (
+				head?.role === "assistant" &&
+				head.content.some((block) => block.type === "toolCall" && block.id === message.toolCallId)
+			) {
+				last.messages.push(message);
+				continue;
+			}
+			// The calling message is not the last unit's head (call outside the
+			// window, or no such call). Replaying the result alone would be
+			// just as invalid as replaying the call alone.
+			continue;
+		}
 
-		// These don't contribute to conversation content
-		case "thinking_level_change":
-		case "model_change":
-		case "custom":
-		case "label":
-		case "session_info":
-			return undefined;
+		units.push({
+			messages: [message],
+			important: entry.type === "compaction" || entry.type === "branch_summary",
+		});
 	}
+
+	for (const unit of units) {
+		const head = unit.messages[0];
+		if (head?.role !== "assistant") continue;
+		const answered = new Set(
+			unit.messages
+				.filter(
+					(message): message is Extract<AgentMessage, { role: "toolResult" }> => message.role === "toolResult",
+				)
+				.map((message) => message.toolCallId),
+		);
+		for (const block of head.content) {
+			if (block.type !== "toolCall" || answered.has(block.id)) continue;
+			unit.messages.push({
+				role: "toolResult",
+				toolCallId: block.id,
+				toolName: block.name,
+				content: [{ type: "text", text: INTERRUPTED_TOOL_RESULT_TEXT }],
+				isError: true,
+				timestamp: head.timestamp,
+			});
+		}
+	}
+	return units;
 }
 
 /**
  * Prepare entries for summarization with token budget.
  *
- * Walks entries from NEWEST to OLDEST, adding messages until we hit the token budget.
+ * Walks units from NEWEST to OLDEST, adding messages until we hit the token budget.
  * This ensures we keep the most recent context when the branch is too long.
  *
  * Also collects file operations from:
@@ -215,31 +282,27 @@ export function prepareBranchEntries(entries: SessionEntry[], tokenBudget: numbe
 		}
 	}
 
-	// Second pass: walk from newest to oldest, adding messages until token budget
-	for (let i = entries.length - 1; i >= 0; i--) {
-		const entry = entries[i];
-		const message = getMessageFromEntry(entry);
-		if (!message) continue;
-
-		// Extract file ops from assistant messages (tool calls)
-		extractFileOpsFromMessage(message, fileOps);
-
-		const tokens = estimateTokens(message);
+	// Second pass: walk units from newest to oldest, adding whole units until
+	// the token budget — never a partial call/result pair.
+	const units = groupBranchUnits(entries);
+	for (let i = units.length - 1; i >= 0; i--) {
+		const unit = units[i];
+		const tokens = unit.messages.reduce((sum, message) => sum + estimateTokens(message), 0);
 
 		// Check budget before adding
 		if (tokenBudget > 0 && totalTokens + tokens > tokenBudget) {
 			// If this is a summary entry, try to fit it anyway as it's important context
-			if (entry.type === "compaction" || entry.type === "branch_summary") {
-				if (totalTokens < tokenBudget * 0.9) {
-					messages.unshift(message);
-					totalTokens += tokens;
-				}
+			if (unit.important && totalTokens < tokenBudget * 0.9) {
+				for (const message of unit.messages) extractFileOpsFromMessage(message, fileOps);
+				messages.unshift(...unit.messages);
+				totalTokens += tokens;
 			}
 			// Stop - we've hit the budget
 			break;
 		}
 
-		messages.unshift(message);
+		for (const message of unit.messages) extractFileOpsFromMessage(message, fileOps);
+		messages.unshift(...unit.messages);
 		totalTokens += tokens;
 	}
 
@@ -306,6 +369,8 @@ export async function generateBranchSummary(
 		streamFn,
 		retry,
 		callbacks,
+		sessionId,
+		prefix,
 	} = options;
 
 	// Token budget = context window minus reserved space for prompt + response
@@ -318,12 +383,8 @@ export async function generateBranchSummary(
 		return { summary: "No content to summarize" };
 	}
 
-	// Transform to LLM-compatible messages, then serialize to text
-	// Serialization prevents the model from treating it as a conversation to continue
-	const llmMessages = convertToLlm(messages);
-	const conversationText = serializeConversation(llmMessages);
-
-	// Build prompt
+	// Build the appended instruction: the summarizer persona plus the branch
+	// summary instructions (or the replacing custom instructions).
 	let instructions: string;
 	if (replaceInstructions && customInstructions) {
 		instructions = customInstructions;
@@ -332,25 +393,32 @@ export async function generateBranchSummary(
 	} else {
 		instructions = BRANCH_SUMMARY_PROMPT;
 	}
-	const promptText = `<conversation>\n${conversationText}\n</conversation>\n\n${instructions}`;
+	const promptText = `${SUMMARIZER_PERSONA}\n\n${instructions}`;
 
-	const summarizationMessages = [
-		{
-			role: "user" as const,
-			content: [{ type: "text" as const, text: promptText }],
-			timestamp: Date.now(),
-		},
-	];
-
+	// Prefix-replaying request (cache plan phase A): the agent's real system
+	// prompt and tools, the converted branch messages, and one appended user
+	// instruction turn. Call LLM through completeSummarization; prefer the
+	// session stream function so SDK request behavior (timeouts, retries,
+	// attribution headers) stays consistent without running through agent
+	// state/events. Retried via completeSummarization so transient stream drops
+	// reuse the configured retry policy.
+	const context: Context = {
+		systemPrompt: prefix.systemPrompt,
+		tools: prefix.tools,
+		messages: [
+			...convertToLlm(messages),
+			{
+				role: "user",
+				content: [{ type: "text", text: promptText }],
+				timestamp: Date.now(),
+			},
+		],
+	};
+	// Upstream #8845: reasoning can consume a fixed 2048-token cap before the
+	// summary is written; derive the cap from the model instead.
 	const maxTokens = Math.min(4096, model.maxTokens > 0 ? model.maxTokens : Number.POSITIVE_INFINITY);
-
-	// Call LLM for summarization. Prefer the session stream function so SDK
-	// request behavior (timeouts, retries, attribution headers) stays consistent
-	// without running through agent state/events. Retried via completeSummarization
-	// so transient stream drops reuse the configured retry policy.
-	const context = { systemPrompt: SUMMARIZATION_SYSTEM_PROMPT, messages: summarizationMessages };
-	const requestOptions: SimpleStreamOptions = { apiKey, headers, env, signal, maxTokens };
-	const response = await completeSummarization(model, context, requestOptions, streamFn, retry, callbacks);
+	const requestOptions: SimpleStreamOptions = { apiKey, headers, env, signal, maxTokens, sessionId };
+	const response = await completeSummarization(model, context, requestOptions, streamFn, retry, callbacks, false);
 
 	// Check if aborted or errored
 	if (response.stopReason === "aborted") {

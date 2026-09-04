@@ -682,11 +682,57 @@ async function executePreparedToolCall(
 	const updateEvents: Promise<void>[] = [];
 	let acceptingUpdates = true;
 
+	// Per-tool deadline: the tool signal aborts when either the parent run
+	// signal aborts (as before) or the deadline elapses. The timer is unref'd
+	// so a pending deadline never keeps the event loop alive, and cleared in
+	// the finally so an early tool settlement retires it deterministically —
+	// which also means the abort listener can never fire late and needs no
+	// explicit removal.
+	const timeoutMs = prepared.tool.timeoutMs;
+	const timeoutMessage = timeoutMs !== undefined ? `Tool ${prepared.tool.name} timed out after ${timeoutMs}ms` : "";
+	let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
+
+	// The tool may settle (or reject on its abort signal) before or after the
+	// deadline fires, so the flag, not rejection order, decides the reported
+	// error. The race exists for tools that never settle at all.
+	let deadlineExceeded = false;
+
 	try {
-		const result = await prepared.tool.execute(
+		// Inside the try: an invalid timeoutMs (NaN, negative, > 2^31-1) must
+		// become a terminal tool error, not an unhandled loop rejection.
+		// setTimeout would silently coerce these to a 1ms deadline, so validate
+		// explicitly — AbortSignal.timeout threw here, and the contract stays.
+		if (timeoutMs !== undefined && (!Number.isFinite(timeoutMs) || timeoutMs < 0 || timeoutMs > 2 ** 31 - 1)) {
+			throw new RangeError("timeoutMs is out of range: must be a finite non-negative number not exceeding 2^31-1");
+		}
+		const deadlineSignal = timeoutMs !== undefined ? new AbortController() : undefined;
+		if (timeoutMs !== undefined && deadlineSignal) {
+			deadlineTimer = setTimeout(() => deadlineSignal.abort(), timeoutMs);
+			deadlineTimer.unref?.();
+		}
+		const deadline =
+			deadlineSignal &&
+			new Promise<never>((_resolve, reject) => {
+				const onDeadline = () => {
+					deadlineExceeded = true;
+					reject(new Error(timeoutMessage));
+				};
+				if (deadlineSignal.signal.aborted) {
+					onDeadline();
+					return;
+				}
+				deadlineSignal.signal.addEventListener("abort", onDeadline, { once: true });
+			});
+
+		let executeSignal = signal;
+		if (deadlineSignal) {
+			executeSignal = signal ? AbortSignal.any([signal, deadlineSignal.signal]) : deadlineSignal.signal;
+		}
+
+		const execution = prepared.tool.execute(
 			prepared.toolCall.id,
 			prepared.args as never,
-			signal,
+			executeSignal,
 			(partialResult) => {
 				if (!acceptingUpdates) return;
 				updateEvents.push(
@@ -702,18 +748,21 @@ async function executePreparedToolCall(
 				);
 			},
 		);
+		const result = deadline ? await Promise.race([execution, deadline]) : await execution;
 		acceptingUpdates = false;
 		await Promise.all(updateEvents);
 		return { result, isError: false };
 	} catch (error) {
 		acceptingUpdates = false;
 		await Promise.all(updateEvents);
+		const message = deadlineExceeded ? timeoutMessage : error instanceof Error ? error.message : String(error);
 		return {
-			result: createErrorToolResult(error instanceof Error ? error.message : String(error)),
+			result: createErrorToolResult(message),
 			isError: true,
 		};
 	} finally {
 		acceptingUpdates = false;
+		if (deadlineTimer !== undefined) clearTimeout(deadlineTimer);
 	}
 }
 

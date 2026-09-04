@@ -6,6 +6,9 @@ import { CLOUDFLARE_AI_GATEWAY_MODELS } from "./cloudflare-ai-gateway.models.ts"
 import { cloudflareAIGatewayAuth } from "./cloudflare-auth.ts";
 import { cloudflareStreams } from "./cloudflare-stream.ts";
 
+// The generic is pinned (not inferred from the generated catalog): when the
+// live Cloudflare catalog temporarily lists no openai-completions models,
+// inference collapses TApi and this static api entry fails to type-check.
 type CloudflareAIGatewayApi = "anthropic-messages" | "openai-completions" | "openai-responses";
 
 export function cloudflareAIGatewayProvider(): Provider<CloudflareAIGatewayApi> {

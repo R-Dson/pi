@@ -5,13 +5,14 @@ import {
 	createAssistantMessageEventStream,
 	fauxAssistantMessage,
 	fauxToolCall,
+	type Message,
 	type Model,
 	type SimpleStreamOptions,
 } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { estimateTokens } from "../../src/core/compaction/index.ts";
-import { createHarness, getUserTexts, type Harness } from "./harness.ts";
+import { createHarness, getMessageText, getUserTexts, type Harness } from "./harness.ts";
 
 type SessionWithCompactionInternals = {
 	_checkCompaction: (assistantMessage: AssistantMessage, skipAbortedCheck?: boolean) => Promise<boolean>;
@@ -93,6 +94,26 @@ function seedCompactableSession(harness: Harness): void {
 	assistant.content = [{ type: "text", text: "assistant response to compact" }];
 	harness.sessionManager.appendMessage(assistant);
 	harness.session.agent.state.messages = harness.sessionManager.buildSessionContext().messages;
+}
+
+/** Serialized snapshot of a provider request, in the prompt-stable-prefix test idiom. */
+interface CapturedRequest {
+	systemPrompt: string | undefined;
+	tools: Array<{ name: string; parameters: string }>;
+	messages: Message[];
+	sessionId: string | undefined;
+}
+
+function captureRequest(context: Context, options?: SimpleStreamOptions): CapturedRequest {
+	return {
+		systemPrompt: context.systemPrompt,
+		tools: (context.tools ?? []).map((tool) => ({
+			name: tool.name,
+			parameters: JSON.stringify(tool.parameters),
+		})),
+		messages: structuredClone(context.messages),
+		sessionId: options?.sessionId,
+	};
 }
 
 async function createAbortableCompactionHarness(): Promise<{
@@ -281,7 +302,7 @@ describe("AgentSession compaction characterization", () => {
 		expect(harness.faux.state.callCount).toBe(1);
 	});
 
-	it("uses the standalone compaction request context", async () => {
+	it("uses the standalone split-turn prefix request context", async () => {
 		const harness = await createHarness({ settings: { compaction: { keepRecentTokens: 1 } } });
 		harnesses.push(harness);
 		seedCompactableSession(harness);
@@ -300,6 +321,10 @@ describe("AgentSession compaction characterization", () => {
 
 		await harness.session.compact();
 
+		// The split-turn path summarizes only the turn prefix (seedCompactableSession
+		// cuts at the assistant message), which still uses the standalone serialized
+		// request. The history-summary path replays the agent prefix instead
+		// (see the prefix-replay test below).
 		expect(transformContext).not.toHaveBeenCalled();
 		expect(requestContext?.systemPrompt).not.toBe(harness.session.agent.state.systemPrompt);
 		expect(requestContext?.tools).toBeUndefined();
@@ -307,6 +332,81 @@ describe("AgentSession compaction characterization", () => {
 		expect(requestOptions).toMatchObject({ cacheRetention: "none" });
 		expect(requestOptions?.sessionId).not.toBe("active-routing-session");
 		expect(requestOptions?.transport).toBeUndefined();
+	});
+
+	it("replays the regular request prefix for the compaction summarizer", async () => {
+		const echoTool: AgentTool = {
+			name: "bash",
+			label: "Bash",
+			description: "Echo a command back",
+			parameters: Type.Object({ command: Type.String() }),
+			execute: async (_toolCallId, params) => {
+				const command =
+					typeof params === "object" && params !== null && "command" in params ? String(params.command) : "";
+				return {
+					content: [{ type: "text", text: `ran:${command}` }],
+					details: { command },
+				};
+			},
+		};
+		const harness = await createHarness({
+			tools: [echoTool],
+			// keep ~10 tokens so the cut lands on the second turn's user message:
+			// turn 1 is summarized whole (history path), turn 2 is kept.
+			settings: { compaction: { keepRecentTokens: 10 } },
+		});
+		harnesses.push(harness);
+		// The routing id regular requests carry (wired from the session manager
+		// in sdk.ts); the summarizer replay must forward the same value.
+		harness.session.agent.sessionId = "prefix-replay-routing";
+
+		const captures: CapturedRequest[] = [];
+		const capture = (reply: string) => (_context: Context, options: SimpleStreamOptions | undefined) => {
+			captures.push(captureRequest(_context, options));
+			return fauxAssistantMessage(reply);
+		};
+		harness.setResponses([capture("first reply"), capture("second reply"), capture("## Goal\ncheckpoint summary")]);
+
+		await harness.session.prompt("first turn");
+		await harness.session.prompt("second turn ".repeat(20).trim());
+		const result = await harness.session.compact();
+
+		expect(result.summary).toContain("checkpoint summary");
+		expect(captures).toHaveLength(3);
+		const regularRequest = captures[1]!;
+		const summarizerRequest = captures[2]!;
+
+		// System prompt: the agent's real one, byte-equal to the last regular request.
+		expect(summarizerRequest.systemPrompt).toBe(regularRequest.systemPrompt);
+		expect(summarizerRequest.systemPrompt).toBe(harness.session.agent.state.systemPrompt);
+		// Tools: passed through unchanged, same order, same schemas.
+		expect(summarizerRequest.tools).toEqual(regularRequest.tools);
+		expect(summarizerRequest.tools.length).toBeGreaterThan(0);
+		expect(summarizerRequest.tools[0]?.parameters).toContain("command");
+
+		// Messages: the converted history is byte-identical to the regular request's
+		// history; the only delta is ONE appended user instruction turn replacing the
+		// last regular request's trailing user prompt (both requests have one final
+		// user message after the same [user, assistant] history).
+		expect(summarizerRequest.messages).toHaveLength(regularRequest.messages.length);
+		expect(JSON.stringify(summarizerRequest.messages.slice(0, -1))).toBe(
+			JSON.stringify(regularRequest.messages.slice(0, -1)),
+		);
+		expect(summarizerRequest.messages.map((message) => message.role)).toEqual(["user", "assistant", "user"]);
+
+		const instruction = summarizerRequest.messages.at(-1);
+		expect(instruction?.role).toBe("user");
+		const instructionText = getMessageText(instruction);
+		expect(instructionText).toContain("Act as a summarizer for this single turn; do not continue the conversation.");
+		expect(instructionText).toContain("Use this EXACT format:");
+		expect(instructionText).not.toContain("<conversation>");
+		expect(instructionText).not.toContain("[User]:");
+
+		// Routing id: the summarizer request carries the same session routing id
+		// as the regular request (prompt-cache key affinity on OpenAI-family
+		// providers), never a minted one.
+		expect(regularRequest.sessionId).toBe("prefix-replay-routing");
+		expect(summarizerRequest.sessionId).toBe(regularRequest.sessionId);
 	});
 
 	it("persists usage from pi-generated manual compaction", async () => {
@@ -943,5 +1043,62 @@ describe("AgentSession compaction characterization", () => {
 
 		expect(belowThresholdSpy).not.toHaveBeenCalled();
 		expect(disabledSpy).not.toHaveBeenCalled();
+	});
+
+	it("replays the checkpoint-headed prefix for update compactions", async () => {
+		const harness = await createHarness({
+			settings: { compaction: { keepRecentTokens: 10 } },
+		});
+		harnesses.push(harness);
+
+		const captures: CapturedRequest[] = [];
+		const capture = (reply: string) => (_context: Context) => {
+			captures.push(captureRequest(_context));
+			return fauxAssistantMessage(reply);
+		};
+		harness.setResponses([
+			capture("first reply"),
+			capture("second reply"),
+			capture("## Goal\nfirst checkpoint"),
+			capture("third reply"),
+			capture("fourth reply"),
+			capture("## Goal\nupdated checkpoint"),
+		]);
+
+		// Two turns per compaction, with the bulk in the KEPT turn's user
+		// message: the cut walk accumulates from the newest entry and crosses
+		// the keep budget on that user entry, so the cut lands on it, the
+		// earlier turn is summarized whole (history path, no split-turn
+		// requests), and the kept prefix is what the model sees next.
+		await harness.session.prompt("first turn");
+		await harness.session.prompt("second turn ".repeat(20).trim());
+		await harness.session.compact();
+		// Post-compaction regular turns: the model now sees the checkpoint message first.
+		await harness.session.prompt("third turn");
+		await harness.session.prompt("fourth turn ".repeat(20).trim());
+		const regularRequest = captures[captures.length - 1]!;
+		// convertToLlm maps the checkpoint message to a user message on the wire,
+		// so assert on its content rather than its role.
+		expect(JSON.stringify(regularRequest.messages[0])).toContain("first checkpoint");
+		const summaryMessages = regularRequest.messages.slice(0, -1);
+
+		await harness.session.compact();
+		const summarizerRequest = captures[captures.length - 1]!;
+
+		// The update-compaction replay is headed by the same checkpoint message
+		// and byte-matches the prior regular request's prefix (system + tools +
+		// shared messages); the only delta is the appended instruction turn.
+		expect(summarizerRequest.systemPrompt).toBe(regularRequest.systemPrompt);
+		expect(summarizerRequest.tools).toEqual(regularRequest.tools);
+		expect(JSON.stringify(summarizerRequest.messages[0])).toContain("first checkpoint");
+		const replayShared = summarizerRequest.messages.slice(0, summaryMessages.length);
+		expect(JSON.stringify(replayShared)).toBe(JSON.stringify(summaryMessages));
+		expect(summarizerRequest.messages).toHaveLength(summaryMessages.length + 1);
+		const instruction = summarizerRequest.messages.at(-1);
+		expect(instruction?.role).toBe("user");
+		const instructionText = JSON.stringify(instruction);
+		expect(instructionText).toContain("Act as a summarizer");
+		// The old checkpoint leads the conversation; it is not re-embedded at the uncached end.
+		expect(instructionText).not.toContain("<previous-summary>");
 	});
 });
