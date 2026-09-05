@@ -4233,9 +4233,11 @@ export class InteractiveMode {
 		this.hideThinkingBlock = !this.hideThinkingBlock;
 		this.settingsManager.setHideThinkingBlock(this.hideThinkingBlock);
 		this.updateThinkingBlockVisibility();
-		// No status line here: showStatus replaces the previous chat status
-		// (e.g. an extension's run summary), and the toggle's effect is
-		// visible on screen anyway.
+		// Footer transient message, not a chat status: showStatus replaces
+		// the previous chat status (e.g. an extension's run summary).
+		this.footer.setTransientStatus(`Thinking blocks: ${this.hideThinkingBlock ? "hidden" : "visible"}`, () =>
+			this.ui.requestRender(),
+		);
 	}
 
 	private async handleOpenExternalEditor(): Promise<void> {

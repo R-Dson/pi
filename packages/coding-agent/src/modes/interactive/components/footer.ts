@@ -43,6 +43,8 @@ export function formatCwdForFooter(cwd: string, home: string | undefined): strin
 	return relativeToHome === "" ? "~" : `~${sep}${relativeToHome}`;
 }
 
+const TRANSIENT_STATUS_MS = 3000;
+
 /**
  * Footer component that shows pwd, token stats, and context usage.
  * Computes token/context stats from session, gets git branch and extension statuses from provider.
@@ -51,6 +53,8 @@ export class FooterComponent implements Component {
 	private autoCompactEnabled = true;
 	private session: AgentSession;
 	private footerData: ReadonlyFooterDataProvider;
+	private transientMessage: string | undefined;
+	private transientTimer: ReturnType<typeof setTimeout> | undefined;
 
 	constructor(session: AgentSession, footerData: ReadonlyFooterDataProvider) {
 		this.session = session;
@@ -66,6 +70,25 @@ export class FooterComponent implements Component {
 	}
 
 	/**
+	 * Show a short-lived message in place of the pwd line. For transient UI
+	 * feedback (e.g. keybinding toggles) that must not enter the chat, where
+	 * a status line would replace the previous chat status (an extension's
+	 * run summary, for example). The caller's requestRender is invoked again
+	 * when the message expires.
+	 */
+	setTransientStatus(message: string, requestRender: () => void): void {
+		if (this.transientTimer !== undefined) {
+			clearTimeout(this.transientTimer);
+		}
+		this.transientMessage = message;
+		this.transientTimer = setTimeout(() => {
+			this.transientMessage = undefined;
+			this.transientTimer = undefined;
+			requestRender();
+		}, TRANSIENT_STATUS_MS);
+	}
+
+	/**
 	 * No-op: git branch caching now handled by provider.
 	 * Kept for compatibility with existing call sites in interactive-mode.
 	 */
@@ -78,7 +101,11 @@ export class FooterComponent implements Component {
 	 * Git watcher cleanup now handled by provider.
 	 */
 	dispose(): void {
-		// Git watcher cleanup handled by provider
+		// Git watcher cleanup now handled by provider
+		if (this.transientTimer !== undefined) {
+			clearTimeout(this.transientTimer);
+			this.transientTimer = undefined;
+		}
 	}
 
 	render(width: number): string[] {
@@ -227,7 +254,11 @@ export class FooterComponent implements Component {
 		const dimRemainder = theme.fg("dim", remainder);
 
 		const pwdLine = truncateToWidth(theme.fg("dim", pwd), width, theme.fg("dim", "..."));
-		const lines = [pwdLine, dimStatsLeft + dimRemainder];
+		const firstLine =
+			this.transientMessage !== undefined
+				? truncateToWidth(theme.fg("dim", sanitizeStatusText(this.transientMessage)), width, theme.fg("dim", "..."))
+				: pwdLine;
+		const lines = [firstLine, dimStatsLeft + dimRemainder];
 
 		// Add extension statuses on a single line, sorted by key alphabetically
 		const extensionStatuses = this.footerData.getExtensionStatuses();

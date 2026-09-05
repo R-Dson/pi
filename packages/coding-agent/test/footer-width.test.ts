@@ -1,5 +1,5 @@
 import { visibleWidth } from "@earendil-works/pi-tui";
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 import type { AgentSession } from "../src/core/agent-session.ts";
 import type { ReadonlyFooterDataProvider } from "../src/core/footer-data-provider.ts";
 import { FooterComponent, formatCwdForFooter } from "../src/modes/interactive/components/footer.ts";
@@ -248,5 +248,57 @@ describe("FooterComponent width handling", () => {
 
 		expect(stats).toContain("$1.234");
 		expect(stats).not.toContain("(sub)");
+	});
+});
+
+describe("FooterComponent transient status", () => {
+	beforeAll(() => {
+		initTheme(undefined, false);
+	});
+
+	it("replaces the pwd line until the message expires", () => {
+		vi.useFakeTimers();
+		try {
+			const session = createSession({ sessionName: "" });
+			const footer = new FooterComponent(session, createFooterData(1));
+			let renderRequests = 0;
+			footer.setTransientStatus("Thinking blocks: hidden", () => {
+				renderRequests++;
+			});
+
+			const during = footer.render(120).map(stripAnsi);
+			expect(during[0]).toContain("Thinking blocks: hidden");
+			expect(during[0]).not.toContain("/tmp/project");
+
+			vi.advanceTimersByTime(3000);
+			expect(renderRequests).toBeGreaterThan(0);
+
+			const after = footer.render(120).map(stripAnsi);
+			expect(after[0]).toContain("/tmp/project");
+			expect(after[0]).not.toContain("Thinking blocks");
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("replaces an active message and resets its timer", () => {
+		vi.useFakeTimers();
+		try {
+			const session = createSession({ sessionName: "" });
+			const footer = new FooterComponent(session, createFooterData(1));
+			footer.setTransientStatus("first", () => {});
+			footer.setTransientStatus("second", () => {});
+
+			expect(footer.render(120).map(stripAnsi)[0]).toContain("second");
+
+			// 3s after the FIRST call, but < 3s after the second: still showing.
+			vi.advanceTimersByTime(2000);
+			expect(footer.render(120).map(stripAnsi)[0]).toContain("second");
+
+			vi.advanceTimersByTime(1000);
+			expect(footer.render(120).map(stripAnsi)[0]).not.toContain("second");
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 });
