@@ -1,7 +1,11 @@
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { Container } from "@earendil-works/pi-tui";
+import { mkdtempSync, rmSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { AgentSessionRuntimeDiagnostic } from "../../src/core/agent-session-services.ts";
+import { SettingsManager } from "../../src/core/settings-manager.ts";
 import { InteractiveMode } from "../../src/modes/interactive/interactive-mode.ts";
 import { initTheme } from "../../src/modes/interactive/theme/theme.ts";
 import { allowNetwork } from "../test-network-env.ts";
@@ -39,6 +43,11 @@ describe("no tracking traffic (issue #32)", () => {
 		);
 
 		const harness = await createHarness();
+		// Real SettingsManager over an empty agent dir (own property shadows
+		// the prototype getter): default-off must flow through the actual
+		// getter and merge logic, not a hardcoded stub — the zero-fetch
+		// expectation below fails if the default ever flips to on.
+		const emptySettingsDir = mkdtempSync(join(tmpdir(), "pi-no-tracking-settings-"));
 		try {
 			harness.setResponses([fauxAssistantMessage("ok")]);
 			await harness.session.prompt("hello");
@@ -59,6 +68,7 @@ describe("no tracking traffic (issue #32)", () => {
 				version: "test",
 				showWarning: (InteractiveMode.prototype as unknown as { showWarning(message: string): void }).showWarning,
 				session: harness.session,
+				settingsManager: SettingsManager.create(emptySettingsDir, emptySettingsDir),
 				checkTmuxKeyboardSetup: vi.fn().mockResolvedValue(undefined),
 				maybeWarnAboutAnthropicSubscriptionAuth: vi.fn(),
 				getUserInput: vi.fn(() => new Promise<string>(() => {})),
@@ -76,6 +86,7 @@ describe("no tracking traffic (issue #32)", () => {
 			expect(requests).toEqual([]);
 		} finally {
 			harness.cleanup();
+			rmSync(emptySettingsDir, { recursive: true, force: true });
 		}
 	});
 });

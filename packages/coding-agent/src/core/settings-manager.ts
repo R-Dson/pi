@@ -115,6 +115,8 @@ export interface Settings {
 	retry?: RetrySettings;
 	hideThinkingBlock?: boolean;
 	showCacheMissNotices?: boolean; // default: false - show cache cost and provider recovery notices
+	updateCheck?: boolean; // default: false - check GitHub for new fork releases at startup (the only phone-home the fork can do)
+	providerAttribution?: boolean; // default: false - send OpenRouter app-identification headers
 	externalEditor?: string; // Command for Ctrl+G external editor; takes precedence over VISUAL/EDITOR
 	shellPath?: string; // Custom shell path (e.g., for Cygwin users on Windows); supports leading ~ expansion
 	quietStartup?: boolean;
@@ -969,6 +971,26 @@ export class SettingsManager {
 	setQuietStartup(quiet: boolean): void {
 		this.globalSettings.quietStartup = quiet;
 		this.markModified("quietStartup");
+		this.save();
+	}
+
+	getUpdateCheckEnabled(): boolean {
+		return this.settings.updateCheck ?? false;
+	}
+
+	setUpdateCheck(enabled: boolean): void {
+		this.globalSettings.updateCheck = enabled;
+		this.markModified("updateCheck");
+		this.save();
+	}
+
+	getProviderAttributionEnabled(): boolean {
+		return this.settings.providerAttribution ?? false;
+	}
+
+	setProviderAttribution(enabled: boolean): void {
+		this.globalSettings.providerAttribution = enabled;
+		this.markModified("providerAttribution");
 		this.save();
 	}
 

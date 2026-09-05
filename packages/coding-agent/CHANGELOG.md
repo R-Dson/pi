@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added opt-in phone-home settings, both default off so the zero-traffic guarantee stands unless the user changes it: `updateCheck` compares the running version against the fork's GitHub releases at startup and shows an update notice (the only automatic non-provider request the fork can make), and `providerAttribution` sends OpenRouter app-identification headers (`HTTP-Referer`, `X-OpenRouter-Title`, `X-OpenRouter-Categories`) so OpenRouter attributes usage to the fork; non-OpenRouter providers never receive identifying headers. Both are exposed in `/settings` and asked once by the first-time setup wizard with Off preselected.
+- Added a privacy step to the first-time setup wizard, and the wizard is no longer gated behind upstream's `PI_EXPERIMENTAL` flag: it runs once per install — on fresh installs, and once more for existing installs that have never answered the privacy questions. The theme question is always first, preselected to the current theme (detected appearance for fresh installs) so confirming without navigating changes nothing; skipping or cancelling records the privacy decline, so the wizard never asks the same user twice. The theme step offers every registered theme (built-ins plus installed theme resources) with live preview, instead of only Dark/Light.
+
 ## [0.85.4] - 2026-09-05
 
 ### Added

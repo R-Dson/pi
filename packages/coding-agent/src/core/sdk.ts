@@ -10,7 +10,7 @@ import type { ExtensionRunner, LoadExtensionsResult, SessionStartEvent, ToolDefi
 import { convertToLlm, replaceImagesWithPlaceholders } from "./messages.ts";
 import { findInitialModel } from "./model-resolver.ts";
 import { ModelRuntime } from "./model-runtime.ts";
-import { mergeProviderAttributionHeaders } from "./provider-attribution.ts";
+import { mergeProviderAttributionHeaders, openRouterAttributionHeaders } from "./provider-attribution.ts";
 import type { ResourceLoader } from "./resource-loader.ts";
 import { DefaultResourceLoader } from "./resource-loader.ts";
 import { getDefaultSessionDir, SessionManager } from "./session-manager.ts";
@@ -313,7 +313,16 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 				maxRetries: options?.maxRetries ?? providerRetrySettings.maxRetries,
 				maxRetryDelayMs: options?.maxRetryDelayMs ?? providerRetrySettings.maxRetryDelayMs,
 				transformHeaders: async (requestHeaders) => {
-					const headers = mergeProviderAttributionHeaders(model, options?.sessionId, requestHeaders);
+					// Read the setting dynamically so mid-session changes take effect.
+					const attributionHeaders = settingsManager.getProviderAttributionEnabled()
+						? openRouterAttributionHeaders(model)
+						: undefined;
+					const headers = mergeProviderAttributionHeaders(
+						model,
+						options?.sessionId,
+						attributionHeaders,
+						requestHeaders,
+					);
 					return headerRunner?.hasHandlers("before_provider_headers")
 						? headerRunner.emitBeforeProviderHeaders(headers ?? {})
 						: (headers ?? {});

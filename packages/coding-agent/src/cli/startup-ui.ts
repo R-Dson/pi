@@ -5,11 +5,11 @@ import {
 	type TUI,
 	TuiMainScreen,
 } from "@earendil-works/pi-tui";
-import { existsSync } from "fs";
+import { existsSync, readFileSync } from "fs";
 import { APP_NAME, CONFIG_DIR_NAME, ENV_AGENT_DIR, getAgentDir, getSettingsPath, PACKAGE_NAME } from "../config.ts";
-import { areExperimentalFeaturesEnabled } from "../core/experimental.ts";
 import { KeybindingsManager } from "../core/keybindings.ts";
 import { DefaultPackageManager, type ResolvedResource } from "../core/package-manager.ts";
+import { classifySelfUpdateInstall } from "../core/self-update-source.ts";
 import { SettingsManager } from "../core/settings-manager.ts";
 import { ExtensionInputComponent } from "../modes/interactive/components/extension-input.ts";
 import { ExtensionSelectorComponent } from "../modes/interactive/components/extension-selector.ts";
@@ -20,6 +20,7 @@ import {
 import {
 	detectTerminalBackgroundFromEnv,
 	detectTerminalThemeForAuto,
+	getAvailableThemes,
 	initTheme,
 	loadThemeFromPath,
 	parseAutoThemeSetting,
@@ -113,29 +114,41 @@ async function clearStartupTui(ui: TUI): Promise<void> {
 }
 
 /**
- * First-time setup runs when all of these hold:
- * - this is the official Pi distribution (not a fork/rebrand)
- * - experimental features are enabled (PI_EXPERIMENTAL=1)
- * - the default agent directory is used (no custom agent dir override)
- * - setup was not completed before (settings.json does not exist)
+ * First-time setup runs once per distribution:
+ * - fresh installs (no settings.json), and
+ * - existing installs that have never answered the privacy questions — the
+ *   `updateCheck`/`providerAttribution` keys are absent until the wizard or
+ *   /settings first writes them, so unanswered users are asked exactly once.
+ * Runs for the official distribution and fork releases; skipped under a
+ * custom agent dir override.
  */
 export function shouldRunFirstTimeSetup(settingsPath: string = getSettingsPath()): boolean {
-	if (
-		!isOfficialDistribution({
-			packageName: PACKAGE_NAME,
-			appName: APP_NAME,
-			configDirName: CONFIG_DIR_NAME,
-		})
-	) {
-		return false;
-	}
-	if (!areExperimentalFeaturesEnabled()) {
-		return false;
-	}
 	if (process.env[ENV_AGENT_DIR]) {
 		return false;
 	}
-	return !existsSync(settingsPath);
+	const isOfficial = isOfficialDistribution({
+		packageName: PACKAGE_NAME,
+		appName: APP_NAME,
+		configDirName: CONFIG_DIR_NAME,
+	});
+	const forkKind = classifySelfUpdateInstall(PACKAGE_NAME);
+	if (!isOfficial && forkKind !== "fork-standalone" && forkKind !== "fork-registry") {
+		return false;
+	}
+	if (!existsSync(settingsPath)) {
+		return true;
+	}
+	return !hasPrivacyAnswers(settingsPath);
+}
+
+/** True when at least one privacy question has an answer on record. */
+function hasPrivacyAnswers(settingsPath: string): boolean {
+	try {
+		const settings = JSON.parse(readFileSync(settingsPath, "utf-8")) as Record<string, unknown>;
+		return "updateCheck" in settings || "providerAttribution" in settings;
+	} catch {
+		return false;
+	}
 }
 
 export async function showStartupSelector<T>(
@@ -181,8 +194,12 @@ export async function showFirstTimeSetup(settingsManager: SettingsManager): Prom
 			settled = true;
 			if (result) {
 				settingsManager.setTheme(result.theme);
-				await settingsManager.flush();
 			}
+			// Completing and skipping both record the privacy answers (skipping
+			// declines both) so the wizard never asks the same user twice.
+			settingsManager.setUpdateCheck(result?.updateCheck ?? false);
+			settingsManager.setProviderAttribution(result?.providerAttribution ?? false);
+			await settingsManager.flush();
 			await clearStartupTui(ui);
 			ui.stop();
 			resolve();
@@ -194,6 +211,9 @@ export async function showFirstTimeSetup(settingsManager: SettingsManager): Prom
 			setTheme(detectedTheme);
 			const component = new FirstTimeSetupComponent({
 				detectedTheme,
+				// createStartupTui already registered built-in + resource themes.
+				themes: getAvailableThemes(),
+				currentTheme: settingsManager.getThemeSetting(),
 				onThemePreview: (themeName) => {
 					setTheme(themeName);
 					ui.requestRender();

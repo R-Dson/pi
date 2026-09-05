@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -80,8 +80,12 @@ describe("createAgentSession provider attribution headers", () => {
 			providerHeaders?: Record<string, string>;
 			requestHeaders?: Record<string, string>;
 			sessionId?: string;
+			settings?: Record<string, unknown>;
 		} = {},
 	): Promise<ProviderHeaders | undefined> {
+		if (options.settings) {
+			writeFileSync(join(agentDir, "settings.json"), JSON.stringify(options.settings));
+		}
 		const settingsManager = SettingsManager.create(cwd, agentDir);
 		const authStorage = AuthStorage.inMemory({
 			[model.provider]: { type: "api_key", key: "test-api-key" },
@@ -164,6 +168,36 @@ describe("createAgentSession provider attribution headers", () => {
 		);
 
 		expect(headers?.["User-Agent"]).toBeUndefined();
+	});
+
+	it("sends OpenRouter attribution headers when the setting is enabled", async () => {
+		const headers = await captureHeaders(createModel("openrouter", "https://openrouter.ai/api/v1"), {
+			settings: { providerAttribution: true },
+		});
+
+		expect(headers?.["HTTP-Referer"]).toBe("https://github.com/R-Dson/pi");
+		expect(headers?.["X-OpenRouter-Title"]).toBe("pi-fork");
+		expect(headers?.["X-OpenRouter-Categories"]).toBe("cli-agent");
+	});
+
+	it("keeps non-OpenRouter providers unidentified even when the setting is enabled", async () => {
+		const headers = await captureHeaders(createModel("custom-provider", "https://example.test/v1"), {
+			settings: { providerAttribution: true },
+		});
+
+		expect(headers?.["HTTP-Referer"]).toBeUndefined();
+		expect(headers?.["X-OpenRouter-Title"]).toBeUndefined();
+		expect(headers?.["X-OpenRouter-Categories"]).toBeUndefined();
+	});
+
+	it("does not match lookalike OpenRouter hosts when the setting is enabled", async () => {
+		const headers = await captureHeaders(createModel("custom-provider", "https://openrouter.ai.evil.example/v1"), {
+			settings: { providerAttribution: true },
+		});
+
+		expect(headers?.["HTTP-Referer"]).toBeUndefined();
+		expect(headers?.["X-OpenRouter-Title"]).toBeUndefined();
+		expect(headers?.["X-OpenRouter-Categories"]).toBeUndefined();
 	});
 
 	it("keeps the provider-required OpenCode session headers", async () => {

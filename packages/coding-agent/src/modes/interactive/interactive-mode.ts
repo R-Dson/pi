@@ -101,6 +101,7 @@ import type { SourceInfo } from "../../core/source-info.ts";
 import { withBuiltInRenderers } from "../../core/tools/renderers/index.ts";
 import { formatSize, type TruncationResult } from "../../core/tools/truncate.ts";
 import { hasTrustRequiringProjectResources, ProjectTrustStore } from "../../core/trust-manager.ts";
+import { checkForForkUpdate } from "../../core/update-check.ts";
 import { getUsageCostBreakdown } from "../../core/usage-totals.ts";
 import { getChangelogPath, getNewEntries, normalizeChangelogLinks, parseChangelog } from "../../utils/changelog.ts";
 import { copyToClipboard, readClipboardText } from "../../utils/clipboard.ts";
@@ -1056,6 +1057,19 @@ export class InteractiveMode {
 				.then(() => this.updateAvailableProviderCount())
 				.catch(() => {})
 				.finally(() => clearTimeout(timeout));
+
+			// Opt-in (updateCheck setting, default false): the fork's only
+			// startup network request besides provider traffic.
+			if (this.settingsManager.getUpdateCheckEnabled()) {
+				void checkForForkUpdate(VERSION).then(
+					(notice) => {
+						if (notice) {
+							this.showWarning(notice);
+						}
+					},
+					() => {},
+				);
+			}
 		}
 
 		// Check tmux keyboard setup asynchronously
@@ -4517,6 +4531,8 @@ export class InteractiveMode {
 					treeFilterMode: this.settingsManager.getTreeFilterMode(),
 					showHardwareCursor: this.settingsManager.getShowHardwareCursor(),
 					showCacheMissNotices: this.settingsManager.getShowCacheMissNotices(),
+					updateCheck: this.settingsManager.getUpdateCheckEnabled(),
+					providerAttribution: this.settingsManager.getProviderAttributionEnabled(),
 					defaultProjectTrust: this.settingsManager.getDefaultProjectTrust(),
 					editorPaddingX: this.settingsManager.getEditorPaddingX(),
 					outputPad: this.settingsManager.getOutputPad(),
@@ -4615,6 +4631,12 @@ export class InteractiveMode {
 					onShowCacheMissNoticesChange: (shown) => {
 						this.settingsManager.setShowCacheMissNotices(shown);
 						this.rebuildChatFromMessages();
+					},
+					onUpdateCheckChange: (enabled) => {
+						this.settingsManager.setUpdateCheck(enabled);
+					},
+					onProviderAttributionChange: (enabled) => {
+						this.settingsManager.setProviderAttribution(enabled);
 					},
 					onCollapseChangelogChange: (collapsed) => {
 						this.settingsManager.setCollapseChangelog(collapsed);

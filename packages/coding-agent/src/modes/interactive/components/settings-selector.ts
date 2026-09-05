@@ -69,6 +69,8 @@ export interface SettingsConfig {
 	hideThinkingBlock: boolean;
 	mermaidRenderingMode: MermaidRenderingMode;
 	showCacheMissNotices: boolean;
+	updateCheck: boolean;
+	providerAttribution: boolean;
 	collapseChangelog: boolean;
 	doubleEscapeAction: "fork" | "tree" | "none";
 	treeFilterMode: "default" | "no-tools" | "user-only" | "labeled-only" | "all";
@@ -105,6 +107,8 @@ export interface SettingsCallbacks {
 	onHideThinkingBlockChange: (hidden: boolean) => void;
 	onMermaidRenderingModeChange: (mode: MermaidRenderingMode) => void;
 	onShowCacheMissNoticesChange: (shown: boolean) => void;
+	onUpdateCheckChange: (enabled: boolean) => void;
+	onProviderAttributionChange: (enabled: boolean) => void;
 	onCollapseChangelogChange: (collapsed: boolean) => void;
 	onDoubleEscapeActionChange: (action: "fork" | "tree" | "none") => void;
 	onTreeFilterModeChange: (mode: "default" | "no-tools" | "user-only" | "labeled-only" | "all") => void;
@@ -515,6 +519,20 @@ export class SettingsSelectorComponent extends Container {
 				values: ["true", "false"],
 			},
 			{
+				id: "update-check",
+				label: "Update check",
+				description: "Check GitHub for new fork releases at startup (off makes no requests)",
+				currentValue: config.updateCheck ? "true" : "false",
+				values: ["true", "false"],
+			},
+			{
+				id: "provider-attribution",
+				label: "Provider attribution",
+				description: "Send app-identification headers on OpenRouter requests",
+				currentValue: config.providerAttribution ? "true" : "false",
+				values: ["true", "false"],
+			},
+			{
 				id: "collapse-changelog",
 				label: "Collapse changelog",
 				description: "Show condensed changelog after updates",
@@ -862,6 +880,12 @@ export class SettingsSelectorComponent extends Container {
 						break;
 					case "cache-miss-notices":
 						callbacks.onShowCacheMissNoticesChange(newValue === "true");
+						break;
+					case "update-check":
+						callbacks.onUpdateCheckChange(newValue === "true");
+						break;
+					case "provider-attribution":
+						callbacks.onProviderAttributionChange(newValue === "true");
 						break;
 					case "collapse-changelog":
 						callbacks.onCollapseChangelogChange(newValue === "true");
