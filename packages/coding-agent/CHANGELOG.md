@@ -2,16 +2,34 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added five-times-faster mouse wheel scrolling while holding Alt in fullscreen mode ([#9166](https://github.com/earendil-works/pi/pull/9166) by [@xl0](https://github.com/xl0)).
+
+### Fixed
+
+- Fixed SDK import failures caused by unintentionally publishing internal experimental code and dependencies in 0.85.0. The experimental `client` and `experimental/plugin` subpaths and server/client commands are now source-only through `pi-test.sh`; the supported local SDK and stdio RPC API are unchanged ([#9132](https://github.com/earendil-works/pi/issues/9132)).
+
 ## [0.85.3] - 2026-09-05
 
 ## [0.85.2] - 2026-09-05
 
 ## [0.85.1] - 2026-09-05
 
+### New Features
+
+- **GPT-6 Astra** — Available through OpenAI API keys and OpenAI Codex subscriptions. See [API Keys](docs/providers.md#api-keys) and [OpenAI Codex](docs/providers.md#openai-codex).
+
+### Added
+
+- Added GPT-6 Astra for OpenAI API keys and OpenAI Codex subscriptions.
+
 ### Fixed
 
 - Fixed standalone-tarball installs crashing at startup with `Cannot find package .../esbuild/index.js`: the vendored chord still declared its dependencies, so npm (11.13) treated them as covered by the bundle and skipped extracting the root-level copies, leaving an empty `esbuild` directory while exiting 0. The packager now strips the hoisted dependencies from the vendored manifest and refuses any vendored dependency missing from the root manifest; `install.sh` runs the installed binary as a startup smoke test and retries once from a clean package directory when it fails to start ([#150](https://github.com/R-Dson/pi/issues/150), v0.85.0-fork.8 regression).
-- Fixed configurable save keybindings in the model and thinking selectors ([#8797](https://github.com/earendil-works/pi/issues/8797)).
+- Fixed configurable save keybindings in the model and thinking selectors ([#9149](https://github.com/earendil-works/pi/pull/9149) by [@rwachtler](https://github.com/rwachtler), [#8797](https://github.com/earendil-works/pi/issues/8797)).
+- Fixed mouse hover changing selection and recentering autocomplete and settings lists, causing clicks to target a different item.
+- Fixed long prompt-cache requests for GPT-5.6+ Responses models to use `prompt_cache_options.ttl: "30m"` instead of `prompt_cache_retention: "24h"`.
 
 ### Changed
 

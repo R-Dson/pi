@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added five-times-faster mouse wheel scrolling while holding Alt in fullscreen mode ([#9166](https://github.com/earendil-works/pi/pull/9166) by [@xl0](https://github.com/xl0)).
+
 ## [0.85.3] - 2026-09-05
 
 ## [0.85.2] - 2026-09-05
