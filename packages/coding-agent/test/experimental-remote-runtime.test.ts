@@ -614,15 +614,19 @@ describe("experimental durable server composition", () => {
 		);
 
 		expect(result).toMatchObject({ kind: "prompted", text: "deterministic remote answer" });
-		expect(eventTypes).toEqual(
-			expect.arrayContaining([
-				"run_start",
-				"message_start",
-				"message_update",
-				"message_end",
-				"entry_added",
-				"run_end",
-			]),
+		// runClient resolves on the prompt result; trailing events (run_end) can
+		// still be in flight through worker IPC, so poll for the full sequence.
+		await vi.waitFor(() =>
+			expect(eventTypes).toEqual(
+				expect.arrayContaining([
+					"run_start",
+					"message_start",
+					"message_update",
+					"message_end",
+					"entry_added",
+					"run_end",
+				]),
+			),
 		);
 	});
 
