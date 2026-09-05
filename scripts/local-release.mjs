@@ -228,8 +228,13 @@ if (!options.skipInstall) {
 		if (!commandExists("bun")) {
 			throw new Error("Bun is required for the isolated Bun install. Use --skip-bun-install to skip it.");
 		}
+		// The consumer smoke runs under a sanitized env with an isolated HOME,
+		// which breaks version-manager shims (mise resolves its config from HOME
+		// and reports "not a valid shim"); hand it bun's real binary instead.
+		const bunRuntime = run("bun", ["-e", "process.stdout.write(process.execPath)"], { capture: true }).trim();
+		if (!bunRuntime) throw new Error("Could not resolve the bun binary path.");
 		installCodingAgentConsumer(bunInstallDirectory, tarballs, "bun");
-		smokeTestCodingAgentConsumer(bunInstallDirectory, "bun");
+		smokeTestCodingAgentConsumer(bunInstallDirectory, bunRuntime);
 		createPiShim(bunInstallDirectory);
 	}
 }
