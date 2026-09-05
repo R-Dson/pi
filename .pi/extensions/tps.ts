@@ -69,7 +69,11 @@ export default function (pi: ExtensionAPI) {
 			reasoning > 0 ? `↓${formatTokens(output)} (${formatTokens(reasoning)} thinking)` : `↓${formatTokens(output)}`;
 		const parts = [`${(output / streamedSeconds).toFixed(1)}tok/s`, `↑${formatTokens(input)}`, outputPart];
 		if (cacheRead > 0 || cacheWrite > 0) {
-			parts.push(`cache r/w ${formatTokens(cacheRead)}/${formatTokens(cacheWrite)}`);
+			// Same hit-rate formula as the footer's Cache %: input excludes cache
+			// tokens, so the denominator reconstructs the full prompt volume.
+			const totalPrompt = input + cacheRead + cacheWrite;
+			const hitPct = totalPrompt > 0 ? ((cacheRead / totalPrompt) * 100).toFixed(1) : "0.0";
+			parts.push(cacheWrite > 0 ? `cache ${hitPct}% w ${formatTokens(cacheWrite)}` : `cache ${hitPct}%`);
 		}
 		// Sub-second streams get a second decimal; "0.0s" reads like a bug.
 		parts.push(`${streamedSeconds.toFixed(streamingMs < 1000 ? 2 : 1)}s`);
