@@ -59,6 +59,7 @@ Committing:
 - Before committing, run `git status` and verify you are only staging your files.
 - `packages/ai/src/models.generated.ts` may always be included alongside your files.
 - Message format: `{feat,fix,docs}[(ai,tui,agent,coding-agent)]: <commit message> (optionally multiple lines)`. Message is informative and concise.
+- Always try to combine commits: one commit per logical change. Fold follow-ups to your own unpushed commits (fixups, review nits, test tweaks) back into the original with `git reset --soft <base>` + recommit with explicit paths instead of stacking new commits. Only fold commits you authored in this session.
 
 Never run (destroys other agents' work or bypasses checks):
 
