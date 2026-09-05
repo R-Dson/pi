@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added cache-write attribution for vLLM: `usage.prompt_tokens_details.created_cache_tokens` is now read as cache-write tokens alongside OpenRouter's `cache_write_tokens`. vLLM only reports these fields when the server runs with `--enable-prompt-tokens-details`.
+
 ## [0.85.2] - 2026-09-05
 
 ## [0.85.1] - 2026-09-05

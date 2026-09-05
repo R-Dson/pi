@@ -1509,7 +1509,7 @@ function parseChunkUsage(
 		completion_tokens?: number;
 		cached_tokens?: number;
 		prompt_cache_hit_tokens?: number;
-		prompt_tokens_details?: { cached_tokens?: number; cache_write_tokens?: number };
+		prompt_tokens_details?: { cached_tokens?: number; cache_write_tokens?: number; created_cache_tokens?: number };
 		completion_tokens_details?: { reasoning_tokens?: number };
 	},
 	model: Model<"openai-completions">,
@@ -1517,7 +1517,10 @@ function parseChunkUsage(
 	const promptTokens = rawUsage.prompt_tokens || 0;
 	const cacheReadTokens =
 		rawUsage.prompt_tokens_details?.cached_tokens ?? rawUsage.prompt_cache_hit_tokens ?? rawUsage.cached_tokens ?? 0;
-	const cacheWriteTokens = rawUsage.prompt_tokens_details?.cache_write_tokens || 0;
+	// vLLM names cache writes `created_cache_tokens` (same semantics as OpenRouter's
+	// `cache_write_tokens`); see docs/fork/cache-usage-research.md.
+	const cacheWriteTokens =
+		rawUsage.prompt_tokens_details?.cache_write_tokens ?? rawUsage.prompt_tokens_details?.created_cache_tokens ?? 0;
 
 	// Follow documented OpenAI/OpenRouter semantics: cached_tokens is cache-read
 	// tokens (hits). Providers disagree on placement: OpenAI/OpenRouter use
