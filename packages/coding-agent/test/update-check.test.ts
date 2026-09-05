@@ -61,4 +61,26 @@ describe("checkForForkUpdate", () => {
 		);
 		expect(await checkForForkUpdate("0.85.4-fork.4")).toBeUndefined();
 	});
+
+	it("aborts a hung connection and returns undefined", async () => {
+		vi.useFakeTimers();
+		try {
+			// Hangs forever unless the fetch carries an abort signal that fires.
+			vi.stubGlobal(
+				"fetch",
+				vi.fn(
+					(_url: unknown, opts?: { signal?: AbortSignal }) =>
+						new Promise((_resolve, reject) => {
+							if (!opts?.signal) return; // never settles
+							opts.signal.addEventListener("abort", () => reject(new Error("aborted")));
+						}),
+				),
+			);
+			const pending = checkForForkUpdate("0.85.4-fork.4");
+			vi.advanceTimersByTime(10_000);
+			await expect(pending).resolves.toBeUndefined();
+		} finally {
+			vi.useRealTimers();
+		}
+	});
 });

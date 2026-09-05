@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed the opt-in update check (0.85.4-fork.14) hanging on a stalled connection: the releases fetch now aborts after 10 seconds and stays silent.
+
 ### Added
 
 - Added transient footer messages: keybinding feedback (e.g. the ctrl+t thinking toggle's "Thinking blocks: hidden") now replaces the footer's pwd line for three seconds instead of appending a chat status line, which would replace the previous chat status — an extension's run summary, for example. New `FooterComponent.setTransientStatus(message, requestRender)` API.
