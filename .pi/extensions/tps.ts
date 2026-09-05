@@ -24,13 +24,14 @@ export default function (pi: ExtensionAPI) {
 	let requestStartMs: number | null = null;
 	let input = 0;
 	let output = 0;
+	let reasoning = 0;
 	let cacheRead = 0;
 	let cacheWrite = 0;
 
 	const reset = () => {
 		streamingMs = 0;
 		requestStartMs = null;
-		input = output = cacheRead = cacheWrite = 0;
+		input = output = reasoning = cacheRead = cacheWrite = 0;
 	};
 	reset();
 
@@ -52,6 +53,7 @@ export default function (pi: ExtensionAPI) {
 		const usage = event.message.usage;
 		input += usage.input || 0;
 		output += usage.output || 0;
+		reasoning += usage.reasoning || 0;
 		cacheRead += usage.cacheRead || 0;
 		cacheWrite += usage.cacheWrite || 0;
 	});
@@ -61,11 +63,11 @@ export default function (pi: ExtensionAPI) {
 		if (streamingMs <= 0 || output <= 0) return;
 
 		const streamedSeconds = streamingMs / 1000;
-		const parts = [
-			`${(output / streamedSeconds).toFixed(1)}tok/s`,
-			`↑${formatTokens(input)}`,
-			`↓${formatTokens(output)}`,
-		];
+		// usage.reasoning is a provider-reported subset of output; shown only
+		// when the provider exposes a breakdown.
+		const outputPart =
+			reasoning > 0 ? `↓${formatTokens(output)} (${formatTokens(reasoning)} thinking)` : `↓${formatTokens(output)}`;
+		const parts = [`${(output / streamedSeconds).toFixed(1)}tok/s`, `↑${formatTokens(input)}`, outputPart];
 		if (cacheRead > 0 || cacheWrite > 0) {
 			parts.push(`cache r/w ${formatTokens(cacheRead)}/${formatTokens(cacheWrite)}`);
 		}
