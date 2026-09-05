@@ -45,13 +45,22 @@ function thinkingGrayRgb(): RgbColor | undefined {
 }
 
 /**
- * Color each word of the visible tail between the terminal background (oldest,
- * dissolving into it exactly) and the thinking gray (newest). Position-keyed
- * per word, so existing words darken continuously as newer text arrives —
- * a fade, not a flip.
+ * Color each word of the visible tail between the thinking gray (newest) and
+ * the terminal background (oldest). How far the oldest visible word may sink
+ * toward the background deepens along two axes: the fill of the reserved
+ * window (a lone bottom line is full gray; the fade ramps in as the tail
+ * climbs toward the top of the window) and the fold above it (dissolving
+ * further toward the background as lines scroll away). Position-keyed per
+ * word, so existing words darken continuously as newer text arrives — a fade,
+ * not a flip.
  */
-function fadeTailLines(lines: string[], gray: RgbColor, background: RgbColor): string[] {
+function fadeTailLines(lines: string[], gray: RgbColor, background: RgbColor, skippedLines: number): string[] {
 	const total = lines.reduce((sum, line) => sum + line.length, 0) || 1;
+	// Gradient position of the oldest visible word (1 = full gray, 0 = the
+	// background), as the product of the two deepening axes above.
+	const fillFloor = 1 - (lines.length - 1) / THINKING_PREVIEW_LINES;
+	const foldFloor = lines.length / (lines.length + skippedLines);
+	const oldestPosition = fillFloor * foldFloor;
 	let offset = 0;
 	return lines.map((line) =>
 		line
@@ -62,8 +71,8 @@ function fadeTailLines(lines: string[], gray: RgbColor, background: RgbColor): s
 					offset += token.length;
 					return token;
 				}
-				// 0 at the oldest visible word, 1 at the newest.
-				const position = (offset + token.length / 2) / total;
+				// oldestPosition at the oldest visible word, 1 at the newest.
+				const position = oldestPosition + (1 - oldestPosition) * ((offset + token.length / 2) / total);
 				const r = Math.round(background.r + (gray.r - background.r) * position);
 				const g = Math.round(background.g + (gray.g - background.g) * position);
 				const b = Math.round(background.b + (gray.b - background.b) * position);
@@ -186,14 +195,17 @@ export class AssistantMessageComponent extends Container {
 	 * Append the width-lazy tail block for a thinking run's text: the last
 	 * THINKING_PREVIEW_LINES visual lines; folded-away content above is
 	 * implied by the fade, no marker line. While the run is live the block
-	 * reserves the full height — content top-aligned, blank rows below — so
+	 * reserves the full height — content bottom-aligned, blank rows above — so
 	 * the block never grows mid-stream and nothing below it moves; once the
 	 * run has ended it renders at its natural height, so short finished runs
 	 * carry no blank rows. Fade path: when the terminal
 	 * answered the OSC 11 background
 	 * query and the theme's gray is a hex value, the visible tail gets per-word
-	 * colors interpolated between the background and the gray — the oldest
-	 * visible word dissolves into the background exactly. Position-keyed per
+	 * colors interpolated between the gray and the background, with the oldest
+	 * visible word's depth set by both the window fill and the folded
+	 * fraction — a lone line is full gray, the fade ramps in as the tail
+	 * climbs toward the top of the reserved window, and dissolves further
+	 * toward the background as lines fold away above it. Position-keyed per
 	 * word, so words darken continuously as newer text arrives. Without an
 	 * endpoint the block stays uniformly gray, styled before wrapping.
 	 */
@@ -215,11 +227,11 @@ export class AssistantMessageComponent extends Container {
 					const result = truncateToVisualLines(styledText, THINKING_PREVIEW_LINES, width, this.outputPad);
 					let bodyLines = result.visualLines;
 					if (useFade && fadeGray && previewFadeBackground) {
-						bodyLines = fadeTailLines(bodyLines, fadeGray, previewFadeBackground);
+						bodyLines = fadeTailLines(bodyLines, fadeGray, previewFadeBackground, result.skippedCount);
 					}
 					if (fixedHeight && bodyLines.length < THINKING_PREVIEW_LINES) {
-						bodyLines = bodyLines.concat(
-							Array.from({ length: THINKING_PREVIEW_LINES - bodyLines.length }, () => ""),
+						bodyLines = Array.from({ length: THINKING_PREVIEW_LINES - bodyLines.length }, () => "").concat(
+							bodyLines,
 						);
 					}
 					cachedLines = bodyLines;

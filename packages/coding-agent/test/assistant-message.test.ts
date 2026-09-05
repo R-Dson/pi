@@ -50,6 +50,15 @@ function tailBlockLines(raw: string, excludedTexts: string[] = []): string[] {
 		.filter((line) => !excludedTexts.some((text) => line.includes(text)));
 }
 
+/** Red channel of every per-word fade color in the tail block, in order. */
+function tailWordReds(raw: string, excludedTexts: string[] = []): number[] {
+	return [
+		...tailBlockLines(raw, excludedTexts)
+			.join("\n")
+			.matchAll(/\x1b\[38;2;(\d+);\d+;\d+m/g),
+	].map((m) => Number(m[1]));
+}
+
 describe("AssistantMessageComponent", () => {
 	test("adds OSC 133 zone markers to assistant messages without tool calls", () => {
 		initTheme("dark");
@@ -275,7 +284,9 @@ describe("AssistantMessageComponent", () => {
 			// Dark theme's thinking gray is #808080; a black terminal background
 			// makes the gradient run from near-black (oldest) to near-gray (newest).
 			setThinkingPreviewFadeBackground({ r: 0, g: 0, b: 0 });
-			const lines = Array.from({ length: 8 }, (_, i) => `reasoning step ${i + 1} of the plan`);
+			// 60 lines, 6 visible: the fold dominates, so the oldest visible word
+			// sinks near the background.
+			const lines = Array.from({ length: 60 }, (_, i) => `reasoning step ${i + 1} of the plan`);
 			const component = new AssistantMessageComponent(undefined, true);
 			component.updateContent(createAssistantMessage([{ type: "thinking", thinking: lines.join("\n") }]), true);
 			const raw = component.render(100).join("\n");
@@ -300,7 +311,55 @@ describe("AssistantMessageComponent", () => {
 				expect(wordColors[i].r).toBeGreaterThanOrEqual(wordColors[i - 1].r);
 			}
 			// Content survives the per-word coloring intact.
-			expect(stripAnsi(raw)).toContain("reasoning step 8 of the plan");
+			expect(stripAnsi(raw)).toContain("reasoning step 60 of the plan");
+		});
+
+		test("the fade ramps in with window fill, then deepens with the fold", () => {
+			initTheme("dark");
+
+			setThinkingPreviewFadeBackground({ r: 0, g: 0, b: 0 });
+			const component = new AssistantMessageComponent(undefined, true);
+
+			// A single line is fully gray: the fade signals older content, and
+			// there is none yet.
+			component.updateContent(
+				createAssistantMessage([{ type: "thinking", thinking: "only line of the plan so far" }]),
+				true,
+			);
+			let reds = tailWordReds(component.render(100).join("\n"));
+			expect(reds.length).toBeGreaterThan(2);
+			expect(reds.every((r) => r === 128)).toBe(true);
+
+			// Three lines: the oldest word is dimmed partway — the fade ramps in
+			// as the tail climbs toward the top of the window, but stays well
+			// clear of the background.
+			component.updateContent(
+				createAssistantMessage([
+					{ type: "thinking", thinking: "line one of the plan\nline two of the plan\nline three of the plan" },
+				]),
+				true,
+			);
+			reds = tailWordReds(component.render(100).join("\n"));
+			expect(reds[0]).toBeGreaterThanOrEqual(80);
+			expect(reds[0]).toBeLessThan(128);
+			expect(reds[reds.length - 1]).toBeGreaterThanOrEqual(96);
+
+			// Six lines, nothing folded: the oldest word reaches the original
+			// full-window depth near the background.
+			const sixLines = Array.from({ length: 6 }, (_, i) => `reasoning step ${i + 1} of the plan`);
+			component.updateContent(createAssistantMessage([{ type: "thinking", thinking: sixLines.join("\n") }]), true);
+			reds = tailWordReds(component.render(100).join("\n"));
+			expect(reds[0]).toBeLessThanOrEqual(32);
+			expect(reds[reds.length - 1]).toBeGreaterThanOrEqual(96);
+
+			// Lines folding away above the window deepen the fade past that.
+			const twelveLines = Array.from({ length: 12 }, (_, i) => `reasoning step ${i + 1} of the plan`);
+			component.updateContent(
+				createAssistantMessage([{ type: "thinking", thinking: twelveLines.join("\n") }]),
+				true,
+			);
+			const foldedReds = tailWordReds(component.render(100).join("\n"));
+			expect(foldedReds[0]).toBeLessThan(reds[0]);
 		});
 
 		test("without a terminal background the preview stays uniform", () => {
@@ -583,7 +642,9 @@ describe("AssistantMessageComponent", () => {
 			initTheme("dark");
 
 			setThinkingPreviewFadeBackground({ r: 0, g: 0, b: 0 });
-			const lines = Array.from({ length: 8 }, (_, i) => `reasoning step ${i + 1} of the plan`);
+			// 60 lines, 6 visible: the fold dominates, so the oldest visible word
+			// sits near the background — the fade survives into the transcript.
+			const lines = Array.from({ length: 60 }, (_, i) => `reasoning step ${i + 1} of the plan`);
 			const component = new AssistantMessageComponent(undefined, true);
 			component.updateContent(
 				createAssistantMessage([
@@ -794,11 +855,11 @@ describe("AssistantMessageComponent", () => {
 			component.updateContent(createAssistantMessage([{ type: "thinking", thinking: "first line" }]), true);
 			let lines = component.render(100).map(stripAnsi);
 			let headerIndex = lines.findIndex((line) => line.includes("Thinking..."));
-			// The block is a fixed THINKING_PREVIEW_LINES rows: content top-aligned,
-			// blank rows below — the block never grows as tokens arrive.
+			// The block is a fixed THINKING_PREVIEW_LINES rows: content bottom-aligned,
+			// blank rows above — the block never grows as tokens arrive.
 			expect(lines.slice(headerIndex + 1)).toHaveLength(6);
-			expect(lines[headerIndex + 1]).toContain("first line");
-			expect(lines.slice(headerIndex + 2).every((line) => line.trim() === "")).toBe(true);
+			expect(lines.slice(headerIndex + 1, headerIndex + 6).every((line) => line.trim() === "")).toBe(true);
+			expect(lines[headerIndex + 6]).toContain("first line");
 			const height = lines.length;
 
 			component.updateContent(
@@ -807,14 +868,14 @@ describe("AssistantMessageComponent", () => {
 			);
 			lines = component.render(100).map(stripAnsi);
 			headerIndex = lines.findIndex((line) => line.includes("Thinking..."));
-			// New lines fill the reserved rows; the total height never changed, so
-			// nothing below the block reflowed while the run streamed.
+			// New lines fill the reserved rows from the bottom up; the total height
+			// never changed, so nothing below the block reflowed while the run streamed.
 			expect(lines).toHaveLength(height);
 			expect(lines.slice(headerIndex + 1)).toHaveLength(6);
-			expect(lines[headerIndex + 1]).toContain("first line");
-			expect(lines[headerIndex + 2]).toContain("second line");
-			expect(lines[headerIndex + 3]).toContain("third line");
-			expect(lines.slice(headerIndex + 4).every((line) => line.trim() === "")).toBe(true);
+			expect(lines.slice(headerIndex + 1, headerIndex + 4).every((line) => line.trim() === "")).toBe(true);
+			expect(lines[headerIndex + 4]).toContain("first line");
+			expect(lines[headerIndex + 5]).toContain("second line");
+			expect(lines[headerIndex + 6]).toContain("third line");
 		});
 
 		test("the block shrinks to its natural height once the run ends", () => {
