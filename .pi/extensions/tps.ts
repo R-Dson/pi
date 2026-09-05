@@ -63,8 +63,8 @@ export default function (pi: ExtensionAPI) {
 		const streamedSeconds = streamingMs / 1000;
 		const parts = [
 			`${(output / streamedSeconds).toFixed(1)}tok/s`,
-			`↑${formatTokens(output)}`,
-			`↓${formatTokens(input)}`,
+			`↑${formatTokens(input)}`,
+			`↓${formatTokens(output)}`,
 		];
 		if (cacheRead > 0 || cacheWrite > 0) {
 			parts.push(`cache r/w ${formatTokens(cacheRead)}/${formatTokens(cacheWrite)}`);
