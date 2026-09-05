@@ -6,6 +6,10 @@
 
 - Added five-times-faster mouse wheel scrolling while holding Alt in fullscreen mode ([#9166](https://github.com/earendil-works/pi/pull/9166) by [@xl0](https://github.com/xl0)).
 
+### Changed
+
+- Changed the live thinking preview to fill its fixed-height block from the bottom up, and its fade to ramp with both the window fill and the folded fraction: the tail starts at full thinking gray and dissolves toward the terminal background as lines climb toward the top of the block and fold away, instead of hanging top-aligned with a full-range fade.
+
 ### Fixed
 
 - Fixed SDK import failures caused by unintentionally publishing internal experimental code and dependencies in 0.85.0. The experimental `client` and `experimental/plugin` subpaths and server/client commands are now source-only through `pi-test.sh`; the supported local SDK and stdio RPC API are unchanged ([#9132](https://github.com/earendil-works/pi/issues/9132)).
