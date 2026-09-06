@@ -11,7 +11,7 @@ type ToggleThinkingBlockVisibility = (this: {
 	hideThinkingBlock: boolean;
 	settingsManager: { setHideThinkingBlock(hidden: boolean): void };
 	updateThinkingBlockVisibility(): void;
-	showStatus(message: string): void;
+	footer: { setTransientStatus(message: string, requestRender: () => void): void };
 }) => void;
 
 function renderChat(container: Container): string {
@@ -55,7 +55,7 @@ describe("thinking visibility while a bash tool is running (#8611)", () => {
 			updateThinkingBlockVisibility() {
 				updateThinkingBlockVisibility.call(this);
 			},
-			showStatus: vi.fn(),
+			footer: { setTransientStatus: vi.fn() },
 		};
 
 		expect(renderChat(chatContainer)).toContain("first");
