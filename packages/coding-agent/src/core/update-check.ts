@@ -35,5 +35,5 @@ export async function checkForForkUpdate(currentVersion: string): Promise<string
 	if (!valid(latest) || !valid(currentVersion) || !gt(latest, currentVersion)) {
 		return undefined;
 	}
-	return `Fork update available: ${latest} (running ${currentVersion}) — run 'pi update --self'`;
+	return `Pi Fork update available: ${latest} (running ${currentVersion}) — run 'pi update --self'`;
 }

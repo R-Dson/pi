@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Changed the fork's display name to Pi Fork: the interactive terminal title reads `Pi Fork` instead of `π`, and the update notice says "Pi Fork update available". Cosmetic only; the `pi` binary, `.pi` config dir, package names, and `PI_*` env vars are unchanged.
+
 ## [0.85.5] - 2026-09-06
 
 ### Fixed

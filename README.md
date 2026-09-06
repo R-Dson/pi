@@ -7,9 +7,9 @@
   <a href="https://discord.com/invite/3cU7Bz4UPx"><img alt="Discord" src="https://img.shields.io/badge/discord-community-5865F2?style=flat-square&logo=discord&logoColor=white" /></a>
 </p>
 
-# Pi
+# Pi Fork
 
-Pi is an interactive, self-extensible coding agent. This fork of [earendil-works/pi](https://github.com/earendil-works/pi) merges upstream regularly and stays close to it. Its headline work is cache-cost discipline: requests are built so the provider prompt cache covers them, which is what makes long sessions cheap (see [Cache discipline](#cache-discipline)). Three things differ out of the box: crashed sessions repair themselves on resume, tool output sent to the model is capped at 200 KB, and the binary talks to no one but your providers. Everything else is opt-in. Every fork decision and changed upstream file is recorded in the [fork ledger](docs/fork/upstream-integration.md).
+Pi Fork is a fork of [earendil-works/pi](https://github.com/earendil-works/pi), the interactive, self-extensible coding agent. Both meanings of the name are intended. The fork merges upstream regularly and stays close to it. Its headline work is cache-cost discipline: requests are built so the provider prompt cache covers them, which is what makes long sessions cheap (see [Cache discipline](#cache-discipline)). Three things differ out of the box: crashed sessions repair themselves on resume, tool output sent to the model is capped at 200 KB, and the binary talks to no one but your providers. Everything else is opt-in. Every fork decision and changed upstream file is recorded in the [fork ledger](docs/fork/upstream-integration.md).
 
 ## Install
 

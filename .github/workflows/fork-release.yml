@@ -137,7 +137,7 @@ jobs:
 
           jq -r '.packages[] | "- \(.name)@\(.version) (\(.outcome))"' .fork-publish/summary.json > release-packages.md
           {
-            echo "Fork release ${TAG}."
+            echo "Pi Fork release ${TAG}."
             echo
             echo "Published to the GitHub Packages npm registry (scope \`@r-dson\`):"
             echo
@@ -161,7 +161,7 @@ jobs:
           gh release create "${TAG}" \
             --verify-tag \
             --draft \
-            --title "${TAG}" \
+            --title "Pi Fork ${TAG}" \
             --notes-file RELEASE_NOTES.md
 
       - name: Upload standalone tarball
