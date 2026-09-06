@@ -426,7 +426,6 @@ export class InteractiveMode {
 
 	// Streaming message tracking
 	private streamingComponent: AssistantMessageComponent | undefined = undefined;
-	/** Set when the previous assistant message ended at a tool call: the next one renders its opening thinking headerless. */
 	/** Provider/model of the previous assistant message; a differing next model renders the attribution marker (#135). */
 	private lastAssistantModel: string | undefined = undefined;
 	private streamingMessage: AssistantMessage | undefined = undefined;

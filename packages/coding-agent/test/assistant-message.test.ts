@@ -833,8 +833,8 @@ describe("AssistantMessageComponent", () => {
 			const rendered = stripAnsi(component.render(100).join("\n"));
 
 			// Each reasoning window carries its own header down the transcript;
-			// a never-streamed message shows the static-label fallback.
-			expect(rendered).toMatch(/Thought for|Thinking\.\.\./);
+			// never-streamed through this component, so the static label renders.
+			expect(rendered).toContain("Thinking...");
 			expect(rendered).toContain("ctrl+t");
 			expect(rendered).toContain("confirmed the intermediate result");
 			expect(rendered).toContain("the answer");
