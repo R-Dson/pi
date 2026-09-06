@@ -103,6 +103,35 @@ describe("FirstTimeSetupComponent theme step", () => {
 		});
 		expect(render(component)).toContain("→ dark");
 	});
+
+	it("skips the theme step when a theme is already set", () => {
+		const previews: string[] = [];
+		let submitted: FirstTimeSetupResult | undefined;
+		const component = new FirstTimeSetupComponent({
+			detectedTheme: "dark",
+			themes: ["/", "dark", "light"],
+			skipTheme: true,
+			onThemePreview: (theme) => previews.push(theme),
+			onSubmit: (result) => {
+				submitted = result;
+			},
+			onCancel: () => {},
+		});
+
+		// The dialog opens on the update-check question, not the theme list.
+		const rendered = render(component);
+		expect(rendered).toContain("Check GitHub");
+		expect(rendered).not.toContain("Pick a theme");
+
+		// Enter → attribution → submit: no theme in the result, so a set theme
+		// stays untouched; privacy answers still default to Off.
+		component.handleInput("\n");
+		component.handleInput("\n");
+		expect(submitted?.theme).toBeUndefined();
+		expect(submitted?.updateCheck).toBe(false);
+		expect(submitted?.providerAttribution).toBe(false);
+		expect(previews).toHaveLength(0);
+	});
 });
 
 describe("shouldRunFirstTimeSetup", () => {

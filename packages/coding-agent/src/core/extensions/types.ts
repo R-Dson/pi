@@ -144,6 +144,14 @@ export interface ExtensionUIContext {
 	/** Show a notification to the user. */
 	notify(message: string, type?: "info" | "warning" | "error"): void;
 
+	/**
+	 * Show a short-lived message on the built-in footer's first line (where the
+	 * working directory shows) for a few seconds. For ephemeral feedback that
+	 * must not enter the chat transcript — notify() adds a chat status line.
+	 * No-op in modes without a footer (print, json).
+	 */
+	transientStatus(message: string): void;
+
 	/** Listen to raw terminal input (interactive mode only). Returns an unsubscribe function. */
 	onTerminalInput(handler: TerminalInputHandler): () => void;
 

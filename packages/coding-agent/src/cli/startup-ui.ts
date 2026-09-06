@@ -185,6 +185,10 @@ export async function showStartupSelector<T>(
 /** Show the first-time setup dialog and persist the result */
 export async function showFirstTimeSetup(settingsManager: SettingsManager): Promise<void> {
 	const ui = await createStartupTui(settingsManager);
+	// A set theme means the install already chose one (old wizard, /settings,
+	// or a previous run): skip the theme question so confirming cannot
+	// overwrite it with the preselected Automatic.
+	const skipTheme = settingsManager.getThemeSetting() !== undefined;
 	return new Promise((resolve) => {
 		let settled = false;
 		const finish = async (result: FirstTimeSetupResult | undefined) => {
@@ -192,7 +196,7 @@ export async function showFirstTimeSetup(settingsManager: SettingsManager): Prom
 				return;
 			}
 			settled = true;
-			if (result) {
+			if (result?.theme !== undefined) {
 				settingsManager.setTheme(result.theme);
 			}
 			// Completing and skipping both record the privacy answers (skipping
@@ -208,9 +212,14 @@ export async function showFirstTimeSetup(settingsManager: SettingsManager): Prom
 		const showSetup = async () => {
 			ui.start();
 			const detectedTheme = await detectTerminalThemeForAuto({ ui, timeoutMs: 100 });
-			setTheme(detectedTheme);
+			// Recolor the wizard to the detected appearance only when the theme
+			// question runs; a set theme keeps coloring the dialog.
+			if (!skipTheme) {
+				setTheme(detectedTheme);
+			}
 			const component = new FirstTimeSetupComponent({
 				detectedTheme,
+				skipTheme,
 				// "/" (Automatic, follow terminal appearance) first — the fresh-install
 				// default; then every registered theme (createStartupTui already
 				// registered built-in + resource themes).

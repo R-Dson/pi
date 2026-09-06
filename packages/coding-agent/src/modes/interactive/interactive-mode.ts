@@ -2392,6 +2392,11 @@ export class InteractiveMode {
 			confirm: (title, message, opts) => this.showExtensionConfirm(title, message, opts),
 			input: (title, placeholder, opts) => this.showExtensionInput(title, placeholder, opts),
 			notify: (message, type) => this.showExtensionNotify(message, type),
+			transientStatus: (message) => {
+				// Footer transient message, not a chat status: showStatus replaces
+				// the previous chat status (e.g. an extension's run summary).
+				this.footer.setTransientStatus(message, () => this.ui.requestRender());
+			},
 			onTerminalInput: (handler) => this.addExtensionTerminalInputListener(handler),
 			setStatus: (key, text) => this.setExtensionStatus(key, text),
 			setWorkingMessage: (message) => {

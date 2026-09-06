@@ -5,7 +5,8 @@ import { DynamicBorder } from "./dynamic-border.ts";
 import { keyHint, rawKeyHint } from "./keybinding-hints.ts";
 
 export interface FirstTimeSetupResult {
-	theme: string;
+	/** Selected theme; absent when the theme step was skipped, leaving any set theme untouched. */
+	theme?: string;
 	updateCheck: boolean;
 	providerAttribution: boolean;
 }
@@ -14,6 +15,8 @@ export interface FirstTimeSetupOptions {
 	detectedTheme: TerminalTheme;
 	/** Every registered theme name; "/" (Automatic) should be first — it is the default selection, falling back to the first entry when absent. */
 	themes: string[];
+	/** Start at the privacy questions: settings already carry a theme, so asking again (preselected Automatic) could overwrite it. */
+	skipTheme?: boolean;
 	onThemePreview: (themeName: string) => void;
 	onSubmit: (result: FirstTimeSetupResult) => void;
 	onCancel: () => void;
@@ -55,9 +58,10 @@ const THEME_LABELS: Record<string, string> = {
  * everything off.
  */
 export class FirstTimeSetupComponent extends Container {
-	private step: Step = "theme";
+	private step: Step;
 	private themeIndex: number;
 	private readonly themes: string[];
+	private readonly themeAsked: boolean;
 	// The domain value stored directly; the option-list index is derived at render.
 	private readonly yesNo: Record<YesNoStep, boolean> = { updateCheck: false, attribution: false };
 	private readonly options: FirstTimeSetupOptions;
@@ -66,8 +70,11 @@ export class FirstTimeSetupComponent extends Container {
 		super();
 		this.options = options;
 		this.themes = options.themes;
-		// The theme question is always first; Automatic (follow the detected
-		// terminal appearance) is the default selection, first in the list.
+		this.themeAsked = options.skipTheme !== true;
+		// The theme question is first for fresh installs (Automatic, following
+		// the detected terminal appearance, is the default selection); an
+		// install that already set a theme starts at the privacy questions.
+		this.step = this.themeAsked ? "theme" : "updateCheck";
 		this.themeIndex = Math.max(0, this.themes.indexOf(AUTOMATIC_THEME));
 		this.update();
 	}
@@ -169,7 +176,7 @@ export class FirstTimeSetupComponent extends Container {
 				this.update();
 			} else {
 				this.options.onSubmit({
-					theme: this.themes[this.themeIndex],
+					theme: this.themeAsked ? this.themes[this.themeIndex] : undefined,
 					updateCheck: this.yesNo.updateCheck,
 					providerAttribution: this.yesNo.attribution,
 				});

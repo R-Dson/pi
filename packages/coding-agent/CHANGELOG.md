@@ -8,6 +8,7 @@
 
 ### Added
 
+- Added `ctx.ui.transientStatus(message)` to the extension API: shows a short-lived message on the built-in footer's first line (where the working directory shows) for about three seconds, for ephemeral feedback that must not enter the chat transcript — `notify` adds a chat status row there. No-op in modes without a footer (print, json).
 - Added a breathing ellipsis on the hidden-thinking live header: instead of a static `Thinking... 4.2s`, the dots animate (full → empty → full, with a hold at full, ~350 ms per frame) while keeping the elapsed timer aligned. The frame derives from wall clock on each streaming update, so it adds no timers or render pressure; the finished `Thought for Ns` marker is unchanged.
 - Added transient footer messages: keybinding feedback (e.g. the ctrl+t thinking toggle's "Thinking blocks: hidden") now replaces the footer's pwd line for three seconds instead of appending a chat status line, which would replace the previous chat status — an extension's run summary, for example. New `FooterComponent.setTransientStatus(message, requestRender)` API.
 - Added opt-in phone-home settings, both default off so the zero-traffic guarantee stands unless the user changes it: `updateCheck` compares the running version against the fork's GitHub releases at startup and shows an update notice (the only automatic non-provider request the fork can make), and `providerAttribution` sends OpenRouter app-identification headers (`HTTP-Referer`, `X-OpenRouter-Title`, `X-OpenRouter-Categories`) so OpenRouter attributes usage to the fork; non-OpenRouter providers never receive identifying headers. Both are exposed in `/settings` and asked once by the first-time setup wizard with Off preselected.
@@ -15,6 +16,8 @@
 
 ### Changed
 
+- Changed the first-time setup wizard to skip the theme question when a theme is already set: upgraded installs now open straight on the privacy questions instead of a theme list preselected to Automatic whose confirmation would overwrite the existing theme. Fresh installs (no theme in settings) see the theme step unchanged, and the wizard keeps honoring the set theme's colors.
+- Changed thinking blocks to be hidden by default on fresh installs (fork default; upstream shows full blocks). Hidden is the live preview: a header with the elapsed timer plus a tail excerpt of the current reasoning run, expandable with ctrl+t. Installs whose settings carry an explicit `hideThinkingBlock` value (anyone who ever pressed ctrl+t) are unaffected; installs that never touched the key flip to hidden on upgrade.
 - Changed grep tool rendering to use the shared renderers module instead of inline copies on the tool definition, so renderer-only presentations (mini/tui, client-tui-chat) now show the count-first `N matches` summary like the interactive TUI instead of the old count-less format.
 - Changed hidden-thinking headers to persist across tool calls: every reasoning window keeps its own header — live while streaming, frozen to `Thought for Ns` once the run ends — instead of suppressing headers for tool-call-bounded runs and continuation messages, so the headers move down the transcript with the reasoning as a think-act-think cycle progresses.
 

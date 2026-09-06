@@ -2603,6 +2603,9 @@ See [examples/extensions/timed-confirm.ts](../examples/extensions/timed-confirm.
 ctx.ui.setStatus("my-ext", "Processing...");
 ctx.ui.setStatus("my-ext", undefined);  // Clear
 
+// Transient footer message (replaces the pwd line for ~3s, then reverts)
+ctx.ui.transientStatus("Formatted 3 files");
+
 // Working loader (shown during streaming)
 ctx.ui.setWorkingMessage("Thinking deeply...");
 ctx.ui.setWorkingMessage();  // Restore default

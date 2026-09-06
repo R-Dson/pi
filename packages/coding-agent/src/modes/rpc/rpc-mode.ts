@@ -176,6 +176,10 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 			} as RpcExtensionUIRequest);
 		},
 
+		transientStatus(_message: string): void {
+			// Transient footer message not supported in RPC mode - requires TUI footer access
+		},
+
 		setWorkingMessage(_message?: string): void {
 			// Working message not supported in RPC mode - requires TUI loader access
 		},

@@ -15,6 +15,14 @@ function formatTokens(count: number): string {
 }
 
 export default function (pi: ExtensionAPI) {
+	// Turn performance only: tok/s, output volume, streaming duration. Input
+	// tokens and cache hit rate are session economics — the footer already
+	// shows cumulative tokens and Cache % (same formula) two lines away, so
+	// repeating them here duplicated the same numbers with narrower scope.
+	// transientStatus (not notify): the stats are read-once feedback at run
+	// end, so they flash on the footer's pwd line instead of occupying a
+	// permanent transcript row per turn.
+	//
 	// TPS is generation throughput: output tokens divided by the time the model
 	// was actually streaming, summed per provider request (message_start to
 	// message_end). agent_start→agent_end wall time is NOT used — tool
@@ -22,16 +30,13 @@ export default function (pi: ExtensionAPI) {
 	// (a 25s bash call inside a run made a ~20 tok/s model read as 3.3).
 	let streamingMs = 0;
 	let requestStartMs: number | null = null;
-	let input = 0;
 	let output = 0;
 	let reasoning = 0;
-	let cacheRead = 0;
-	let cacheWrite = 0;
 
 	const reset = () => {
 		streamingMs = 0;
 		requestStartMs = null;
-		input = output = reasoning = cacheRead = cacheWrite = 0;
+		output = reasoning = 0;
 	};
 	reset();
 
@@ -51,11 +56,8 @@ export default function (pi: ExtensionAPI) {
 			requestStartMs = null;
 		}
 		const usage = event.message.usage;
-		input += usage.input || 0;
 		output += usage.output || 0;
 		reasoning += usage.reasoning || 0;
-		cacheRead += usage.cacheRead || 0;
-		cacheWrite += usage.cacheWrite || 0;
 	});
 
 	pi.on("agent_end", (_event, ctx) => {
@@ -67,16 +69,9 @@ export default function (pi: ExtensionAPI) {
 		// when the provider exposes a breakdown.
 		const outputPart =
 			reasoning > 0 ? `↓${formatTokens(output)} (${formatTokens(reasoning)} thinking)` : `↓${formatTokens(output)}`;
-		const parts = [`${(output / streamedSeconds).toFixed(1)}tok/s`, `↑${formatTokens(input)}`, outputPart];
-		if (cacheRead > 0 || cacheWrite > 0) {
-			// Same hit-rate formula as the footer's Cache %: input excludes cache
-			// tokens, so the denominator reconstructs the full prompt volume.
-			const totalPrompt = input + cacheRead + cacheWrite;
-			const hitPct = totalPrompt > 0 ? ((cacheRead / totalPrompt) * 100).toFixed(1) : "0.0";
-			parts.push(cacheWrite > 0 ? `cache ${hitPct}% w ${formatTokens(cacheWrite)}` : `cache ${hitPct}%`);
-		}
+		const parts = [`${(output / streamedSeconds).toFixed(1)}tok/s`, outputPart];
 		// Sub-second streams get a second decimal; "0.0s" reads like a bug.
 		parts.push(`${streamedSeconds.toFixed(streamingMs < 1000 ? 2 : 1)}s`);
-		ctx.ui.notify(parts.join(" "), "info");
+		ctx.ui.transientStatus(parts.join(" "));
 	});
 }
