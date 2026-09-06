@@ -8,6 +8,8 @@
 
 ### Added
 
+- Added a breathing ellipsis to the hidden-thinking live header: instead of a static `Thinking... 4.2s`, the dots animate (full → empty → full, with a hold at full, ~350 ms per frame) while keeping the elapsed timer aligned. The frame derives from wall clock on each streaming update, so it adds no timers or render pressure; the finished `Thought for Ns` marker is unchanged.
+
 - Added transient footer messages: keybinding feedback (e.g. the ctrl+t thinking toggle's "Thinking blocks: hidden") now replaces the footer's pwd line for three seconds instead of appending a chat status line, which would replace the previous chat status — an extension's run summary, for example. New `FooterComponent.setTransientStatus(message, requestRender)` API.
 
 - Added opt-in phone-home settings, both default off so the zero-traffic guarantee stands unless the user changes it: `updateCheck` compares the running version against the fork's GitHub releases at startup and shows an update notice (the only automatic non-provider request the fork can make), and `providerAttribution` sends OpenRouter app-identification headers (`HTTP-Referer`, `X-OpenRouter-Title`, `X-OpenRouter-Categories`) so OpenRouter attributes usage to the fork; non-OpenRouter providers never receive identifying headers. Both are exposed in `/settings` and asked once by the first-time setup wizard with Off preselected.

@@ -278,6 +278,45 @@ describe("AssistantMessageComponent", () => {
 			setThinkingPreviewFadeBackground(undefined);
 		});
 
+		test("live header animates a breathing ellipsis", () => {
+			initTheme("dark");
+			vi.useFakeTimers();
+			try {
+				const start = Date.parse("2026-09-06T00:00:00Z");
+				vi.setSystemTime(start);
+				const component = new AssistantMessageComponent(undefined, true);
+				component.updateContent(createAssistantMessage([{ type: "thinking", thinking: "step" }]), true);
+
+				const headerAt = (elapsedMs: number): string => {
+					vi.setSystemTime(start + elapsedMs);
+					// The header is rebuilt on updateContent (per streamed chunk in
+					// production), not on render — feed it a growing chunk.
+					component.updateContent(
+						createAssistantMessage([{ type: "thinking", thinking: `step ${elapsedMs}` }]),
+						true,
+					);
+					const line =
+						stripAnsi(component.render(80).join("\n"))
+							.split("\n")
+							.find((l) => l.trimStart().startsWith("Thinking")) ?? "";
+					return line.trim();
+				};
+
+				// 350ms frames: the ellipsis starts full, drains, refills, and
+				// holds at full — the timer rides along.
+				expect(headerAt(0)).toMatch(/^Thinking\.\.\. 0\.0s/);
+				expect(headerAt(400)).toMatch(/^Thinking\.\. {2}0\.4s/);
+				expect(headerAt(800)).toMatch(/^Thinking\. {3}0\.8s/);
+				expect(headerAt(1200)).toMatch(/^Thinking {4}1\.2s/);
+				expect(headerAt(1600)).toMatch(/^Thinking\. {3}1\.6s/);
+				expect(headerAt(2000)).toMatch(/^Thinking\.\. {2}2\.0s/);
+				expect(headerAt(2400)).toMatch(/^Thinking\.\.\. 2\.4s/);
+				expect(headerAt(2700)).toMatch(/^Thinking\.\.\. 2\.7s/);
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+
 		test("words fade from thinking gray to the terminal background across the tail", () => {
 			initTheme("dark");
 
@@ -596,8 +635,9 @@ describe("AssistantMessageComponent", () => {
 				);
 				const rendered = stripAnsi(component.render(100).join("\n"));
 
-				expect(rendered).toContain("Thinking... 4.0s");
-				expect(rendered).not.toContain("Thinking... 0.0s");
+				// Dot phase varies with elapsed time; the 3-char field is stable.
+				expect(rendered).toMatch(/Thinking[. ]{3} 4\.0s/);
+				expect(rendered).not.toMatch(/Thinking[. ]{3} 0\.0s/);
 			} finally {
 				vi.useRealTimers();
 			}

@@ -131,6 +131,19 @@ function hasStreamedContentAfterNewestThinking(content: AssistantMessage["conten
 	return newestThinking !== -1 && content.slice(newestThinking + 1).some(isStreamedNonThinking);
 }
 
+// Live hidden-thinking header: a breathing ellipsis instead of a static
+// "...". Starts full (the familiar first paint), drains, refills, and holds
+// at full — one frame per 350ms. The frame is a pure function of elapsed
+// wall time, so it advances on every streaming rebuild (per chunk) and never
+// needs its own ticker; a long gap between chunks freezes it like the timer.
+const THINKING_DOT_FRAME_MS = 350;
+const THINKING_DOT_FRAMES = [3, 2, 1, 0, 1, 2, 3, 3];
+
+function animatedThinkingDots(elapsedMs: number): string {
+	const phase = Math.floor(Math.max(0, elapsedMs) / THINKING_DOT_FRAME_MS) % THINKING_DOT_FRAMES.length;
+	return ".".repeat(THINKING_DOT_FRAMES[phase]).padEnd(3);
+}
+
 /**
  * Component that renders a complete assistant message
  */
@@ -408,11 +421,13 @@ export class AssistantMessageComponent extends Container {
 						const expandHint = `${theme.fg("muted", "(")}${keyHint("app.thinking.toggle", "to expand thinking")}${theme.fg("muted", ")")}`;
 						let header: string;
 						if (this.isStreaming && !runEnded) {
-							const elapsedS =
-								this.thinkingStartedAt !== undefined
-									? Math.max(0, (Date.now() - this.thinkingStartedAt) / 1000)
-									: 0;
-							header = `${this.hiddenThinkingLabel} ${elapsedS.toFixed(1)}s`;
+							const elapsedMs =
+								this.thinkingStartedAt !== undefined ? Math.max(0, Date.now() - this.thinkingStartedAt) : 0;
+							// The label's trailing dots become the animated field so
+							// custom labels ("Reasoning") animate too; the padded
+							// 3-char field keeps the timer from shifting.
+							const labelBase = this.hiddenThinkingLabel.replace(/\.+$/, "");
+							header = `${labelBase}${animatedThinkingDots(elapsedMs)} ${(elapsedMs / 1000).toFixed(1)}s`;
 						} else {
 							header =
 								this.thinkingDurationMs !== undefined
