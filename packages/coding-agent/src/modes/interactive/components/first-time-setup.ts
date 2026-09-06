@@ -12,7 +12,7 @@ export interface FirstTimeSetupResult {
 
 export interface FirstTimeSetupOptions {
 	detectedTheme: TerminalTheme;
-	/** Every registered theme name; "/" (Automatic) first is the default selection. */
+	/** Every registered theme name; "/" (Automatic) should be first — it is the default selection, falling back to the first entry when absent. */
 	themes: string[];
 	onThemePreview: (themeName: string) => void;
 	onSubmit: (result: FirstTimeSetupResult) => void;

@@ -635,9 +635,11 @@ describe("AssistantMessageComponent", () => {
 				);
 				const rendered = stripAnsi(component.render(100).join("\n"));
 
-				// Dot phase varies with elapsed time; the 3-char field is stable.
-				expect(rendered).toMatch(/Thinking[. ]{3} 4\.0s/);
-				expect(rendered).not.toMatch(/Thinking[. ]{3} 0\.0s/);
+				// Pin the four producible dot phases exactly (interleaved dots like
+				// ". ." are impossible); the 3-char field is stable.
+				const dots = "(\\.\\.\\.|\\.\\. |\\.  |   )";
+				expect(rendered).toMatch(new RegExp(`Thinking${dots} 4\\.0s`));
+				expect(rendered).not.toMatch(new RegExp(`Thinking${dots} 0\\.0s`));
 			} finally {
 				vi.useRealTimers();
 			}

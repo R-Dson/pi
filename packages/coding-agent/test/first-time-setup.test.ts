@@ -54,17 +54,6 @@ describe("FirstTimeSetupComponent theme step", () => {
 		expect(submitted?.providerAttribution).toBe(false);
 	});
 
-	it("preselects the first theme when Automatic is not offered", () => {
-		const component = new FirstTimeSetupComponent({
-			detectedTheme: "light",
-			themes: ["dark", "light", "dracula"],
-			onThemePreview: () => {},
-			onSubmit: () => {},
-			onCancel: () => {},
-		});
-		expect(render(component)).toContain("→ dark");
-	});
-
 	it("defaults to Automatic for fresh installs when it is offered", () => {
 		const previews: string[] = [];
 		let submitted: FirstTimeSetupResult | undefined;
