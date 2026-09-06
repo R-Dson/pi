@@ -71,6 +71,23 @@ function isTokenStart(text: string, index: number): boolean {
 	return index === 0 || PATH_DELIMITERS.has(text[index - 1] ?? "");
 }
 
+/**
+ * The "/"-prefixed command token currently being typed, or null:
+ * - at the start of the line (possibly after leading whitespace), while the
+ *   name is still being typed (no arguments yet)
+ * - mid-text after whitespace (e.g. "fix this /skill:td"), any line
+ */
+export function activeSlashToken(textBeforeCursor: string): string | null {
+	const trimmedStart = textBeforeCursor.trimStart();
+	if (trimmedStart.startsWith("/")) {
+		if (/\s/.test(trimmedStart)) return null; // arguments being typed, not a name token
+		return trimmedStart;
+	}
+	const lastWhitespace = Math.max(textBeforeCursor.lastIndexOf(" "), textBeforeCursor.lastIndexOf("\t"));
+	const token = textBeforeCursor.slice(lastWhitespace + 1);
+	return token.startsWith("/") ? token : null;
+}
+
 function extractQuotedPrefix(text: string): string | null {
 	const quoteStart = findUnclosedQuoteStart(text);
 	if (quoteStart === null) {
@@ -233,6 +250,9 @@ export interface SlashCommand {
 	name: string;
 	description?: string;
 	argumentHint?: string;
+	// Invocable from mid-text, not only at the start of the input (e.g. skills).
+	// When set, the command is offered for "/"-prefixed tokens anywhere in the line.
+	midTextInvocable?: boolean;
 	// Function to get argument completions for this command
 	// Returns null if no argument completion is available
 	getArgumentCompletions?(argumentPrefix: string): Awaitable<AutocompleteItem[] | null>;
@@ -310,29 +330,12 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 			};
 		}
 
-		if (!options.force && textBeforeCursor.startsWith("/")) {
+		const isFirstLine = cursorLine === 0;
+		if (!options.force && isFirstLine && textBeforeCursor.startsWith("/")) {
 			const spaceIndex = textBeforeCursor.indexOf(" ");
 
 			if (spaceIndex === -1) {
-				const prefix = textBeforeCursor.slice(1);
-				const commandItems = this.commands.map((cmd) => {
-					const name = "name" in cmd ? cmd.name : cmd.value;
-					const hint = "argumentHint" in cmd && cmd.argumentHint ? cmd.argumentHint : undefined;
-					const desc = cmd.description ?? "";
-					const fullDesc = hint ? (desc ? `${hint} — ${desc}` : hint) : desc;
-					return {
-						name,
-						label: name,
-						description: fullDesc || undefined,
-					};
-				});
-
-				const filtered = fuzzyFilter(commandItems, prefix, (item) => item.name).map((item) => ({
-					value: item.name,
-					label: item.label,
-					...(item.description && { description: item.description }),
-				}));
-
+				const filtered = this.commandSuggestions(textBeforeCursor.slice(1), false);
 				if (filtered.length === 0) return null;
 
 				return {
@@ -361,6 +364,23 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 				items: argumentSuggestions,
 				prefix: argumentText,
 			};
+		}
+
+		// Mid-text "/" token (e.g. "fix this /skill:td", or a "/"-token at the start
+		// of a non-first line): offer mid-text-invocable commands only. Falls through
+		// to path completion when nothing matches.
+		if (!options.force) {
+			const token = activeSlashToken(textBeforeCursor);
+			const leadingToken = textBeforeCursor.trimStart().startsWith("/");
+			if (token !== null && !(isFirstLine && leadingToken)) {
+				const filtered = this.commandSuggestions(token.slice(1), true);
+				if (filtered.length > 0) {
+					return {
+						items: filtered,
+						prefix: token,
+					};
+				}
+			}
 		}
 
 		const pathMatch = this.extractPathPrefix(textBeforeCursor, options.force ?? false);
@@ -394,8 +414,14 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 			isQuotedPrefix && hasTrailingQuoteInItem && hasLeadingQuoteAfterCursor ? afterCursor.slice(1) : afterCursor;
 
 		// Check if we're completing a slash command (prefix starts with "/" but NOT a file path)
-		// Slash commands are at the start of the line and don't contain path separators after the first /
-		const isSlashCommand = prefix.startsWith("/") && beforePrefix.trim() === "" && !prefix.slice(1).includes("/");
+		// Slash command tokens appear at the start of the line or after whitespace and don't
+		// contain path separators after the first /; command values never contain "/" either.
+		const precededByWhitespace = beforePrefix !== "" && /\s/.test(beforePrefix[beforePrefix.length - 1] ?? "");
+		const isSlashCommand =
+			prefix.startsWith("/") &&
+			(beforePrefix === "" || precededByWhitespace) &&
+			!prefix.slice(1).includes("/") &&
+			!item.value.includes("/");
 		if (isSlashCommand) {
 			// This is a command name completion
 			const newLine = `${beforePrefix}/${item.value} ${adjustedAfterCursor}`;
@@ -462,6 +488,31 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 			cursorLine,
 			cursorCol: beforePrefix.length + cursorOffset,
 		};
+	}
+
+	// Fuzzy-filtered command name suggestions.
+	// When midTextOnly is set, only commands flagged midTextInvocable are offered
+	// (used for "/"-prefixed tokens in the middle of the input).
+	private commandSuggestions(prefix: string, midTextOnly: boolean): AutocompleteItem[] {
+		const commandItems = this.commands
+			.filter((cmd) => !midTextOnly || ("name" in cmd && cmd.midTextInvocable === true))
+			.map((cmd) => {
+				const name = "name" in cmd ? cmd.name : cmd.value;
+				const hint = "argumentHint" in cmd && cmd.argumentHint ? cmd.argumentHint : undefined;
+				const desc = cmd.description ?? "";
+				const fullDesc = hint ? (desc ? `${hint} — ${desc}` : hint) : desc;
+				return {
+					name,
+					label: name,
+					description: fullDesc || undefined,
+				};
+			});
+
+		return fuzzyFilter(commandItems, prefix, (item) => item.name).map((item) => ({
+			value: item.name,
+			label: item.label,
+			...(item.description && { description: item.description }),
+		}));
 	}
 
 	// Extract @ prefix for fuzzy file suggestions

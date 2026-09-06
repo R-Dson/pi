@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added mid-text slash command completion: a `/`-prefixed token after whitespace (or at the start of a non-first line) now offers command suggestions anywhere in the input, restricted to commands flagged with the new `SlashCommand.midTextInvocable` option. When nothing matches, completion falls through to file path suggestions as before; leading `/` on the first line still offers the full command list and argument completions.
+
 ## [0.85.4] - 2026-09-05
 
 ### Added

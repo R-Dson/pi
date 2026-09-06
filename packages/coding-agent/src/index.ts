@@ -21,7 +21,9 @@ export {
 	type ParsedSkillBlock,
 	type PromptOptions,
 	parseSkillBlock,
+	parseSkillSegments,
 	type SessionStats,
+	type SkillMessageSegment,
 } from "./core/agent-session.ts";
 export { readStoredCredential } from "./core/auth-storage.ts";
 // Compaction
@@ -270,6 +272,7 @@ export {
 } from "./core/settings-manager.ts";
 // Skills
 export {
+	expandSkillCommands,
 	formatSkillsForPrompt,
 	type LoadSkillsFromDirOptions,
 	type LoadSkillsResult,

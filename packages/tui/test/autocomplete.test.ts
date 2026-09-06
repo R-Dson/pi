@@ -114,6 +114,83 @@ describe("CombinedAutocompleteProvider", () => {
 		});
 	});
 
+	describe("slash command completion", () => {
+		const commands = [
+			{ name: "model", description: "Select model" },
+			{ name: "skill:tdd", description: "Test-driven development", midTextInvocable: true },
+			{ name: "skill:to-spec", description: "Write a spec", midTextInvocable: true },
+		];
+
+		test("shows all commands for a leading slash on the first line", async () => {
+			const provider = new CombinedAutocompleteProvider(commands, "/tmp");
+			const line = "/s";
+			const result = await getSuggestions(provider, [line], 0, line.length);
+
+			assert.notEqual(result, null, "Should return suggestions");
+			const names = result?.items.map((item) => item.value).sort();
+			assert.deepStrictEqual(names, ["skill:tdd", "skill:to-spec"]);
+		});
+
+		test("shows only mid-text invocable commands for a mid-text slash token", async () => {
+			const provider = new CombinedAutocompleteProvider(commands, "/tmp");
+			const line = "fix this /skill:t";
+			const result = await getSuggestions(provider, [line], 0, line.length);
+
+			assert.notEqual(result, null, "Should return skill suggestions mid-text");
+			assert.strictEqual(result?.prefix, "/skill:t");
+			const names = result?.items.map((item) => item.value).sort();
+			assert.deepStrictEqual(names, ["skill:tdd", "skill:to-spec"]);
+		});
+
+		test("excludes non-mid-text commands from mid-text suggestions", async () => {
+			const provider = new CombinedAutocompleteProvider(commands, "/tmp");
+			const line = "fix this /m";
+			const result = await getSuggestions(provider, [line], 0, line.length);
+
+			// /model is not mid-text invocable; the token falls through to path
+			// completion, which may offer absolute paths but never /model
+			const names = result?.items.map((item) => item.value) ?? [];
+			assert.ok(!names.includes("model"), `Should not suggest /model mid-text, got ${JSON.stringify(names)}`);
+		});
+
+		test("shows skill suggestions for a slash token at the start of a later line", async () => {
+			const provider = new CombinedAutocompleteProvider(commands, "/tmp");
+			const lines = ["plan:", "/skill:t"];
+			const result = await getSuggestions(provider, lines, 1, lines[1].length);
+
+			assert.notEqual(result, null, "Should return skill suggestions on a later line");
+			const names = result?.items.map((item) => item.value).sort();
+			assert.deepStrictEqual(names, ["skill:tdd", "skill:to-spec"]);
+		});
+
+		test("applies a mid-text skill completion in place", async () => {
+			const provider = new CombinedAutocompleteProvider(commands, "/tmp");
+			const line = "fix this /skill:t";
+			const result = await getSuggestions(provider, [line], 0, line.length);
+			const item = result?.items.find((entry) => entry.value === "skill:tdd");
+			assert.ok(item, "Should find skill:tdd suggestion");
+
+			const applied = provider.applyCompletion([line], 0, line.length, item!, result!.prefix);
+			assert.strictEqual(applied.lines[0], "fix this /skill:tdd ");
+			assert.strictEqual(applied.cursorLine, 0);
+			assert.strictEqual(applied.cursorCol, "fix this /skill:tdd ".length);
+		});
+
+		test("keeps absolute path completion for mid-text path tokens", async () => {
+			const provider = new CombinedAutocompleteProvider(commands, "/tmp");
+			// "/tm" resolves to /tmp on posix systems; it must complete as a path
+			// (value contains "/"), not be treated as a slash command
+			const line = "see /tm";
+			const result = await getSuggestions(provider, [line], 0, line.length);
+
+			const item = result?.items.find((entry) => entry.value === "/tmp/");
+			if (item && result) {
+				const applied = provider.applyCompletion([line], 0, line.length, item, result.prefix);
+				assert.strictEqual(applied.lines[0], "see /tmp/");
+			}
+		});
+	});
+
 	describe("fd @ file suggestions", { skip: !isFdInstalled }, () => {
 		let rootDir = "";
 		let baseDir = "";

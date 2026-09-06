@@ -314,19 +314,24 @@
       }
 
       /**
-       * Parse a skill block from message text.
-       * Returns null if the text doesn't contain a skill block.
-       * Matches the format: <skill name="..." location="...">\n...\n</skill>\n\nuser message
+       * Split a user message into text and skill block segments, in order.
+       * Skill blocks may appear anywhere (leading, mid-text, multiple):
+       * <skill name="..." location="...">\n...\n</skill>
+       * Whitespace-only text between blocks is dropped.
        */
-      function parseSkillBlock(text) {
-        const match = text.match(/^<skill name="([^"]+)" location="([^"]+)">\n([\s\S]*?)\n<\/skill>(?:\n\n([\s\S]+))?$/);
-        if (!match) return null;
-        return {
-          name: match[1],
-          location: match[2],
-          content: match[3],
-          userMessage: match[4]?.trim() || undefined,
-        };
+      function parseSkillSegments(text) {
+        const pattern = /<skill name="([^"]+)" location="([^"]+)">\n([\s\S]*?)\n<\/skill>/g;
+        const segments = [];
+        let cursor = 0;
+        for (const match of text.matchAll(pattern)) {
+          const before = text.slice(cursor, match.index).trim();
+          if (before) segments.push({ type: 'text', text: before });
+          segments.push({ type: 'skill', block: { name: match[1], location: match[2], content: match[3] } });
+          cursor = match.index + match[0].length;
+        }
+        const after = text.slice(cursor).trim();
+        if (after) segments.push({ type: 'text', text: after });
+        return segments;
       }
 
       function getSearchableText(entry, label) {
@@ -645,11 +650,13 @@
             const msg = entry.message;
             if (msg.role === 'user') {
               const rawContent = extractContent(msg.content);
-              const skillBlock = parseSkillBlock(rawContent);
-              if (skillBlock) {
-                let treeHtml = labelHtml + `<span class="tree-role-skill">skill:</span> ${escapeHtml(skillBlock.name)}`;
-                if (skillBlock.userMessage) {
-                  treeHtml += ` · <span class="tree-role-user">user:</span> ${escapeHtml(truncate(normalize(skillBlock.userMessage)))}`;
+              const skillSegments = parseSkillSegments(rawContent);
+              const skillNames = skillSegments.filter(s => s.type === 'skill').map(s => s.block.name);
+              if (skillNames.length > 0) {
+                let treeHtml = labelHtml + `<span class="tree-role-skill">skill:</span> ${escapeHtml(skillNames.join(', '))}`;
+                const firstText = skillSegments.find(s => s.type === 'text')?.text;
+                if (firstText) {
+                  treeHtml += ` · <span class="tree-role-user">user:</span> ${escapeHtml(truncate(normalize(firstText)))}`;
                 }
                 return treeHtml;
               }
@@ -1184,35 +1191,33 @@
             const content = msg.content;
             const text = typeof content === 'string' ? content :
               content.filter(c => c.type === 'text').map(c => c.text).join('\n');
-            const skillBlock = parseSkillBlock(text);
+            const skillSegments = parseSkillSegments(text);
 
-            if (skillBlock) {
+            if (skillSegments.some(s => s.type === 'skill')) {
               // Collect images from content array
               const images = Array.isArray(content) ? content.filter(c => c.type === 'image') : [];
-              const hasUserContent = skillBlock.userMessage || images.length > 0;
               let html = `<div class="skill-user-entry" id="${entryDomId}">${copyBtnHtml}${tsHtml}`;
 
-              // Skill invocation (collapsed by default, click to expand)
-              html += `<div class="skill-invocation" onclick="if(window.getSelection().toString())return;this.classList.toggle('expanded')">
-                <div class="skill-invocation-label">[skill] ${escapeHtml(skillBlock.name)}</div>
-                <div class="skill-invocation-collapsed">${escapeHtml(skillBlock.name)} (click to expand)</div>
-                <div class="skill-invocation-content markdown-content">${safeMarkedParse(skillBlock.content)}</div>
-              </div>`;
+              // Segments in order: skill invocations (collapsed by default, click to
+              // expand) interleaved with the user-authored text around them
+              for (const segment of skillSegments) {
+                if (segment.type === 'skill') {
+                  html += `<div class="skill-invocation" onclick="if(window.getSelection().toString())return;this.classList.toggle('expanded')">
+                    <div class="skill-invocation-label">[skill] ${escapeHtml(segment.block.name)}</div>
+                    <div class="skill-invocation-collapsed">${escapeHtml(segment.block.name)} (click to expand)</div>
+                    <div class="skill-invocation-content markdown-content">${safeMarkedParse(segment.block.content)}</div>
+                  </div>`;
+                } else {
+                  html += `<div class="markdown-content">${safeMarkedParse(segment.text)}</div>`;
+                }
+              }
 
-              // User message (separate block if present)
-              if (hasUserContent) {
-                html += '<div class="user-message">';
-                if (images.length > 0) {
-                  html += '<div class="message-images">';
-                  for (const img of images) {
-                    html += `<img src="data:${escapeHtml(img.mimeType || 'image/png')};base64,${escapeHtml(img.data || '')}" class="message-image" />`;
-                  }
-                  html += '</div>';
+              if (images.length > 0) {
+                html += '<div class="user-message"><div class="message-images">';
+                for (const img of images) {
+                  html += `<img src="data:${escapeHtml(img.mimeType || 'image/png')};base64,${escapeHtml(img.data || '')}" class="message-image" />`;
                 }
-                if (skillBlock.userMessage) {
-                  html += `<div class="markdown-content">${safeMarkedParse(skillBlock.userMessage)}</div>`;
-                }
-                html += '</div>';
+                html += '</div></div>';
               }
 
               html += '</div>';

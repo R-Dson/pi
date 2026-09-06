@@ -2,7 +2,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "fs";
 import ignore from "ignore";
 import { basename, dirname, join, relative, resolve, sep } from "path";
 import { CONFIG_DIR_NAME, getAgentDir } from "../config.ts";
-import { parseFrontmatter } from "../utils/frontmatter.ts";
+import { parseFrontmatter, stripFrontmatter } from "../utils/frontmatter.ts";
 import { canonicalizePath, resolvePath } from "../utils/paths.ts";
 import type { ResourceDiagnostic } from "./diagnostics.ts";
 import { createSyntheticSourceInfo, type SourceInfo } from "./source-info.ts";
@@ -342,6 +342,72 @@ function loadSkillFromFile(
 		},
 		diagnostics,
 	};
+}
+
+/**
+ * Matches a `/skill:name` command token.
+ * Boundary: start of text or after whitespace, so `path/skill:x` and `(/skill:x)` stay literal.
+ * Name charset: word characters and hyphens (spec names are lowercase a-z, 0-9, hyphens),
+ * so trailing punctuation like `/skill:tdd,` still resolves to `tdd`.
+ */
+const SKILL_COMMAND_PATTERN = /(^|\s)\/skill:([\w-]+)/g;
+
+/**
+ * Expand every `/skill:name` command token in the text to its skill block.
+ * Tokens may appear anywhere in the text and multiple times; each is replaced
+ * in place, keeping surrounding text in its original order. Text pieces are
+ * joined with blank lines. Unknown skill names (and tokens not at a whitespace
+ * boundary) pass through unchanged; the text is returned as-is when no token
+ * resolves to a loaded skill.
+ *
+ * `onError` is called when a skill file fails to read; that token is left as
+ * literal text.
+ */
+export function expandSkillCommands(
+	text: string,
+	skills: Skill[],
+	onError?: (error: { filePath: string; message: string }) => void,
+): string {
+	if (!text.includes("/skill:")) return text;
+
+	const byName = new Map(skills.map((skill) => [skill.name, skill]));
+
+	type Resolved = { start: number; end: number; block: string };
+	const resolved: Resolved[] = [];
+	for (const match of text.matchAll(SKILL_COMMAND_PATTERN)) {
+		const skill = byName.get(match[2]);
+		if (!skill) continue;
+
+		let body: string;
+		try {
+			body = stripFrontmatter(readFileSync(skill.filePath, "utf-8")).trim();
+		} catch (error) {
+			onError?.({
+				filePath: skill.filePath,
+				message: error instanceof Error ? error.message : String(error),
+			});
+			continue;
+		}
+
+		const start = (match.index ?? 0) + match[1].length;
+		const block = `<skill name="${skill.name}" location="${skill.filePath}">\nReferences are relative to ${skill.baseDir}.\n\n${body}\n</skill>`;
+		resolved.push({ start, end: start + match[0].length - match[1].length, block });
+	}
+
+	if (resolved.length === 0) return text;
+
+	const pieces: string[] = [];
+	let cursor = 0;
+	for (const { start, end, block } of resolved) {
+		const before = text.slice(cursor, start).trim();
+		if (before) pieces.push(before);
+		pieces.push(block);
+		cursor = end;
+	}
+	const after = text.slice(cursor).trim();
+	if (after) pieces.push(after);
+
+	return pieces.join("\n\n");
 }
 
 /**

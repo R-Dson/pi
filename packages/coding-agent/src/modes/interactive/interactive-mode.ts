@@ -52,7 +52,7 @@ import {
 	getDocsPath,
 	VERSION,
 } from "../../config.ts";
-import { type AgentSession, type AgentSessionEvent, parseSkillBlock } from "../../core/agent-session.ts";
+import { type AgentSession, type AgentSessionEvent, parseSkillSegments } from "../../core/agent-session.ts";
 import { type AgentSessionRuntime, SessionImportFileNotFoundError } from "../../core/agent-session-runtime.ts";
 import type { AgentSessionRuntimeDiagnostic } from "../../core/agent-session-services.ts";
 import {
@@ -723,6 +723,8 @@ export class InteractiveMode {
 				skillCommandList.push({
 					name: commandName,
 					description: this.prefixAutocompleteDescription(skill.description, skill.sourceInfo),
+					// Skills are invocable anywhere in the prompt, not just at the start
+					midTextInvocable: true,
 				});
 			}
 		}
@@ -3599,34 +3601,30 @@ export class InteractiveMode {
 					if (this.chatContainer.children.length > 0) {
 						this.chatContainer.addChild(new Spacer(1));
 					}
-					const skillBlock = parseSkillBlock(textContent);
-					if (skillBlock) {
-						// Render skill block (collapsible)
-						const component = new SkillInvocationMessageComponent(
-							skillBlock,
-							this.getMarkdownThemeWithSettings(),
-						);
-						component.setExpanded(this.toolOutputExpanded);
-						this.chatContainer.addChild(component);
-						// Render user message separately if present
-						if (skillBlock.userMessage) {
+					// Skill invocations may appear anywhere in the message; render each
+					// block as a collapsible component with the surrounding user text in order.
+					const segments = parseSkillSegments(textContent);
+					for (const [index, segment] of segments.entries()) {
+						if (index > 0) {
 							this.chatContainer.addChild(new Spacer(1));
-							const userComponent = new UserMessageComponent(
-								skillBlock.userMessage,
-								this.getMarkdownThemeWithSettings(),
-								this.outputPad,
-								this.getMarkdownTransformers(),
-							);
-							this.chatContainer.addChild(userComponent);
 						}
-					} else {
-						const userComponent = new UserMessageComponent(
-							textContent,
-							this.getMarkdownThemeWithSettings(),
-							this.outputPad,
-							this.getMarkdownTransformers(),
-						);
-						this.chatContainer.addChild(userComponent);
+						if (segment.type === "skill") {
+							const component = new SkillInvocationMessageComponent(
+								segment.block,
+								this.getMarkdownThemeWithSettings(),
+							);
+							component.setExpanded(this.toolOutputExpanded);
+							this.chatContainer.addChild(component);
+						} else {
+							this.chatContainer.addChild(
+								new UserMessageComponent(
+									segment.text,
+									this.getMarkdownThemeWithSettings(),
+									this.outputPad,
+									this.getMarkdownTransformers(),
+								),
+							);
+						}
 					}
 					if (options?.populateHistory) {
 						this.editor.addToHistory?.(textContent);

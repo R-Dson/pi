@@ -13,7 +13,6 @@
  * Modes use this class and add their own I/O layer on top.
  */
 
-import { readFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import type {
 	Agent,
@@ -48,7 +47,6 @@ import {
 	streamSimple,
 } from "@earendil-works/pi-ai/compat";
 import { getThemeByName, theme } from "../modes/interactive/theme/theme.ts";
-import { stripFrontmatter } from "../utils/frontmatter.ts";
 import { sleep } from "../utils/sleep.ts";
 import { normalizeToolResultImages } from "../utils/tool-result-images.ts";
 import { formatNoApiKeyFoundMessage, formatNoModelSelectedMessage } from "./auth-guidance.ts";
@@ -108,6 +106,7 @@ import type { CacheUsageTotals, RequestKind } from "./sessions/cache-usage.ts";
 import { type PrefixInvalidationCause, serializeTools } from "./sessions/prefix-stability.ts";
 import { ProviderRequestObserver, unwrapStreamFn } from "./sessions/request-observer.ts";
 import type { SettingsManager } from "./settings-manager.ts";
+import { expandSkillCommands } from "./skills.ts";
 import type { SlashCommandInfo } from "./slash-commands.ts";
 import { createSyntheticSourceInfo, type SourceInfo } from "./source-info.ts";
 import { type BuildSystemPromptOptions, buildSystemPrompt } from "./system-prompt.ts";
@@ -142,6 +141,34 @@ export function parseSkillBlock(text: string): ParsedSkillBlock | null {
 		content: match[3],
 		userMessage: match[4]?.trim() || undefined,
 	};
+}
+
+/** A skill block or user-authored text segment of a user message. */
+export type SkillMessageSegment = { type: "text"; text: string } | { type: "skill"; block: ParsedSkillBlock };
+
+/**
+ * Split a user message into text and skill block segments, in order.
+ * Skill blocks may appear anywhere in the message (leading, mid-text, multiple).
+ * Whitespace-only text between blocks is dropped. Returns a single text segment
+ * when the message contains no skill block.
+ */
+export function parseSkillSegments(text: string): SkillMessageSegment[] {
+	const pattern = /<skill name="([^"]+)" location="([^"]+)">\n([\s\S]*?)\n<\/skill>/g;
+	const segments: SkillMessageSegment[] = [];
+	let cursor = 0;
+	for (const match of text.matchAll(pattern)) {
+		const before = text.slice(cursor, match.index ?? 0).trim();
+		if (before) segments.push({ type: "text", text: before });
+		segments.push({
+			type: "skill",
+			block: { name: match[1], location: match[2], content: match[3], userMessage: undefined },
+		});
+		cursor = (match.index ?? 0) + match[0].length;
+	}
+	const after = text.slice(cursor).trim();
+	if (after) segments.push({ type: "text", text: after });
+	if (segments.length === 0) segments.push({ type: "text", text });
+	return segments;
 }
 
 /** Session-specific events that extend the core AgentEvent */
@@ -1459,33 +1486,18 @@ export class AgentSession {
 
 	/**
 	 * Expand skill commands (/skill:name args) to their full content.
-	 * Returns the expanded text, or the original text if not a skill command or skill not found.
+	 * Tokens are expanded anywhere in the text and may appear multiple times.
+	 * Returns the original text if no token resolves to a loaded skill.
 	 * Emits errors via extension runner if file read fails.
 	 */
 	private _expandSkillCommand(text: string): string {
-		if (!text.startsWith("/skill:")) return text;
-
-		const spaceIndex = text.indexOf(" ");
-		const skillName = spaceIndex === -1 ? text.slice(7) : text.slice(7, spaceIndex);
-		const args = spaceIndex === -1 ? "" : text.slice(spaceIndex + 1).trim();
-
-		const skill = this.resourceLoader.getSkills().skills.find((s) => s.name === skillName);
-		if (!skill) return text; // Unknown skill, pass through
-
-		try {
-			const content = readFileSync(skill.filePath, "utf-8");
-			const body = stripFrontmatter(content).trim();
-			const skillBlock = `<skill name="${skill.name}" location="${skill.filePath}">\nReferences are relative to ${skill.baseDir}.\n\n${body}\n</skill>`;
-			return args ? `${skillBlock}\n\n${args}` : skillBlock;
-		} catch (err) {
-			// Emit error like extension commands do
+		return expandSkillCommands(text, this.resourceLoader.getSkills().skills, (error) => {
 			this._extensionRunner.emitError({
-				extensionPath: skill.filePath,
+				extensionPath: error.filePath,
 				event: "skill_expansion",
-				error: err instanceof Error ? err.message : String(err),
+				error: error.message,
 			});
-			return text; // Return original on error
-		}
+		});
 	}
 
 	/**

@@ -80,7 +80,14 @@ Skills register as `/skill:name` commands:
 /skill:pdf-tools extract      # Load skill with arguments
 ```
 
-Arguments after the command are appended to the skill content as `User: <args>`.
+Skill commands work anywhere in the prompt, not just at the start, and multiple invocations are supported. Each token is expanded in place to the skill's content, keeping the surrounding text in order:
+
+```bash
+/skill:ponytail /skill:tdd    # Chain two skills
+first do X /skill:tdd then Y  # Invoke mid-prompt
+```
+
+Typing `/` anywhere in the editor opens autocomplete for skill commands. Tokens must be whitespace-separated (`path/to/skill:x` stays literal), and unknown skill names pass through unchanged.
 
 Toggle skill commands via `/settings` in interactive mode or in `settings.json`:
 

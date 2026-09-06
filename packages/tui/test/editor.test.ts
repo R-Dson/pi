@@ -2214,6 +2214,40 @@ describe("Editor component", () => {
 			assert.strictEqual(editor.isShowingAutocomplete(), false);
 		});
 
+		it("completes mid-text slash tokens as file paths on Tab, not slash commands", async () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+
+			const forceFlags: Array<boolean | undefined> = [];
+			const mockProvider: AutocompleteProvider = {
+				getSuggestions: async (_lines, _cursorLine, _cursorCol, options) => {
+					forceFlags.push(options.force);
+					if (options.force) {
+						return {
+							items: [{ value: "/sk/", label: "sk/" }],
+							prefix: "/sk",
+						};
+					}
+					return null;
+				},
+				applyCompletion,
+			};
+
+			editor.setAutocompleteProvider(mockProvider);
+
+			for (const ch of "see /sk") {
+				editor.handleInput(ch);
+			}
+			await flushAutocomplete();
+			forceFlags.length = 0;
+
+			// Tab must route to forced file completion, never the slash command menu
+			editor.handleInput("\t");
+			await flushAutocomplete();
+
+			assert.ok(forceFlags.includes(true), "Tab should force file completion mid-text");
+			assert.strictEqual(editor.getText(), "see /sk/");
+		});
+
 		it("keeps suggestions open when typing in force mode (Tab-triggered)", async () => {
 			const editor = new Editor(createTestTUI(), defaultEditorTheme);
 

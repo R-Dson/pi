@@ -1,4 +1,4 @@
-import type { AutocompleteProvider, AutocompleteSuggestions } from "../autocomplete.ts";
+import { type AutocompleteProvider, type AutocompleteSuggestions, activeSlashToken } from "../autocomplete.ts";
 import { getKeybindings } from "../keybindings.ts";
 import { decodePrintableKey, matchesKey } from "../keys.ts";
 import { KillRing } from "../kill-ring.ts";
@@ -1214,9 +1214,14 @@ export class Editor implements Component, Focusable {
 
 		// Check if we should trigger or update autocomplete
 		if (!this.autocompleteState) {
-			// Auto-trigger for "/" at the start of a line (slash commands)
-			if (char === "/" && this.isAtStartOfMessage()) {
-				this.tryTriggerAutocomplete();
+			// Auto-trigger for "/" starting a slash command or a mid-text skill token
+			if (char === "/") {
+				const currentLine = this.state.lines[this.state.cursorLine] || "";
+				const textBeforeCursor = currentLine.slice(0, this.state.cursorCol);
+				const charBefore = textBeforeCursor[textBeforeCursor.length - 2];
+				if (this.isAtStartOfMessage() || charBefore === undefined || charBefore === " " || charBefore === "\t") {
+					this.tryTriggerAutocomplete();
+				}
 			}
 			// Auto-trigger for symbol-based completion like @, #, or provider triggers at token boundaries
 			else if (this.autocompleteTriggerCharacters.includes(char)) {
@@ -2188,7 +2193,12 @@ export class Editor implements Component, Focusable {
 	}
 
 	private isInSlashCommandContext(textBeforeCursor: string): boolean {
-		return this.isSlashMenuAllowed() && textBeforeCursor.trimStart().startsWith("/");
+		// First line starting with "/": full slash command context, including arguments
+		if (this.isSlashMenuAllowed() && textBeforeCursor.trimStart().startsWith("/")) {
+			return true;
+		}
+		// "/"-prefixed token being typed anywhere else: mid-text skill invocation
+		return activeSlashToken(textBeforeCursor) !== null;
 	}
 
 	// Autocomplete methods
@@ -2257,7 +2267,11 @@ export class Editor implements Component, Focusable {
 		const currentLine = this.state.lines[this.state.cursorLine] || "";
 		const beforeCursor = currentLine.slice(0, this.state.cursorCol);
 
-		if (this.isInSlashCommandContext(beforeCursor) && !beforeCursor.trimStart().includes(" ")) {
+		// Tab completes file paths. Only a first-line slash command name (no
+		// arguments yet) routes to slash completion; mid-text "/" tokens are
+		// skill invocations completed by the natural typing trigger, not Tab.
+		const trimmedStart = beforeCursor.trimStart();
+		if (this.isSlashMenuAllowed() && trimmedStart.startsWith("/") && !trimmedStart.includes(" ")) {
 			this.handleSlashCommandCompletion();
 		} else {
 			this.forceFileAutocomplete(true);
