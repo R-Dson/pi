@@ -211,11 +211,13 @@ export async function showFirstTimeSetup(settingsManager: SettingsManager): Prom
 			setTheme(detectedTheme);
 			const component = new FirstTimeSetupComponent({
 				detectedTheme,
-				// createStartupTui already registered built-in + resource themes.
-				themes: getAvailableThemes(),
+				// "/" (Automatic, follow terminal appearance) first — the fresh-install
+				// default; then every registered theme (createStartupTui already
+				// registered built-in + resource themes).
+				themes: ["/", ...getAvailableThemes()],
 				currentTheme: settingsManager.getThemeSetting(),
 				onThemePreview: (themeName) => {
-					setTheme(themeName);
+					setTheme(themeName === "/" ? detectedTheme : themeName);
 					ui.requestRender();
 				},
 				onSubmit: (result) => void finish(result),

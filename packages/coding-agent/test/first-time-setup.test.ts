@@ -54,7 +54,7 @@ describe("FirstTimeSetupComponent theme step", () => {
 		expect(submitted?.providerAttribution).toBe(false);
 	});
 
-	it("preselects the detected appearance when present", () => {
+	it("preselects the first theme when Automatic is not offered", () => {
 		const component = new FirstTimeSetupComponent({
 			detectedTheme: "light",
 			themes: ["dark", "light", "dracula"],
@@ -62,7 +62,58 @@ describe("FirstTimeSetupComponent theme step", () => {
 			onSubmit: () => {},
 			onCancel: () => {},
 		});
-		expect(render(component)).toContain("→ light");
+		expect(render(component)).toContain("→ dark");
+	});
+
+	it("defaults to Automatic for fresh installs when it is offered", () => {
+		const previews: string[] = [];
+		let submitted: FirstTimeSetupResult | undefined;
+		const component = new FirstTimeSetupComponent({
+			detectedTheme: "light",
+			themes: ["/", "dark", "light", "dracula"],
+			onThemePreview: (theme) => previews.push(theme),
+			onSubmit: (result) => {
+				submitted = result;
+			},
+			onCancel: () => {},
+		});
+
+		const rendered = render(component);
+		expect(rendered).toContain("→ Automatic");
+		expect(rendered).toContain("dark");
+		expect(rendered).toContain("dracula");
+
+		// Confirming without navigating keeps Automatic ("/").
+		component.handleInput("\n");
+		component.handleInput("\n");
+		component.handleInput("\n");
+		expect(submitted?.theme).toBe("/");
+
+		// Navigating previews the raw values; the caller resolves "/" to the
+		// detected appearance.
+		const navigating = new FirstTimeSetupComponent({
+			detectedTheme: "light",
+			themes: ["/", "dark", "light", "dracula"],
+			onThemePreview: (theme) => previews.push(theme),
+			onSubmit: () => {},
+			onCancel: () => {},
+		});
+		navigating.handleInput("j");
+		expect(previews.at(-1)).toBe("dark");
+		navigating.handleInput("k");
+		expect(previews.at(-1)).toBe("/");
+	});
+
+	it("falls back to Automatic when the current theme is unknown", () => {
+		const component = new FirstTimeSetupComponent({
+			detectedTheme: "dark",
+			themes: ["/", "dark", "light"],
+			currentTheme: "nonexistent",
+			onThemePreview: () => {},
+			onSubmit: () => {},
+			onCancel: () => {},
+		});
+		expect(render(component)).toContain("→ Automatic");
 	});
 
 	it("always starts at the theme step, preselecting the current theme", () => {
@@ -99,7 +150,7 @@ describe("FirstTimeSetupComponent theme step", () => {
 		expect(submitted?.theme).toBe("dracula");
 	});
 
-	it("falls back to the detected appearance when the current theme is unknown", () => {
+	it("falls back to the first theme when the current theme is unknown and Automatic is not offered", () => {
 		const component = new FirstTimeSetupComponent({
 			detectedTheme: "dark",
 			themes: ["dark", "light"],

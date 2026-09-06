@@ -42,6 +42,14 @@ const YES_NO_STEPS: Record<YesNoStep, { question: string; explanation: string }>
 	},
 };
 
+// The theme-setting value for "follow terminal appearance" (same value the
+// /settings theme submenu calls Automatic); rendered with a friendlier label.
+const AUTOMATIC_THEME = "/";
+
+const THEME_LABELS: Record<string, string> = {
+	[AUTOMATIC_THEME]: "Automatic",
+};
+
 /**
  * First-time setup dialog: theme choice, then opt-in questions for the fork's
  * two phone-home features (update check, OpenRouter attribution). Every
@@ -61,12 +69,10 @@ export class FirstTimeSetupComponent extends Container {
 		this.options = options;
 		this.themes = options.themes;
 		// The theme question is always first; preselect the user's current
-		// theme so confirming without navigating keeps it, else the detected
-		// terminal appearance.
+		// theme so confirming without navigating keeps it, else Automatic
+		// (follow the detected terminal appearance) when offered.
 		const preferred =
-			options.currentTheme && this.themes.includes(options.currentTheme)
-				? options.currentTheme
-				: options.detectedTheme;
+			options.currentTheme && this.themes.includes(options.currentTheme) ? options.currentTheme : AUTOMATIC_THEME;
 		this.themeIndex = Math.max(0, this.themes.indexOf(preferred));
 		this.update();
 	}
@@ -118,7 +124,9 @@ export class FirstTimeSetupComponent extends Container {
 		for (let i = 0; i < labels.length; i++) {
 			const isSelected = i === selectedIndex;
 			const prefix = isSelected ? theme.fg("accent", "→ ") : "  ";
-			const label = isSelected ? theme.fg("accent", labels[i]) : theme.fg("text", labels[i]);
+			const label = isSelected
+				? theme.fg("accent", THEME_LABELS[labels[i]] ?? labels[i])
+				: theme.fg("text", THEME_LABELS[labels[i]] ?? labels[i]);
 			this.addChild(new Text(`${prefix}${label}`, 1, 0));
 		}
 	}
