@@ -427,7 +427,6 @@ export class InteractiveMode {
 	// Streaming message tracking
 	private streamingComponent: AssistantMessageComponent | undefined = undefined;
 	/** Set when the previous assistant message ended at a tool call: the next one renders its opening thinking headerless. */
-	private nextAssistantContinuesAfterToolCall = false;
 	/** Provider/model of the previous assistant message; a differing next model renders the attribution marker (#135). */
 	private lastAssistantModel: string | undefined = undefined;
 	private streamingMessage: AssistantMessage | undefined = undefined;
@@ -3190,10 +3189,6 @@ export class InteractiveMode {
 					this.addMessageToChat(event.message);
 					this.ui.requestRender();
 				} else if (event.message.role === "user") {
-					// A new user turn ends any pending continuation: a tool call
-					// interrupted before its result must not suppress the next
-					// turn's opening header.
-					this.nextAssistantContinuesAfterToolCall = false;
 					this.addMessageToChat(event.message);
 					this.updatePendingMessagesDisplay();
 					this.ui.requestRender();
@@ -3205,10 +3200,8 @@ export class InteractiveMode {
 						this.hiddenThinkingLabel,
 						this.outputPad,
 						this.getMarkdownTransformers(),
-						this.nextAssistantContinuesAfterToolCall,
 						this.lastAssistantModel,
 					);
-					this.nextAssistantContinuesAfterToolCall = false;
 					this.streamingMessage = event.message;
 					this.chatContainer.addChild(this.streamingComponent);
 					this.streamingComponent.updateContent(this.streamingMessage, true);
@@ -3255,7 +3248,6 @@ export class InteractiveMode {
 				if (event.message.role === "user") break;
 				if (this.streamingComponent && event.message.role === "assistant") {
 					this.streamingMessage = event.message;
-					this.nextAssistantContinuesAfterToolCall = this.streamingMessage.stopReason === "toolUse";
 					this.lastAssistantModel = `${this.streamingMessage.provider}/${this.streamingMessage.model}`;
 					let errorMessage: string | undefined;
 					if (this.streamingMessage.stopReason === "aborted") {
@@ -3598,7 +3590,6 @@ export class InteractiveMode {
 				break;
 			}
 			case "user": {
-				this.nextAssistantContinuesAfterToolCall = false;
 				const textContent = this.getUserMessageText(message);
 				if (textContent) {
 					if (this.chatContainer.children.length > 0) {
@@ -3647,11 +3638,9 @@ export class InteractiveMode {
 					this.hiddenThinkingLabel,
 					this.outputPad,
 					this.getMarkdownTransformers(),
-					this.nextAssistantContinuesAfterToolCall,
 					this.lastAssistantModel,
 				);
 				this.chatContainer.addChild(assistantComponent);
-				this.nextAssistantContinuesAfterToolCall = message.stopReason === "toolUse";
 				this.lastAssistantModel = `${message.provider}/${message.model}`;
 				break;
 			}
@@ -3682,9 +3671,8 @@ export class InteractiveMode {
 			this.updateEditorBorderColor();
 		}
 
-		// Rebuilds start fresh: no message before the first one continued a tool call,
-		// and the first assistant message has no previous model to differ from.
-		this.nextAssistantContinuesAfterToolCall = false;
+		// Rebuilds start fresh: the first assistant message has no previous
+		// model to differ from.
 		this.lastAssistantModel = undefined;
 		for (const item of items) {
 			if (isCustomSessionEntry(item)) {

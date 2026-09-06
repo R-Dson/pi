@@ -788,12 +788,17 @@ describe("AssistantMessageComponent", () => {
 			}
 		});
 
-		test("collapses the preview once a tool call streams after the newest run", () => {
+		test("a thinking run ended by a tool call keeps its frozen header", () => {
 			initTheme("dark");
 			vi.useFakeTimers();
 			vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
 			try {
 				const component = new AssistantMessageComponent(undefined, true);
+				component.updateContent(
+					createAssistantMessage([{ type: "thinking", thinking: "planning the edit" }]),
+					true,
+				);
+				vi.advanceTimersByTime(2100);
 				component.updateContent(
 					createAssistantMessage([
 						{ type: "thinking", thinking: "planning the edit" },
@@ -803,21 +808,21 @@ describe("AssistantMessageComponent", () => {
 				);
 				const rendered = stripAnsi(component.render(100).join("\n"));
 
-				// A run ended by a tool call keeps only its tail: the next
-				// assistant message's run carries the next header.
-				expect(rendered).not.toContain("Thought for");
-				expect(rendered).not.toContain("Thinking...");
-				expect(rendered).not.toContain("ctrl+t");
+				// The header freezes to the duration marker and stays with the
+				// tail, so the reasoning window stays identifiable between tool
+				// calls as the transcript grows.
+				expect(rendered).toContain("Thought for 2s");
+				expect(rendered).toContain("ctrl+t");
 				expect(rendered).toContain("planning the edit");
 			} finally {
 				vi.useRealTimers();
 			}
 		});
 
-		test("a continuation message after a tool call opens its thinking headerless", () => {
+		test("a continuation message after a tool call opens with its own header", () => {
 			initTheme("dark");
 
-			const component = new AssistantMessageComponent(undefined, true, undefined, "Thinking...", 1, [], true);
+			const component = new AssistantMessageComponent(undefined, true);
 			component.updateContent(
 				createAssistantMessage([
 					{ type: "thinking", thinking: "confirmed the intermediate result" },
@@ -827,10 +832,10 @@ describe("AssistantMessageComponent", () => {
 			);
 			const rendered = stripAnsi(component.render(100).join("\n"));
 
-			// No header, no expand hint: only the tail, then the answer text.
-			expect(rendered).not.toContain("Thought for");
-			expect(rendered).not.toContain("Thinking...");
-			expect(rendered).not.toContain("ctrl+t");
+			// Each reasoning window carries its own header down the transcript;
+			// a never-streamed message shows the static-label fallback.
+			expect(rendered).toMatch(/Thought for|Thinking\.\.\./);
+			expect(rendered).toContain("ctrl+t");
 			expect(rendered).toContain("confirmed the intermediate result");
 			expect(rendered).toContain("the answer");
 		});
@@ -970,7 +975,6 @@ describe("AssistantMessageComponent", () => {
 				"Thinking...",
 				1,
 				[],
-				false,
 				"google/gemini-2.5-pro",
 			);
 			component.updateContent(createAssistantMessage([{ type: "text", text: "hello" }]));
@@ -989,7 +993,6 @@ describe("AssistantMessageComponent", () => {
 				"Thinking...",
 				1,
 				[],
-				false,
 				"openai/gpt-4o-mini",
 			);
 			component.updateContent(createAssistantMessage([{ type: "text", text: "hello" }]));

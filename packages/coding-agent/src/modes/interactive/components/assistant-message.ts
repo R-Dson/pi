@@ -163,8 +163,6 @@ export class AssistantMessageComponent extends Container {
 	private thinkingDurationMs: number | undefined;
 	/** Visible thinking runs at the last update; growth restarts the clock (a new run began). */
 	private thinkingRunCount = 0;
-	/** Set when this message continues after a tool call: its opening thinking run renders headerless. */
-	private readonly continuesAfterToolCall: boolean;
 	/**
 	 * Provider/model key of the previous assistant message, when the caller
 	 * tracks one: a differing model renders a muted model-id line above the
@@ -180,8 +178,6 @@ export class AssistantMessageComponent extends Container {
 		hiddenThinkingLabel = "Thinking...",
 		outputPad = 1,
 		markdownTransformers: readonly MarkdownTransformer[] = [],
-		/** This message continues an assistant turn whose previous message ended at a tool call. */
-		continuesAfterToolCall = false,
 		/** Provider/model of the previous assistant message; omit to never mark. */
 		previousModel?: string,
 	) {
@@ -192,7 +188,6 @@ export class AssistantMessageComponent extends Container {
 		this.hiddenThinkingLabel = hiddenThinkingLabel;
 		this.outputPad = outputPad;
 		this.markdownTransformers = markdownTransformers;
-		this.continuesAfterToolCall = continuesAfterToolCall;
 		this.previousModel = previousModel;
 
 		// Container for text/thinking content
@@ -411,13 +406,7 @@ export class AssistantMessageComponent extends Container {
 					// the same trick the bash preview uses.
 					const runEnder = message.content.slice(i + 1).find(isStreamedNonThinking);
 					const runEnded = runEnder !== undefined;
-					// A run ended by a tool call renders only its tail: the next
-					// assistant message (the continuation after the tool result)
-					// carries the next header, so suppressing this one avoids a
-					// header per tool-call interruption.
-					const runOpensMessage = message.content.slice(0, i).every((c) => c.type === "thinking");
-					const suppressHeader = runEnder?.type === "toolCall" || (this.continuesAfterToolCall && runOpensMessage);
-					if (!suppressHeader) {
+					{
 						const expandHint = `${theme.fg("muted", "(")}${keyHint("app.thinking.toggle", "to expand thinking")}${theme.fg("muted", ")")}`;
 						let header: string;
 						if (this.isStreaming && !runEnded) {
