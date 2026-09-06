@@ -13,7 +13,7 @@
 
 import { existsSync, readFileSync } from "fs";
 import { normalizePath } from "../../utils/paths.ts";
-import { migrateSessionEntries } from "../session-manager.ts";
+import { migrateSessionEntries, parseSessionEntryLine } from "../session-manager.ts";
 import {
 	buildContextEntries,
 	buildSessionPath,
@@ -41,18 +41,6 @@ export interface SessionRecovery {
 	issues: SessionValidationIssue[];
 }
 
-/** Parse one physical line the same way loading does: blank lines and malformed JSON are skipped. */
-// Mirrors session-manager's unexported parseSessionEntryLine; kept local so the
-// fork does not widen the upstream diff just to share three lines.
-function parseSessionLine(line: string): FileEntry | null {
-	if (!line.trim()) return null;
-	try {
-		return JSON.parse(line) as FileEntry;
-	} catch {
-		return null;
-	}
-}
-
 /**
  * Tolerant line scan of raw session file content, mirroring loadEntriesFromFile
  * parse behavior (malformed lines are skipped) while recording what happened:
@@ -68,7 +56,7 @@ function scanSessionContent(content: string): SessionRecovery {
 	for (let i = 0; i < lines.length; i++) {
 		const line = lines[i];
 		const isFinalLine = i === lines.length - 1 && !endsWithNewline;
-		const entry = parseSessionLine(line);
+		const entry = parseSessionEntryLine(line);
 		if (entry) {
 			entries.push(entry);
 			continue;

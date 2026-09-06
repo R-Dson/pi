@@ -15,6 +15,7 @@
 
 ### Changed
 
+- Changed grep tool rendering to use the shared renderers module instead of inline copies on the tool definition, so renderer-only presentations (mini/tui, client-tui-chat) now show the count-first `N matches` summary like the interactive TUI instead of the old count-less format.
 - Changed hidden-thinking headers to persist across tool calls: every reasoning window keeps its own header — live while streaming, frozen to `Thought for Ns` once the run ends — instead of suppressing headers for tool-call-bounded runs and continuation messages, so the headers move down the transcript with the reasoning as a think-act-think cycle progresses.
 
 ## [0.85.4] - 2026-09-05

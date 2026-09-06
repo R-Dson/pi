@@ -33,6 +33,7 @@ function formatGrepCall(
 	if (limit !== undefined) text += theme.fg("toolOutput", ` limit ${limit}`);
 	return text;
 }
+
 function formatGrepResult(
 	result: {
 		content: Array<{ type: string; text?: string; data?: string; mimeType?: string }>;
@@ -41,10 +42,19 @@ function formatGrepResult(
 	options: ToolRenderResultOptions,
 	theme: Theme,
 	showImages: boolean,
+	isError: boolean,
 ): string {
 	const output = getTextOutput(result, showImages).trim();
 	let text = "";
-	if (output) {
+	if (output && output !== "No matches found") {
+		// Count-first: the match total leads so the result can be gauged before
+		// reading any match line. execute's true count (context lines and the
+		// no-match message excluded) wins; without details, count output lines
+		// minus the trailing notices block. Errors carry no count.
+		if (!isError) {
+			const count = result.details?.matchCount ?? output.replace(/\n\n\[[^\]]*\]$/, "").split("\n").length;
+			text += `\n${theme.fg("muted", `${count} matches`)}`;
+		}
 		const lines = output.split("\n");
 		const maxLines = options.expanded ? lines.length : 15;
 		const displayLines = lines.slice(0, maxLines);
@@ -76,7 +86,7 @@ export const grepRenderers: Pick<ToolDefinition<any, any>, "renderCall" | "rende
 	},
 	renderResult(result, options, theme, context) {
 		const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
-		text.setText(formatGrepResult(result as any, options, theme, context.showImages));
+		text.setText(formatGrepResult(result as any, options, theme, context.showImages, context.isError));
 		return text;
 	},
 };
