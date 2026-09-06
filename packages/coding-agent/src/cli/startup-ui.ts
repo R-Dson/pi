@@ -215,7 +215,6 @@ export async function showFirstTimeSetup(settingsManager: SettingsManager): Prom
 				// default; then every registered theme (createStartupTui already
 				// registered built-in + resource themes).
 				themes: ["/", ...getAvailableThemes()],
-				currentTheme: settingsManager.getThemeSetting(),
 				onThemePreview: (themeName) => {
 					setTheme(themeName === "/" ? detectedTheme : themeName);
 					ui.requestRender();

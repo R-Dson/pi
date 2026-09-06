@@ -12,10 +12,8 @@ export interface FirstTimeSetupResult {
 
 export interface FirstTimeSetupOptions {
 	detectedTheme: TerminalTheme;
-	/** Every registered theme name; "dark"/"light" are always present. */
+	/** Every registered theme name; "/" (Automatic) first is the default selection. */
 	themes: string[];
-	/** Theme already chosen by the user, if any; preselected over the detected appearance. */
-	currentTheme?: string;
 	onThemePreview: (themeName: string) => void;
 	onSubmit: (result: FirstTimeSetupResult) => void;
 	onCancel: () => void;
@@ -68,12 +66,9 @@ export class FirstTimeSetupComponent extends Container {
 		super();
 		this.options = options;
 		this.themes = options.themes;
-		// The theme question is always first; preselect the user's current
-		// theme so confirming without navigating keeps it, else Automatic
-		// (follow the detected terminal appearance) when offered.
-		const preferred =
-			options.currentTheme && this.themes.includes(options.currentTheme) ? options.currentTheme : AUTOMATIC_THEME;
-		this.themeIndex = Math.max(0, this.themes.indexOf(preferred));
+		// The theme question is always first; Automatic (follow the detected
+		// terminal appearance) is the default selection, first in the list.
+		this.themeIndex = Math.max(0, this.themes.indexOf(AUTOMATIC_THEME));
 		this.update();
 	}
 

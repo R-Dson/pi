@@ -104,57 +104,10 @@ describe("FirstTimeSetupComponent theme step", () => {
 		expect(previews.at(-1)).toBe("/");
 	});
 
-	it("falls back to Automatic when the current theme is unknown", () => {
-		const component = new FirstTimeSetupComponent({
-			detectedTheme: "dark",
-			themes: ["/", "dark", "light"],
-			currentTheme: "nonexistent",
-			onThemePreview: () => {},
-			onSubmit: () => {},
-			onCancel: () => {},
-		});
-		expect(render(component)).toContain("→ Automatic");
-	});
-
-	it("always starts at the theme step, preselecting the current theme", () => {
-		const component = new FirstTimeSetupComponent({
-			detectedTheme: "light",
-			themes: ["dark", "light", "dracula"],
-			currentTheme: "dracula",
-			onThemePreview: () => {},
-			onSubmit: () => {},
-			onCancel: () => {},
-		});
-
-		const rendered = render(component);
-		// First screen is the theme step even though a theme is already set.
-		expect(rendered).toContain("Pick a theme.");
-		expect(rendered).toContain("→ dracula");
-		expect(rendered).not.toContain("→ light");
-
-		// Confirming without navigating keeps the current theme.
-		let submitted: FirstTimeSetupResult | undefined;
-		const confirming = new FirstTimeSetupComponent({
-			detectedTheme: "light",
-			themes: ["dark", "light", "dracula"],
-			currentTheme: "dracula",
-			onThemePreview: () => {},
-			onSubmit: (result) => {
-				submitted = result;
-			},
-			onCancel: () => {},
-		});
-		confirming.handleInput("\n");
-		confirming.handleInput("\n");
-		confirming.handleInput("\n");
-		expect(submitted?.theme).toBe("dracula");
-	});
-
-	it("falls back to the first theme when the current theme is unknown and Automatic is not offered", () => {
+	it("falls back to the first theme when Automatic is not offered", () => {
 		const component = new FirstTimeSetupComponent({
 			detectedTheme: "dark",
 			themes: ["dark", "light"],
-			currentTheme: "nonexistent",
 			onThemePreview: () => {},
 			onSubmit: () => {},
 			onCancel: () => {},
