@@ -1,4 +1,4 @@
-import type { AgentTool } from "@earendil-works/pi-agent-core";
+import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
 import { constants } from "fs";
 import { access as fsAccess, readFile as fsReadFile, writeFile as fsWriteFile } from "fs/promises";
 import { type Static, Type } from "typebox";
@@ -16,6 +16,7 @@ import {
 import { withFileMutationQueue } from "./file-mutation-queue.ts";
 import { resolveToCwd } from "./path-utils.ts";
 import { type EditRenderState, editRenderers } from "./renderers/edit.ts";
+import { appendThenRunResult, type ThenRunInput, thenRunSchema, thenRunSkippedError } from "./then-run.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
 
 const replaceEditSchema = Type.Object(
@@ -36,6 +37,7 @@ const editSchema = Type.Object(
 			description:
 				"One or more targeted replacements. Each edit is matched against the original file, not incrementally. Do not include overlapping or nested edits. If two changes touch the same block or nearby lines, merge them into one edit instead.",
 		}),
+		thenRun: Type.Optional(thenRunSchema),
 	},
 	{},
 );
@@ -47,6 +49,7 @@ export const editToolSystemPromptContribution = {
 		"When changing multiple separate locations in one file, use one edit call with multiple entries in edits[] instead of multiple edit calls",
 		"Each edits[].oldText is matched against the original file, not after earlier edits are applied. Do not emit overlapping or nested edits. Merge nearby changes into one edit.",
 		"Keep edits[].oldText as small as possible while still being unique in the file. Do not pad with large unchanged regions.",
+		"When a test or build command should verify the change, pass it as thenRun instead of issuing a separate bash call.",
 	],
 } as const;
 
@@ -157,8 +160,9 @@ export function createEditToolDefinition(
 		constrainedSampling: { type: "json_schema", strict: "prefer" },
 		renderShell: "self",
 		prepareArguments: prepareEditArguments,
-		async execute(_toolCallId, input: EditToolInput, signal?: AbortSignal, _onUpdate?, ctx?: ExtensionContext) {
+		async execute(toolCallId, input: EditToolInput, signal?: AbortSignal, _onUpdate?, ctx?: ExtensionContext) {
 			const { path, edits } = validateEditInput(input);
+			const thenRun: ThenRunInput | undefined = input.thenRun;
 			const absolutePath = resolveToCwd(path, ctx?.cwd || cwd);
 
 			return withFileMutationQueue(absolutePath, async () => {
@@ -172,44 +176,61 @@ export function createEditToolDefinition(
 
 				throwIfAborted();
 
-				// Check if file exists.
+				let mutation: AgentToolResult<EditToolDetails>;
 				try {
-					await ops.access(absolutePath);
-				} catch (error: unknown) {
+					// Check if file exists.
+					try {
+						await ops.access(absolutePath);
+					} catch (error: unknown) {
+						throwIfAborted();
+						const errorMessage =
+							error instanceof Error && "code" in error ? `Error code: ${error.code}` : String(error);
+						throw new Error(`Could not edit file: ${path}. ${errorMessage}.`);
+					}
 					throwIfAborted();
-					const errorMessage =
-						error instanceof Error && "code" in error ? `Error code: ${error.code}` : String(error);
-					throw new Error(`Could not edit file: ${path}. ${errorMessage}.`);
+
+					// Read the file.
+					const buffer = await ops.readFile(absolutePath);
+					const rawContent = buffer.toString("utf-8");
+					throwIfAborted();
+
+					// Strip BOM before matching. The model will not include an invisible BOM in oldText.
+					const { bom, text: content } = splitBom(rawContent);
+					const originalEnding = detectLineEnding(content);
+					const normalizedContent = normalizeToLF(content);
+					const { baseContent, newContent } = applyEditsToNormalizedContent(normalizedContent, edits, path);
+					throwIfAborted();
+
+					const finalContent = bom + restoreLineEndings(newContent, originalEnding);
+					await ops.writeFile(absolutePath, finalContent);
+					throwIfAborted();
+
+					const diffResult = generateDiffString(baseContent, newContent);
+					const patch = generateUnifiedPatch(path, baseContent, newContent);
+					mutation = {
+						content: [
+							{
+								type: "text",
+								text: `Successfully replaced ${edits.length} block(s) in ${path}.`,
+							},
+						],
+						details: { diff: diffResult.diff, patch, firstChangedLine: diffResult.firstChangedLine },
+					};
+				} catch (error) {
+					if (thenRun) throw thenRunSkippedError(error, thenRun.command);
+					throw error;
 				}
-				throwIfAborted();
 
-				// Read the file.
-				const buffer = await ops.readFile(absolutePath);
-				const rawContent = buffer.toString("utf-8");
-				throwIfAborted();
-
-				// Strip BOM before matching. The model will not include an invisible BOM in oldText.
-				const { bom, text: content } = splitBom(rawContent);
-				const originalEnding = detectLineEnding(content);
-				const normalizedContent = normalizeToLF(content);
-				const { baseContent, newContent } = applyEditsToNormalizedContent(normalizedContent, edits, path);
-				throwIfAborted();
-
-				const finalContent = bom + restoreLineEndings(newContent, originalEnding);
-				await ops.writeFile(absolutePath, finalContent);
-				throwIfAborted();
-
-				const diffResult = generateDiffString(baseContent, newContent);
-				const patch = generateUnifiedPatch(path, baseContent, newContent);
-				return {
-					content: [
-						{
-							type: "text",
-							text: `Successfully replaced ${edits.length} block(s) in ${path}.`,
-						},
-					],
-					details: { diff: diffResult.diff, patch, firstChangedLine: diffResult.firstChangedLine },
-				};
+				if (!thenRun) return mutation;
+				const content = await appendThenRunResult({
+					cwd: ctx?.cwd || cwd,
+					toolCallId,
+					thenRun,
+					mutationContent: mutation.content,
+					signal,
+					ctx,
+				});
+				return { content, details: mutation.details };
 			});
 		},
 		...editRenderers,

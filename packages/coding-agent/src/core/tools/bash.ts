@@ -1,5 +1,6 @@
 import { constants } from "node:fs";
 import { access as fsAccess } from "node:fs/promises";
+import { join } from "node:path";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { spawn } from "child_process";
 import { type Static, Type } from "typebox";
@@ -209,6 +210,18 @@ export type BashRenderState = {
 	interval: NodeJS.Timeout | undefined;
 };
 
+/**
+ * Full-output spill directory for shell tool results: the session artifacts
+ * directory for persisted sessions (same location the loop-level output bound
+ * uses), so truncated output stays recallable for the whole session. Falls
+ * back to the accumulator's OS temp dir when there is no session.
+ */
+function shellArtifactDir(ctx: ExtensionContext | undefined): string | undefined {
+	const session = ctx?.sessionManager;
+	if (!session?.getSessionFile()) return undefined;
+	return join(session.getSessionDir(), "artifacts", session.getSessionId());
+}
+
 export interface ShellToolConfig {
 	name: string;
 	label: string;
@@ -231,7 +244,7 @@ export function createShellToolDefinition(
 	return {
 		name: config.name,
 		label: config.label,
-		description: `Execute a ${config.shellName} command in the current working directory. Returns stdout and stderr. Output is truncated to last ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first). If truncated, full output is saved to a temp file. Optionally provide a timeout in seconds.`,
+		description: `Execute a ${config.shellName} command in the current working directory. Returns stdout and stderr. Output is truncated to last ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first). If truncated, the full output is saved to a file whose path is included in the result; read that file to see the omitted parts. Optionally provide a timeout in seconds.`,
 		promptSnippet: config.promptSnippet,
 		promptGuidelines: exposeSessionEnvironment && config.promptGuidelines ? [...config.promptGuidelines] : undefined,
 		capability: "process.execute",
@@ -252,7 +265,7 @@ export function createShellToolDefinition(
 				exposeSessionEnvironment,
 				ctx,
 			);
-			const output = new OutputAccumulator({ tempFilePrefix: config.tempFilePrefix });
+			const output = new OutputAccumulator({ tempFilePrefix: config.tempFilePrefix, dir: shellArtifactDir(ctx) });
 			let acceptingOutput = true;
 			let updateTimer: NodeJS.Timeout | undefined;
 			let updateDirty = false;

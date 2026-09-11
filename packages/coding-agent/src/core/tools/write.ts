@@ -6,16 +6,21 @@ import type { ExtensionContext, ToolDefinition } from "../extensions/types.ts";
 import { withFileMutationQueue } from "./file-mutation-queue.ts";
 import { resolveToCwd } from "./path-utils.ts";
 import { writeRenderers } from "./renderers/write.ts";
+import { appendThenRunResult, thenRunSchema, thenRunSkippedError } from "./then-run.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
 
 const writeSchema = Type.Object({
 	path: Type.String({ description: "Path to the file to write (relative or absolute)" }),
 	content: Type.String({ description: "Content to write to the file" }),
+	thenRun: Type.Optional(thenRunSchema),
 });
 
 export const writeToolSystemPromptContribution = {
 	snippet: "Create or overwrite files",
-	guidelines: ["Use write only for new files or complete rewrites."],
+	guidelines: [
+		"Use write only for new files or complete rewrites.",
+		"When a test or build command should verify the written file, pass it as thenRun instead of issuing a separate bash call.",
+	],
 } as const;
 
 export type WriteToolInput = Static<typeof writeSchema>;
@@ -57,8 +62,8 @@ export function createWriteToolDefinition(
 		parameters: writeSchema,
 		constrainedSampling: { type: "json_schema", strict: "prefer" },
 		async execute(
-			_toolCallId,
-			{ path, content }: { path: string; content: string },
+			toolCallId,
+			{ path, content, thenRun }: WriteToolInput,
 			signal?: AbortSignal,
 			_onUpdate?,
 			ctx?: ExtensionContext,
@@ -75,18 +80,37 @@ export function createWriteToolDefinition(
 				};
 
 				throwIfAborted();
-				// Create parent directories if needed.
-				await ops.mkdir(dir);
-				throwIfAborted();
+				let mutationText: string;
+				try {
+					// Create parent directories if needed.
+					await ops.mkdir(dir);
+					throwIfAborted();
 
-				// Write the file contents.
-				await ops.writeFile(absolutePath, content);
-				throwIfAborted();
+					// Write the file contents.
+					await ops.writeFile(absolutePath, content);
+					throwIfAborted();
 
-				return {
-					content: [{ type: "text", text: `Successfully wrote to ${path}` }],
-					details: undefined,
-				};
+					mutationText = `Successfully wrote to ${path}`;
+				} catch (error) {
+					if (thenRun) throw thenRunSkippedError(error, thenRun.command);
+					throw error;
+				}
+
+				if (!thenRun) {
+					return {
+						content: [{ type: "text", text: mutationText }],
+						details: undefined,
+					};
+				}
+				const merged = await appendThenRunResult({
+					cwd: ctx?.cwd || cwd,
+					toolCallId,
+					thenRun,
+					mutationContent: [{ type: "text", text: mutationText }],
+					signal,
+					ctx,
+				});
+				return { content: merged, details: undefined };
 			});
 		},
 		...writeRenderers,

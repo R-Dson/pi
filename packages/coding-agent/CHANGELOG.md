@@ -4,10 +4,12 @@
 
 ### Added
 
+- Added `thenRun` to the `edit` and `write` tools: an optional `{ command, timeout? }` run via bash in the same tool call after the file change succeeds, inside the file-mutation-queue slot so no other mutation interleaves. Saves one model round-trip per edit-then-verify cycle. The change is kept when the command fails (the error carries both outputs); the command is skipped when the change fails (`[thenRun:skipped]`/`[thenRun:failed]`/`[thenRun:succeeded]` markers in results). Permission policies judge the fused command under the bash/process-execute rules as well, so shell-denying policies still constrain fused calls. Design informed by NVlabs/SoL-Pi's Action Fusion, implemented natively.
 - Added `ctx.modelRegistry.stream()` and `streamSimple()` for extension model calls through configured providers with resolved authentication ([#8964](https://github.com/earendil-works/pi/issues/8964)).
 
 ### Changed
 
+- Changed the bash and powershell tools to spill truncated full output into the session artifacts directory (`<sessionDir>/artifacts/<sessionId>/`) for persisted sessions instead of the OS temp dir, so the omitted head of a long command output stays recallable with the `read` tool for the whole session. Falls back to the temp dir for in-memory sessions. Design informed by NVlabs/SoL-Pi's ObservationPack archive.
 - Changed the fork's display name to Pi Fork: the interactive terminal title reads `Pi Fork` instead of `π`, and the update notice says "Pi Fork update available". Cosmetic only; the `pi` binary, `.pi` config dir, package names, and `PI_*` env vars are unchanged.
 - Moved compaction, branch summarization, and retry spinners into the editor border alongside the working indicator. Custom editors use the same embedding opt-in for all status spinners.
 - Enabled strict-prefer JSON-schema sampling by default for built-in `read`, `bash`, `powershell`, `edit`, and `write` tools, without requiring `PI_EXPERIMENTAL`. Extensions can re-register tool definitions with `constrainedSampling: false`.

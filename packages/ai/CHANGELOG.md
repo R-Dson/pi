@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added `cacheWriteReadRatio(model)`: cache-write ÷ cache-read cost rate from the model's pricing, for deciding when a context rewrite (for example compaction) pays off. Returns 0 when cache writes are free and undefined when cache reads are free or unrated. Design informed by NVlabs/SoL-Pi's compaction economics.
+
 ### Fixed
 
 - Fixed quadratic CPU usage when draining buffered `EventStream` events ([#9055](https://github.com/earendil-works/pi/issues/9055)).

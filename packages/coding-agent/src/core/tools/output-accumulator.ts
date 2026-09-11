@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { createWriteStream, type WriteStream } from "node:fs";
+import { createWriteStream, mkdirSync, type WriteStream } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, type TruncationResult, truncateTail } from "./truncate.ts";
@@ -8,17 +8,18 @@ export interface OutputAccumulatorOptions {
 	maxLines?: number;
 	maxBytes?: number;
 	tempFilePrefix?: string;
+	/**
+	 * Directory for the full-output spill file. Defaults to the OS temp dir.
+	 * A session artifacts directory keeps the file recallable for the whole
+	 * session instead of until the next temp cleanup.
+	 */
+	dir?: string;
 }
 
 export interface OutputSnapshot {
 	content: string;
 	truncation: TruncationResult;
 	fullOutputPath?: string;
-}
-
-function defaultTempFilePath(prefix: string): string {
-	const id = randomBytes(8).toString("hex");
-	return join(tmpdir(), `${prefix}-${id}.log`);
 }
 
 function byteLength(text: string): number {
@@ -37,6 +38,7 @@ export class OutputAccumulator {
 	private readonly maxBytes: number;
 	private readonly maxRollingBytes: number;
 	private readonly tempFilePrefix: string;
+	private readonly dir: string | undefined;
 	private readonly decoder = new TextDecoder();
 
 	private rawChunks: Buffer[] = [];
@@ -59,6 +61,7 @@ export class OutputAccumulator {
 		this.maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
 		this.maxRollingBytes = Math.max(this.maxBytes * 2, 1);
 		this.tempFilePrefix = options.tempFilePrefix ?? "pi-output";
+		this.dir = options.dir;
 	}
 
 	append(data: Buffer): void {
@@ -212,7 +215,11 @@ export class OutputAccumulator {
 		if (this.tempFilePath) {
 			return;
 		}
-		this.tempFilePath = defaultTempFilePath(this.tempFilePrefix);
+		const dir = this.dir;
+		if (dir) {
+			mkdirSync(dir, { recursive: true });
+		}
+		this.tempFilePath = join(dir ?? tmpdir(), `${this.tempFilePrefix}-${randomBytes(8).toString("hex")}.log`);
 		this.tempFileStream = createWriteStream(this.tempFilePath);
 		for (const chunk of this.rawChunks) {
 			this.tempFileStream.write(chunk);

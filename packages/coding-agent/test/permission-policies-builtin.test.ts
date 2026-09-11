@@ -155,6 +155,52 @@ describe("permission-policies builtin", () => {
 		expect((await toolCall("bash", { command: "git push --force" }))?.block).toBeUndefined();
 	});
 
+	it("judges a fused thenRun command under the shell rules", async () => {
+		const cwd = projectWithPolicy(`{ "rules": [{ "tool": "bash", "command": "git push", "effect": "deny" }] }`);
+		const { sessionStart, toolCall } = install(cwd, {
+			tools: [makeTool("edit", "filesystem.write"), makeTool("bash", "process.execute")],
+		});
+		sessionStart("startup");
+
+		// The edit facet is allowed, but the fused command matches the bash deny rule.
+		const blocked = await toolCall("edit", {
+			path: "src/a.ts",
+			edits: [],
+			thenRun: { command: "git push origin main" },
+		});
+		expect(blocked?.block).toBe(true);
+		expect(blocked?.reason).toContain("git push");
+
+		// A fused command no rule matches proceeds.
+		expect(
+			(await toolCall("edit", { path: "src/a.ts", edits: [], thenRun: { command: "npm test" } }))?.block,
+		).toBeUndefined();
+	});
+
+	it("asks before a fused thenRun command when shell rules ask", async () => {
+		const cwd = projectWithPolicy(`{ "rules": [{ "capability": "process.execute", "effect": "ask" }] }`);
+		const approved = install(cwd, {
+			tools: [makeTool("write", "filesystem.write"), makeTool("bash", "process.execute")],
+			hasUI: true,
+			confirmAnswer: true,
+		});
+		approved.sessionStart("startup");
+		expect(
+			(await approved.toolCall("write", { path: "a.txt", content: "x", thenRun: { command: "echo hi" } }))?.block,
+		).toBeUndefined();
+		expect(approved.confirmPrompt()).toContain("echo hi");
+
+		const denied = install(cwd, {
+			tools: [makeTool("write", "filesystem.write"), makeTool("bash", "process.execute")],
+			hasUI: true,
+			confirmAnswer: false,
+		});
+		denied.sessionStart("startup");
+		expect(
+			(await denied.toolCall("write", { path: "a.txt", content: "x", thenRun: { command: "echo hi" } }))?.block,
+		).toBe(true);
+	});
+
 	it("still applies the global policy file in an untrusted project", () => {
 		const globalPath = process.env.PI_PERMISSION_POLICIES_GLOBAL as string;
 		writeFileSync(globalPath, `{ "profile": "review" }`);
