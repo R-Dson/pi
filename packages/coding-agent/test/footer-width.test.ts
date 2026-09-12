@@ -82,7 +82,7 @@ function createSession(options: {
 			getCwd: () => "/tmp/project",
 		},
 		settingsManager: {
-			getUsageDisplay: () => options.usageDisplay ?? "all",
+			getUsageDisplay: () => options.usageDisplay ?? "minimal",
 		},
 		getContextUsage: () => options.contextUsage ?? { tokens: 24_600, contextWindow: 200_000, percent: 12.3 },
 		modelRuntime: {
