@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### New Features
+
+- Fused edit/write verification with `thenRun`: the model can attach a shell command to a file change and both run in a single tool call, saving a round-trip per edit-then-verify cycle.
+- Per-model compaction token budgets via `compaction.modelOverrides` ([settings.md](docs/settings.md)).
+- Extension access to provider streaming through `ctx.modelRegistry.stream()` and `streamSimple()` ([extensions.md](docs/extensions.md)).
+- The footer shows context tokens (`8.3k/128k (6.3%)`) alongside the percentage.
+
 ### Added
 
 - Added `thenRun` to the `edit` and `write` tools: an optional `{ command, timeout? }` run via bash in the same tool call after the file change succeeds, inside the file-mutation-queue slot so no other mutation interleaves. Saves one model round-trip per edit-then-verify cycle. The change is kept when the command fails (the error carries both outputs); the command is skipped when the change fails (`[thenRun:skipped]`/`[thenRun:failed]`/`[thenRun:succeeded]` markers in results). Permission policies judge the fused command under the bash/process-execute rules as well, so shell-denying policies still constrain fused calls. Design informed by NVlabs/SoL-Pi's Action Fusion, implemented natively.
@@ -15,6 +22,7 @@
 - Changed the fork's display name to Pi Fork: the interactive terminal title reads `Pi Fork` instead of `π`, and the update notice says "Pi Fork update available". Cosmetic only; the `pi` binary, `.pi` config dir, package names, and `PI_*` env vars are unchanged.
 - Moved compaction, branch summarization, and retry spinners into the editor border alongside the working indicator. Custom editors use the same embedding opt-in for all status spinners.
 - Enabled strict-prefer JSON-schema sampling by default for built-in `read`, `bash`, `powershell`, `edit`, and `write` tools, without requiring `PI_EXPERIMENTAL`. Extensions can re-register tool definitions with `constrainedSampling: false`.
+- Simplified clipboard handling to a native Linux clipboard implementation, dropping the `@mariozechner/clipboard` dependency ([#9163](https://github.com/earendil-works/pi/pull/9163)).
 
 ### Fixed
 
@@ -23,6 +31,9 @@
 - Fixed premature missing-model errors after login by waiting for catalog discovery. Radius now defaults to `balanced`, falling back to the first available Radius model when needed.
 - Fixed fullscreen mode reserving a blank row for custom footers that render zero rows ([#8919](https://github.com/earendil-works/pi/issues/8919)).
 - Fixed extension tools without parameter schemas to be rejected during registration instead of breaking provider requests ([#9300](https://github.com/earendil-works/pi/issues/9300)).
+- Updated runtime dependencies, including undici 8.10.2 with security fixes for interceptor cache poisoning, TLS callback reuse, and WebSocket crashes ([#9341](https://github.com/earendil-works/pi/pull/9341)).
+- Rejected session tree navigation while a compaction is running ([#9179](https://github.com/earendil-works/pi/pull/9179) by [@acmerfight](https://github.com/acmerfight)).
+- Preserved the active operation status (compaction, branch summary, retry) in the editor border when navigating the session tree.
 
 ## [0.85.5] - 2026-09-06
 
