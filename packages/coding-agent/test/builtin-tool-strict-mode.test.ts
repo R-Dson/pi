@@ -9,6 +9,7 @@ import { SessionManager } from "../src/core/session-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
 import { createAllToolDefinitions, createAllTools } from "../src/core/tools/index.ts";
 import { wrapToolDefinition } from "../src/core/tools/tool-definition-wrapper.ts";
+import { stubTaskToolOptions } from "./utilities.ts";
 
 const strictToolNames = ["read", "bash", "powershell", "edit", "write"] as const;
 
@@ -17,8 +18,9 @@ describe("strict built-in tools", () => {
 
 	it.each([undefined, "0", "1"])("prefers strict sampling with PI_EXPERIMENTAL=%s", (experimental) => {
 		vi.stubEnv("PI_EXPERIMENTAL", experimental);
-		const definitions = createAllToolDefinitions(process.cwd());
-		const tools = createAllTools(process.cwd());
+		const taskToolOptions = stubTaskToolOptions();
+		const definitions = createAllToolDefinitions(process.cwd(), { task: taskToolOptions });
+		const tools = createAllTools(process.cwd(), { task: taskToolOptions });
 		for (const name of strictToolNames) {
 			expect(definitions[name].constrainedSampling).toEqual({ type: "json_schema", strict: "prefer" });
 			expect(tools[name].constrainedSampling).toEqual(definitions[name].constrainedSampling);
@@ -32,7 +34,7 @@ describe("strict built-in tools", () => {
 	});
 
 	it("preserves explicit opt-outs when wrapping definitions for execution", () => {
-		const definitions = createAllToolDefinitions(process.cwd());
+		const definitions = createAllToolDefinitions(process.cwd(), { task: stubTaskToolOptions() });
 		for (const name of strictToolNames) {
 			const definition = definitions[name];
 			const override = { ...definition, constrainedSampling: false as const };
@@ -63,7 +65,7 @@ describe("strict built-in tools", () => {
 				extensionFactories: [
 					(pi) => {
 						pi.on("session_start", () => {
-							const definitions = createAllToolDefinitions(cwd);
+							const definitions = createAllToolDefinitions(cwd, { task: stubTaskToolOptions() });
 							for (const name of strictToolNames) {
 								pi.registerTool({ ...definitions[name], constrainedSampling: false });
 							}

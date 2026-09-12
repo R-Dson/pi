@@ -257,8 +257,9 @@ Windows paths in JSON must use forward slashes or escaped backslashes:
 |---------|------|---------|-------------|
 | `defaultTools` | string[] | - | Built-in tools enabled initially. When omitted, Pi uses its standard defaults |
 | `tools.maxToolOutputBytes` | number | `204800` | Max UTF-8 bytes of tool result text sent to the model before it is replaced by a head+tail excerpt. The full output spills to a file under `<sessionDir>/artifacts/<sessionId>/` (persisted sessions). `0` or less disables the cap |
+| `maxSubAgents` | number | `2` | Max sub-agents the `task` tool runs simultaneously. Additional spawns queue until a slot frees. Any integer `>= 1`; there is no upper limit |
 
-`defaultTools` selects the built-in tools enabled at startup. Extension and SDK custom tools remain enabled. Available built-ins are `read`, `bash`, `powershell`, `edit`, `write`, `grep`, `find`, and `ls`:
+`defaultTools` selects the built-in tools enabled at startup. Extension and SDK custom tools remain enabled. Available built-ins are `read`, `bash`, `powershell`, `edit`, `write`, `grep`, `find`, `ls`, and `task`:
 
 ```json
 {
@@ -277,6 +278,8 @@ On Windows, select `powershell` instead of `bash`, or include both:
 An empty array starts with no built-in tools while preserving extension and SDK custom tools. `--tools` replaces this behavior with a strict allowlist for all tools, `--no-tools` disables all tools, and `--no-builtin-tools` disables the built-in defaults. `--exclude-tools` filters the resulting list. A project `defaultTools` array replaces the global array.
 
 `tools.maxToolOutputBytes` bounds what the model sees, not what the tool did: over the cap the model receives the first ~60% and last ~40% of the budget around a marker reporting the omitted bytes and the artifact path. Built-in tools (`read`, `grep`, `bash`) truncate their own output already, so in practice the cap governs extension tools.
+
+`maxSubAgents` caps how many sub-agents the `task` tool runs at once. The `task` tool spawns a sub-agent - a fresh one-layer conversation with the currently active tools (minus `task` itself), the same model, and instructions the main agent provides in full. Sub-agent tool calls go through the same permission rules and output bounding as the main agent's.
 
 Permission rules are not a setting: the built-in `permission-policies` extension enforces them from `~/.pi/agent/permissions.json` (global) and `.pi/permissions.json` (trusted projects) policy files, with capability matching, deny > ask > allow precedence, profiles, and interactive `ask` approval. It activates only when one of those files exists; otherwise it does nothing.
 

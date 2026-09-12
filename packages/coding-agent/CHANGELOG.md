@@ -4,6 +4,7 @@
 
 ### New Features
 
+- Sub-agents via the built-in `task` tool: spawn a one-layer sub-agent with the active tools (minus `task` itself), the same model, and fully LLM-provided instructions; `maxSubAgents` setting (default 2) caps concurrent runs, excess spawns queue.
 - Fused edit/write verification with `thenRun`: the model can attach a shell command to a file change and both run in a single tool call, saving a round-trip per edit-then-verify cycle.
 - Per-model compaction token budgets via `compaction.modelOverrides` ([settings.md](docs/settings.md)).
 - Extension access to provider streaming through `ctx.modelRegistry.stream()` and `streamSimple()` ([extensions.md](docs/extensions.md)).
@@ -11,6 +12,7 @@
 
 ### Added
 
+- Added the `task` tool: spawns a sub-agent - a fresh conversation with the currently active tools (minus `task`, so sub-agents cannot spawn their own), the same model and thinking level, and a fully LLM-provided briefing (`prompt` plus optional `systemPrompt`). The sub-agent's final response becomes the tool result, with its usage attached. Sub-agent tool calls flow through the session's `tool_call`/`tool_result` extension hooks, so permission policies and output bounding apply unchanged. Sub-agent progress streams into the task tool row while it runs. New `maxSubAgents` setting (integer `>= 1`, default 2, no upper limit) caps simultaneously running sub-agents per session; further spawns queue until a slot frees.
 - Added `thenRun` to the `edit` and `write` tools: an optional `{ command, timeout? }` run via bash in the same tool call after the file change succeeds, inside the file-mutation-queue slot so no other mutation interleaves. Saves one model round-trip per edit-then-verify cycle. The change is kept when the command fails (the error carries both outputs); the command is skipped when the change fails (`[thenRun:skipped]`/`[thenRun:failed]`/`[thenRun:succeeded]` markers in results). Permission policies judge the fused command under the bash/process-execute rules as well, so shell-denying policies still constrain fused calls. Design informed by NVlabs/SoL-Pi's Action Fusion, implemented natively.
 - Added `ctx.modelRegistry.stream()` and `streamSimple()` for extension model calls through configured providers with resolved authentication ([#8964](https://github.com/earendil-works/pi/issues/8964)).
 - Added per-model `reserveTokens` and `keepRecentTokens` settings through `compaction.modelOverrides`, with ordinary compaction settings as fallback ([#8133](https://github.com/earendil-works/pi-mono/issues/8133)).

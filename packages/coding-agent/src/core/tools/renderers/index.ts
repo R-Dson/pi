@@ -14,6 +14,7 @@ import { findRenderers } from "./find.ts";
 import { grepRenderers } from "./grep.ts";
 import { lsRenderers } from "./ls.ts";
 import { readRenderers } from "./read.ts";
+import { taskRenderers } from "./task.ts";
 import { writeRenderers } from "./write.ts";
 
 export type ToolRenderers = Pick<ToolDefinition<any, any>, "renderCall" | "renderResult">;
@@ -25,6 +26,7 @@ export {
 	grepRenderers,
 	lsRenderers,
 	readRenderers,
+	taskRenderers,
 	writeRenderers,
 };
 
@@ -39,6 +41,7 @@ export function createAllToolRenderers(): Record<ToolName, ToolRenderers> {
 		grep: grepRenderers,
 		find: findRenderers,
 		ls: lsRenderers,
+		task: taskRenderers,
 	};
 }
 

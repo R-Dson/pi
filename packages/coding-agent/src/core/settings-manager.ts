@@ -149,6 +149,7 @@ export interface Settings {
 	images?: ImageSettings;
 	enabledModels?: string[]; // Model patterns for cycling (same format as --models CLI flag)
 	defaultTools?: string[]; // Initial built-in tool selection
+	maxSubAgents?: number; // Max simultaneously running sub-agents spawned by the task tool (default: 2)
 	tools?: ToolsSettings; // Tool result output bounding
 	doubleEscapeAction?: "fork" | "tree" | "none"; // Action for double-escape with empty editor (default: "tree")
 	treeFilterMode?: "default" | "no-tools" | "user-only" | "labeled-only" | "all"; // Default filter when opening /tree
@@ -1332,6 +1333,14 @@ export class SettingsManager {
 	getDefaultTools(): string[] | undefined {
 		const tools = this.settings.defaultTools;
 		return tools ? [...tools] : undefined;
+	}
+
+	getMaxSubAgents(): number {
+		const value = this.settings.maxSubAgents;
+		if (value !== undefined && (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1)) {
+			throw new Error(`Invalid maxSubAgents setting: ${String(value)}. Expected an integer >= 1.`);
+		}
+		return value ?? 2;
 	}
 
 	getMaxToolOutputBytes(): number {

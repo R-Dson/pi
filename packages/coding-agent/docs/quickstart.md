@@ -80,6 +80,7 @@ By default, pi gives the model four tools:
 - `write` - create or overwrite files
 - `edit` - patch files
 - `bash` - run shell commands
+- `task` - spawn a sub-agent: a fresh conversation with the same tools (minus `task` itself), the same model, and instructions pi writes in full
 
 Additional built-in read-only tools (`grep`, `find`, `ls`) are available through tool options. Pi runs in your current working directory and can modify files there. Use git or another checkpointing workflow if you want easy rollback.
 

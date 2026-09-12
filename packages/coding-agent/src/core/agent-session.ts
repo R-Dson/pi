@@ -15,12 +15,14 @@
 
 import { basename, dirname, join } from "node:path";
 import type {
+	AfterToolCallContext,
 	Agent,
 	AgentContext,
 	AgentEvent,
 	AgentMessage,
 	AgentState,
 	AgentTool,
+	BeforeToolCallContext,
 	PrepareNextTurnContext,
 	ThinkingLevel,
 } from "@earendil-works/pi-agent-core";
@@ -111,7 +113,7 @@ import type { SlashCommandInfo } from "./slash-commands.ts";
 import { createSyntheticSourceInfo, type SourceInfo } from "./source-info.ts";
 import { type BuildSystemPromptOptions, buildSystemPrompt } from "./system-prompt.ts";
 import { type BashOperations, createLocalBashOperations } from "./tools/bash.ts";
-import { createAllToolDefinitions } from "./tools/index.ts";
+import { createAllToolDefinitions, SubAgentLimiter } from "./tools/index.ts";
 import { boundToolResultText } from "./tools/output-bounds.ts";
 import { createToolDefinitionFromAgentTool } from "./tools/tool-definition-wrapper.ts";
 import { addUsageToTotals, createUsageTotals } from "./usage-totals.ts";
@@ -454,6 +456,9 @@ export class AgentSession {
 	private _toolPromptSnippets: Map<string, string> = new Map();
 	private _toolPromptGuidelines: Map<string, string[]> = new Map();
 
+	// Caps concurrently running sub-agents spawned by the task tool; survives tool-registry rebuilds
+	private readonly _subAgentLimiter = new SubAgentLimiter();
+
 	// Base system prompt (without extension appends) - used to apply fresh appends each turn
 	private _baseSystemPrompt = "";
 	private _baseSystemPromptOptions!: BuildSystemPromptOptions;
@@ -561,78 +566,84 @@ export class AgentSession {
 	 * new runner without reinstalling hooks. Extension-specific tool wrappers are still used to adapt
 	 * registered tool execution to the extension context. Tool call and tool result interception now
 	 * happens here instead of in wrappers.
+	 *
+	 * The same hook fields back sub-agents spawned by the task tool, so their tool calls get
+	 * the same permission gate, extension hooks, and output bounding as the main agent's.
 	 */
-	private _installAgentToolHooks(): void {
-		this.agent.beforeToolCall = async ({ toolCall, args }) => {
-			const runner = this._extensionRunner;
-			if (!runner.hasHandlers("tool_call")) {
-				return undefined;
-			}
+	private readonly _beforeToolCallHook = async ({ toolCall, args }: BeforeToolCallContext) => {
+		const runner = this._extensionRunner;
+		if (!runner.hasHandlers("tool_call")) {
+			return undefined;
+		}
 
-			try {
-				return await runner.emitToolCall({
-					type: "tool_call",
+		try {
+			return await runner.emitToolCall({
+				type: "tool_call",
+				toolName: toolCall.name,
+				toolCallId: toolCall.id,
+				input: args as Record<string, unknown>,
+			});
+		} catch (err) {
+			if (err instanceof Error) {
+				throw err;
+			}
+			throw new Error(`Extension failed, blocking execution: ${String(err)}`);
+		}
+	};
+
+	private readonly _afterToolCallHook = async ({ toolCall, args, result, isError }: AfterToolCallContext) => {
+		const runner = this._extensionRunner;
+		const hookResult = runner.hasHandlers("tool_result")
+			? await runner.emitToolResult({
+					type: "tool_result",
 					toolName: toolCall.name,
 					toolCallId: toolCall.id,
 					input: args as Record<string, unknown>,
-				});
-			} catch (err) {
-				if (err instanceof Error) {
-					throw err;
-				}
-				throw new Error(`Extension failed, blocking execution: ${String(err)}`);
+					content: result.content,
+					details: result.details,
+					isError,
+					usage: result.usage,
+				})
+			: undefined;
+
+		const content = hookResult?.content ?? result.content ?? [];
+		// Runs after the extension hook so images injected or replaced by extensions are normalized too.
+		const normalizedContent = await normalizeToolResultImages(content, {
+			autoResizeImages: this.settingsManager.getImageAutoResize(),
+		});
+
+		// Runs last so bounding applies to the final model-visible text.
+		const bounded = await boundToolResultText(normalizedContent, {
+			maxBytes: this.settingsManager.getMaxToolOutputBytes(),
+			toolName: toolCall.name,
+			toolCallId: toolCall.id,
+			artifactsDir: this.sessionManager.isPersisted()
+				? join(this.sessionManager.getSessionDir(), "artifacts", this.sessionManager.getSessionId())
+				: undefined,
+		});
+
+		if (bounded.bounded) {
+			this._truncatedToolOutputBytes += bounded.totalBytes - bounded.shownBytes;
+			if (bounded.artifactPath) {
+				this._toolOutputArtifacts++;
 			}
+		}
+
+		if (!hookResult && normalizedContent === content && !bounded.bounded) {
+			return undefined;
+		}
+
+		return {
+			content: bounded.content,
+			details: hookResult?.details,
+			isError: hookResult?.isError ?? isError,
+			usage: hookResult?.usage,
 		};
+	};
 
-		this.agent.afterToolCall = async ({ toolCall, args, result, isError }) => {
-			const runner = this._extensionRunner;
-			const hookResult = runner.hasHandlers("tool_result")
-				? await runner.emitToolResult({
-						type: "tool_result",
-						toolName: toolCall.name,
-						toolCallId: toolCall.id,
-						input: args as Record<string, unknown>,
-						content: result.content,
-						details: result.details,
-						isError,
-						usage: result.usage,
-					})
-				: undefined;
-
-			const content = hookResult?.content ?? result.content ?? [];
-			// Runs after the extension hook so images injected or replaced by extensions are normalized too.
-			const normalizedContent = await normalizeToolResultImages(content, {
-				autoResizeImages: this.settingsManager.getImageAutoResize(),
-			});
-
-			// Runs last so bounding applies to the final model-visible text.
-			const bounded = await boundToolResultText(normalizedContent, {
-				maxBytes: this.settingsManager.getMaxToolOutputBytes(),
-				toolName: toolCall.name,
-				toolCallId: toolCall.id,
-				artifactsDir: this.sessionManager.isPersisted()
-					? join(this.sessionManager.getSessionDir(), "artifacts", this.sessionManager.getSessionId())
-					: undefined,
-			});
-
-			if (bounded.bounded) {
-				this._truncatedToolOutputBytes += bounded.totalBytes - bounded.shownBytes;
-				if (bounded.artifactPath) {
-					this._toolOutputArtifacts++;
-				}
-			}
-
-			if (!hookResult && normalizedContent === content && !bounded.bounded) {
-				return undefined;
-			}
-
-			return {
-				content: bounded.content,
-				details: hookResult?.details,
-				isError: hookResult?.isError ?? isError,
-				usage: hookResult?.usage,
-			};
-		};
+	private _installAgentToolHooks(): void {
+		this.agent.beforeToolCall = this._beforeToolCallHook;
+		this.agent.afterToolCall = this._afterToolCallHook;
 	}
 
 	private async _compactBeforeNextAssistantResponse(context: AgentContext): Promise<AgentContext> {
@@ -2958,6 +2969,20 @@ export class AgentSession {
 			: createAllToolDefinitions(this._cwd, {
 					read: { autoResizeImages },
 					bash: { commandPrefix: shellCommandPrefix, shellPath },
+					// The task tool closes over live session state: sub-agents inherit the
+					// current model/thinking level and the active toolset minus task itself,
+					// and stream through the session's provider path (unwrapped: the request
+					// observer tracks the main agent's prefix, which sub-agents would corrupt).
+					task: {
+						limiter: this._subAgentLimiter,
+						getMaxSubAgents: () => this.settingsManager.getMaxSubAgents(),
+						getStreamFn: () => unwrapStreamFn(this.agent.streamFunction),
+						getModel: () => this.agent.state.model,
+						getThinkingLevel: () => this.agent.state.thinkingLevel,
+						getTools: () => this.agent.state.tools,
+						beforeToolCall: this._beforeToolCallHook,
+						afterToolCall: this._afterToolCallHook,
+					},
 				});
 
 		this._baseToolDefinitions = new Map(
@@ -2986,7 +3011,7 @@ export class AgentSession {
 
 		const defaultActiveToolNames = this._baseToolsOverride
 			? Object.keys(this._baseToolsOverride)
-			: ["read", "bash", "edit", "write"];
+			: ["read", "bash", "edit", "write", "task"];
 		const baseActiveToolNames = options.activeToolNames ?? defaultActiveToolNames;
 		this._refreshToolRegistry({
 			activeToolNames: baseActiveToolNames,

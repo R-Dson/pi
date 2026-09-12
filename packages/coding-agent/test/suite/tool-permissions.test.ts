@@ -76,6 +76,6 @@ describe("core ignores tools.permissions settings", () => {
 		await harness.session.prompt("list your tools");
 
 		expect(getAssistantTexts(harness)).toContain("done");
-		expect(visibleTools).toEqual(["read", "bash", "edit", "write"]);
+		expect(visibleTools).toEqual(["read", "bash", "edit", "write", "task"]);
 	});
 });

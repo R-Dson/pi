@@ -1,4 +1,5 @@
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
+import type { Usage } from "@earendil-works/pi-ai";
 import {
 	Box,
 	type Component,
@@ -73,6 +74,8 @@ export class ToolExecutionComponent extends Container {
 		content: Array<{ type: string; text?: string; data?: string; mimeType?: string }>;
 		isError: boolean;
 		details?: any;
+		/** Tool-execution usage from AgentToolResult, for renderers that surface it. */
+		usage?: Usage;
 	};
 	private convertedImages: Map<number, { data: string; mimeType: string }> = new Map();
 	private hideComponent = false;
@@ -208,6 +211,8 @@ export class ToolExecutionComponent extends Container {
 		result: {
 			content: Array<{ type: string; text?: string; data?: string; mimeType?: string }>;
 			details?: any;
+			/** Tool-execution usage from AgentToolResult, for renderers that surface it. */
+			usage?: Usage;
 			isError: boolean;
 		},
 		isPartial = false,
@@ -381,7 +386,7 @@ export class ToolExecutionComponent extends Container {
 				} else {
 					try {
 						const component = resultRenderer(
-							{ content: this.result.content as any, details: this.result.details },
+							{ content: this.result.content as any, details: this.result.details, usage: this.result.usage },
 							{ expanded: this.expanded, isPartial: this.isPartial },
 							theme,
 							this.getRenderContext(this.resultRendererComponent),

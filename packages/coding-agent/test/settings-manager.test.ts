@@ -234,6 +234,25 @@ describe("SettingsManager", () => {
 		});
 	});
 
+	describe("maxSubAgents setting", () => {
+		it("defaults to 2 and honors overrides from both scopes", () => {
+			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ maxSubAgents: 5 }));
+			writeFileSync(join(projectDir, ".pi", "settings.json"), JSON.stringify({ maxSubAgents: 7 }));
+
+			const manager = SettingsManager.create(projectDir, agentDir);
+			expect(manager.getMaxSubAgents()).toBe(7);
+
+			expect(SettingsManager.inMemory().getMaxSubAgents()).toBe(2);
+		});
+
+		it("rejects values that are not integers >= 1", () => {
+			for (const invalid of [0, -1, 1.5, "3", null]) {
+				const manager = SettingsManager.inMemory({ maxSubAgents: invalid as number });
+				expect(() => manager.getMaxSubAgents(), `maxSubAgents: ${String(invalid)}`).toThrow(/maxSubAgents/);
+			}
+		});
+	});
+
 	describe("error tracking", () => {
 		it("should collect and clear load errors via drainErrors", () => {
 			const globalSettingsPath = join(agentDir, "settings.json");

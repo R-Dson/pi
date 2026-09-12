@@ -12,12 +12,13 @@ import { createAllToolDefinitions, type ToolName } from "../src/core/tools/index
 import { ToolExecutionComponent } from "../src/modes/interactive/components/tool-execution.ts";
 import { initTheme } from "../src/modes/interactive/theme/theme.ts";
 import { stripAnsi } from "../src/utils/ansi.ts";
+import { stubTaskToolOptions } from "./utilities.ts";
 
 function createFakeTui(): TUI {
 	return { requestRender: () => {} } as unknown as TUI;
 }
 
-const toolDefinitions = createAllToolDefinitions("/repo");
+const toolDefinitions = createAllToolDefinitions("/repo", { task: stubTaskToolOptions() });
 
 function createComponent(toolName: ToolName, args: Record<string, unknown> = {}): ToolExecutionComponent {
 	return new ToolExecutionComponent(toolName, "call_1", args, {}, toolDefinitions[toolName], createFakeTui(), "/repo");
@@ -182,5 +183,42 @@ describe("tool preview summaries", () => {
 		} finally {
 			vi.useRealTimers();
 		}
+	});
+
+	test("task shows the prompt preview and truncates long ones on one line", () => {
+		const short = createComponent("task", { prompt: "summarize the spec" });
+		expect(renderText(short)).toContain("task");
+		expect(renderText(short)).toContain("summarize the spec");
+
+		const long = createComponent("task", {
+			prompt:
+				"review the entire repository starting with the root manifests, then every package under packages/, and report inconsistencies with our conventions",
+		});
+		const rendered = renderText(long);
+		expect(rendered).toContain("...");
+		expect(rendered).not.toContain("with our conventions");
+	});
+
+	test("task results stream partials and show sub-agent token usage", () => {
+		const component = createComponent("task", { prompt: "do research" });
+		component.markExecutionStarted();
+		component.updateResult({ content: [{ type: "text", text: "partial findings" }], isError: false }, true);
+		expect(renderText(component)).toContain("partial findings");
+
+		component.updateResult({
+			content: [{ type: "text", text: "final findings" }],
+			usage: {
+				input: 10,
+				output: 5,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 15,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+			isError: false,
+		});
+		const rendered = renderText(component);
+		expect(rendered).toContain("final findings");
+		expect(rendered).toContain("15 sub-agent tokens");
 	});
 });

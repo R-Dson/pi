@@ -23,6 +23,7 @@ import { createExtensionRuntime, loadExtensionFromFactory } from "../src/core/ex
 import type { ResourceLoader } from "../src/core/resource-loader.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
+import { SubAgentLimiter } from "../src/core/tools/task.ts";
 import { createCodingTools } from "../src/index.ts";
 
 /**
@@ -318,4 +319,22 @@ export function buildTestTree(
 	}
 
 	return ids;
+}
+
+/**
+ * Task tool options stub for tests that construct the full built-in tool set
+ * without a live session. Execution is not under test in those suites; the
+ * getters either return inert values or throw if something reaches for them.
+ */
+export function stubTaskToolOptions() {
+	return {
+		getMaxSubAgents: () => 2,
+		getStreamFn: () => {
+			throw new Error("task tool streamFn not available in this test");
+		},
+		getModel: () => undefined,
+		getThinkingLevel: () => undefined,
+		getTools: () => [],
+		limiter: new SubAgentLimiter(),
+	};
 }
