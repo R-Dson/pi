@@ -1,6 +1,7 @@
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import type { AgentSession } from "../src/core/agent-session.ts";
+import type { ContextUsage } from "../src/core/extensions/types.ts";
 import type { ReadonlyFooterDataProvider } from "../src/core/footer-data-provider.ts";
 import { FooterComponent, formatCwdForFooter } from "../src/modes/interactive/components/footer.ts";
 import { initTheme } from "../src/modes/interactive/theme/theme.ts";
@@ -25,6 +26,7 @@ function createSession(options: {
 	compactionUsage?: AssistantUsage;
 	toolUsage?: AssistantUsage;
 	usingSubscription?: boolean;
+	contextUsage?: ContextUsage;
 }): AgentSession {
 	const usage = options.usage;
 	const entries: Array<Record<string, unknown>> = [];
@@ -78,7 +80,7 @@ function createSession(options: {
 			getSessionName: () => options.sessionName,
 			getCwd: () => "/tmp/project",
 		},
-		getContextUsage: () => ({ contextWindow: 200_000, percent: 12.3 }),
+		getContextUsage: () => options.contextUsage ?? { tokens: 24_600, contextWindow: 200_000, percent: 12.3 },
 		modelRuntime: {
 			isUsingSubscription: () => options.usingSubscription ?? false,
 		},
@@ -109,6 +111,41 @@ describe("formatCwdForFooter", () => {
 	it("abbreviates the home directory and descendants", () => {
 		expect(formatCwdForFooter("/home/user", "/home/user")).toBe("~");
 		expect(formatCwdForFooter("/home/user/project", "/home/user")).toBe("~/project");
+	});
+});
+
+describe("FooterComponent context usage display", () => {
+	beforeAll(() => {
+		initTheme(undefined, false);
+	});
+
+	it("shows tokens, window, and percent together", () => {
+		const session = createSession({ sessionName: "" });
+		const footer = new FooterComponent(session, createFooterData(1));
+
+		const statsLine = stripAnsi(footer.render(120)[1] ?? "");
+		expect(statsLine).toContain("25k/200k (12.3%) (auto)");
+	});
+
+	it("falls back to the unknown form after compaction", () => {
+		const session = createSession({
+			sessionName: "",
+			contextUsage: { tokens: null, contextWindow: 200_000, percent: null },
+		});
+		const footer = new FooterComponent(session, createFooterData(1));
+
+		const statsLine = stripAnsi(footer.render(120)[1] ?? "");
+		expect(statsLine).toContain("?/200k (auto)");
+	});
+
+	it("drops the auto indicator when auto-compaction is disabled", () => {
+		const session = createSession({ sessionName: "" });
+		const footer = new FooterComponent(session, createFooterData(1));
+		footer.setAutoCompactEnabled(false);
+
+		const statsLine = stripAnsi(footer.render(120)[1] ?? "");
+		expect(statsLine).toContain("25k/200k (12.3%)");
+		expect(statsLine).not.toContain("(auto)");
 	});
 });
 

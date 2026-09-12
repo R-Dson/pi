@@ -9,6 +9,7 @@
 
 ### Changed
 
+- Changed the footer's context usage display from `6.3%/128k (auto)` to `8.3k/128k (6.3%) (auto)`: the token count and window are shown alongside the percentage. Unknown context (right after compaction, or no model) renders as `?/128k (auto)` instead of a fabricated `0.0%`.
 - Changed the bash and powershell tools to spill truncated full output into the session artifacts directory (`<sessionDir>/artifacts/<sessionId>/`) for persisted sessions instead of the OS temp dir, so the omitted head of a long command output stays recallable with the `read` tool for the whole session. Falls back to the temp dir for in-memory sessions. Design informed by NVlabs/SoL-Pi's ObservationPack archive.
 - Changed the fork's display name to Pi Fork: the interactive terminal title reads `Pi Fork` instead of `π`, and the update notice says "Pi Fork update available". Cosmetic only; the `pi` binary, `.pi` config dir, package names, and `PI_*` env vars are unchanged.
 - Moved compaction, branch summarization, and retry spinners into the editor border alongside the working indicator. Custom editors use the same embedding opt-in for all status spinners.
