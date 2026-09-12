@@ -260,6 +260,7 @@ export {
 } from "./core/session-manager.ts";
 export type { CacheUsageTotals, RequestKind } from "./core/sessions/cache-usage.ts";
 export {
+	type CompactionModelOverride,
 	type CompactionSettings,
 	type DefaultProjectTrust,
 	type FullscreenExitOutput,
