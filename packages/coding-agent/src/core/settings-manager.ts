@@ -126,6 +126,7 @@ export interface Settings {
 	branchSummary?: BranchSummarySettings;
 	retry?: RetrySettings;
 	hideThinkingBlock?: boolean;
+	usageDisplay?: "minimal" | "all"; // default: "minimal" - footer usage stats detail (fork default; upstream shows all)
 	showCacheMissNotices?: boolean; // default: false - show cache cost and provider recovery notices
 	updateCheck?: boolean; // default: false - check GitHub for new fork releases at startup (the only phone-home the fork can do)
 	providerAttribution?: boolean; // default: false - send OpenRouter app-identification headers
@@ -973,6 +974,16 @@ export class SettingsManager {
 
 	getShowCacheMissNotices(): boolean {
 		return this.settings.showCacheMissNotices ?? false;
+	}
+
+	getUsageDisplay(): "minimal" | "all" {
+		return this.settings.usageDisplay ?? "minimal";
+	}
+
+	setUsageDisplay(display: "minimal" | "all"): void {
+		this.globalSettings.usageDisplay = display;
+		this.markModified("usageDisplay");
+		this.save();
 	}
 
 	getExternalEditorCommand(): string {

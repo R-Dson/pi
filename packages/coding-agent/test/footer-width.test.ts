@@ -27,6 +27,7 @@ function createSession(options: {
 	toolUsage?: AssistantUsage;
 	usingSubscription?: boolean;
 	contextUsage?: ContextUsage;
+	usageDisplay?: "minimal" | "all";
 }): AgentSession {
 	const usage = options.usage;
 	const entries: Array<Record<string, unknown>> = [];
@@ -79,6 +80,9 @@ function createSession(options: {
 			getEntries: () => entries,
 			getSessionName: () => options.sessionName,
 			getCwd: () => "/tmp/project",
+		},
+		settingsManager: {
+			getUsageDisplay: () => options.usageDisplay ?? "all",
 		},
 		getContextUsage: () => options.contextUsage ?? { tokens: 24_600, contextWindow: 200_000, percent: 12.3 },
 		modelRuntime: {
@@ -146,6 +150,40 @@ describe("FooterComponent context usage display", () => {
 		const statsLine = stripAnsi(footer.render(120)[1] ?? "");
 		expect(statsLine).toContain("25k/200k (12.3%)");
 		expect(statsLine).not.toContain("(auto)");
+	});
+});
+
+describe("FooterComponent usage display detail", () => {
+	beforeAll(() => {
+		initTheme(undefined, false);
+	});
+
+	function createUsageSession(usageDisplay: "minimal" | "all") {
+		const session = createSession({
+			sessionName: "",
+			usage: {
+				input: 66_000,
+				output: 8_100,
+				cacheRead: 174_000,
+				cacheWrite: 128,
+				cost: { total: 0 },
+			},
+			usageDisplay,
+		});
+		return new FooterComponent(session, createFooterData(1));
+	}
+
+	it("minimal drops the cache read/write totals but keeps the hit rate", () => {
+		const statsLine = stripAnsi(createUsageSession("minimal").render(120)[1] ?? "");
+		expect(statsLine).toContain("↑66k ↓8.1k 25k/200k (12.3%) (auto) Cache");
+		expect(statsLine).not.toContain("Read ");
+		expect(statsLine).not.toContain("Write ");
+	});
+
+	it("all shows the cache totals after the context usage", () => {
+		const statsLine = stripAnsi(createUsageSession("all").render(120)[1] ?? "");
+		expect(statsLine).toContain("25k/200k (12.3%) (auto) Read 174k Write 128 Cache");
+		expect(statsLine.indexOf("25k/200k")).toBeLessThan(statsLine.indexOf("Read 174k"));
 	});
 });
 

@@ -67,6 +67,7 @@ export interface SettingsConfig {
 	terminalTheme: TerminalTheme;
 	availableThemes: string[];
 	hideThinkingBlock: boolean;
+	usageDisplay: "minimal" | "all";
 	mermaidRenderingMode: MermaidRenderingMode;
 	showCacheMissNotices: boolean;
 	updateCheck: boolean;
@@ -105,6 +106,7 @@ export interface SettingsCallbacks {
 	onThemeChange: (theme: string) => void;
 	onThemePreview?: (theme: string) => void;
 	onHideThinkingBlockChange: (hidden: boolean) => void;
+	onUsageDisplayChange: (display: "minimal" | "all") => void;
 	onMermaidRenderingModeChange: (mode: MermaidRenderingMode) => void;
 	onShowCacheMissNoticesChange: (shown: boolean) => void;
 	onUpdateCheckChange: (enabled: boolean) => void;
@@ -505,6 +507,14 @@ export class SettingsSelectorComponent extends Container {
 				values: ["true", "false"],
 			},
 			{
+				id: "usage-display",
+				label: "Usage stats",
+				description:
+					"Footer usage detail. 'minimal': in/out, cost, context, cache hit rate. 'all': also cache read/write totals",
+				currentValue: config.usageDisplay,
+				values: ["minimal", "all"],
+			},
+			{
 				id: "mermaid-rendering",
 				label: "Mermaid diagrams",
 				description: "Render Mermaid code blocks as Unicode diagrams",
@@ -874,6 +884,9 @@ export class SettingsSelectorComponent extends Container {
 					}
 					case "hide-thinking":
 						callbacks.onHideThinkingBlockChange(newValue === "true");
+						break;
+					case "usage-display":
+						callbacks.onUsageDisplayChange(newValue as "minimal" | "all");
 						break;
 					case "mermaid-rendering":
 						callbacks.onMermaidRenderingModeChange(newValue as MermaidRenderingMode);

@@ -152,15 +152,14 @@ export class FooterComponent implements Component {
 			pwd = `${pwd} • ${sessionName}`;
 		}
 
-		// Build stats line
+		// Build stats line. Order: traffic (in/out/cost), context usage, then the
+		// cache diagnostics trailing — the context figure is the glance target, the
+		// cache numbers are detail. "minimal" drops the raw cache read/write totals
+		// and keeps only the hit rate.
+		const usageDisplay = this.session.settingsManager.getUsageDisplay();
 		const statsParts = [];
 		if (usageTotals.input) statsParts.push(`↑${formatTokens(usageTotals.input)}`);
 		if (usageTotals.output) statsParts.push(`↓${formatTokens(usageTotals.output)}`);
-		if (usageTotals.cacheRead) statsParts.push(`Read ${formatTokens(usageTotals.cacheRead)}`);
-		if (usageTotals.cacheWrite) statsParts.push(`Write ${formatTokens(usageTotals.cacheWrite)}`);
-		if ((usageTotals.cacheRead > 0 || usageTotals.cacheWrite > 0) && latestCacheHitRate !== undefined) {
-			statsParts.push(`Cache ${latestCacheHitRate.toFixed(1)}%`);
-		}
 
 		// Kimi Coding is subscription-backed despite using API-key authentication.
 		const usingSubscription = state.model
@@ -187,6 +186,13 @@ export class FooterComponent implements Component {
 			contextPercentStr = contextPercentDisplay;
 		}
 		statsParts.push(contextPercentStr);
+		if (usageDisplay === "all") {
+			if (usageTotals.cacheRead) statsParts.push(`Read ${formatTokens(usageTotals.cacheRead)}`);
+			if (usageTotals.cacheWrite) statsParts.push(`Write ${formatTokens(usageTotals.cacheWrite)}`);
+		}
+		if ((usageTotals.cacheRead > 0 || usageTotals.cacheWrite > 0) && latestCacheHitRate !== undefined) {
+			statsParts.push(`Cache ${latestCacheHitRate.toFixed(1)}%`);
+		}
 		if (areExperimentalFeaturesEnabled()) {
 			statsParts.push(`${theme.fg("dim", "•")} ${theme.bold(theme.fg("warning", "xp"))}`);
 		}

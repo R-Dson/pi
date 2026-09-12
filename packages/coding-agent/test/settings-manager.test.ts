@@ -217,6 +217,23 @@ describe("SettingsManager", () => {
 		});
 	});
 
+	describe("usage display setting", () => {
+		it("defaults to minimal and persists the choice", async () => {
+			const settingsPath = join(agentDir, "settings.json");
+			writeFileSync(settingsPath, JSON.stringify({}));
+
+			const manager = SettingsManager.create(projectDir, agentDir);
+			expect(manager.getUsageDisplay()).toBe("minimal");
+
+			manager.setUsageDisplay("all");
+			await manager.flush();
+
+			const savedSettings = JSON.parse(readFileSync(settingsPath, "utf-8"));
+			expect(savedSettings.usageDisplay).toBe("all");
+			expect(SettingsManager.create(projectDir, agentDir).getUsageDisplay()).toBe("all");
+		});
+	});
+
 	describe("error tracking", () => {
 		it("should collect and clear load errors via drainErrors", () => {
 			const globalSettingsPath = join(agentDir, "settings.json");
