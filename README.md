@@ -9,7 +9,7 @@
 
 # Pi Fork
 
-Pi Fork is a fork of [earendil-works/pi](https://github.com/earendil-works/pi), the interactive, self-extensible coding agent. Both meanings of the name are intended. The fork merges upstream regularly and stays close to it. Its headline work is cache-cost discipline: requests are built so the provider prompt cache covers them, which is what makes long sessions cheap (see [Cache discipline](#cache-discipline)). Three things differ out of the box: crashed sessions repair themselves on resume, tool output sent to the model is capped at 200 KB, and the binary talks to no one but your providers. Everything else is opt-in. Every fork decision and changed upstream file is recorded in the [fork ledger](docs/fork/upstream-integration.md).
+Pi Fork is a fork of [earendil-works/pi](https://github.com/earendil-works/pi), the interactive, self-extensible coding agent. Both meanings of the name are intended. The fork merges upstream regularly and stays close to it. Its headline work is cache-cost discipline: requests are built so the provider prompt cache covers them, which is what makes long sessions cheap (see [Cache discipline](#cache-discipline)). Four things differ out of the box: crashed sessions repair themselves on resume, tool output sent to the model is capped at 200 KB, the binary talks to no one but your providers, and thinking blocks start hidden behind a live preview. Everything else is opt-in. Every fork decision and changed upstream file is recorded in the [fork ledger](docs/fork/upstream-integration.md).
 
 ## Install
 
@@ -19,7 +19,7 @@ From this repo's GitHub Releases. Nothing is published to npmjs.org. Needs Node.
 curl -fsSL https://raw.githubusercontent.com/R-Dson/pi/main/scripts/install.sh | sh
 ```
 
-Re-running the install upgrades in place. Pin a version with `| sh -s 0.84.4-fork.4`. The script checks Node and npm up front, falls back to a `~/.local` prefix when npm's global directory needs root, warns before a downgrade, tells you when PATH resolves `pi` somewhere else, and `--uninstall` removes the fork.
+Re-running the install upgrades in place. Pin a version with `| sh -s 0.85.5-fork.19`. The script checks Node and npm up front, falls back to a `~/.local` prefix when npm's global directory needs root, warns before a downgrade, tells you when PATH resolves `pi` somewhere else, and `--uninstall` removes the fork.
 
 Alternatives:
 
@@ -33,6 +33,8 @@ Alternatives:
 pi            # interactive mode; authenticate a provider on first run
 pi -p "..."   # one-shot prompt
 ```
+
+The first-run wizard picks a theme (live preview of every registered theme; the preselected Automatic follows the terminal's detected appearance at every startup) and asks the two privacy questions from [Zero telemetry](#what-else-the-fork-changes) once. It is not gated behind upstream's `PI_EXPERIMENTAL` flag.
 
 Usage, providers, and extensions match upstream pi ([docs](https://pi.dev/docs/latest)).
 
@@ -52,6 +54,11 @@ The full design and slicing live in [docs/fork/cache-preserving-context-plan.md]
 - **Zero telemetry by default.** No install or version pings, no automatic extension updates, no remote model catalog; provider requests carry no app-identification headers. Two phone-home features exist and are strictly opt-in (default off, asked once by the first-run wizard, toggleable in `/settings`): an update check against this repo's GitHub releases, and OpenRouter attribution headers on OpenRouter requests only. A test asserts a representative default session performs zero non-provider fetches; the [endpoint audit](docs/fork/upstream-integration.md#outbound-traffic-audit-issue-32) lists every outbound call.
 - **Crash-safe sessions.** Sessions are append-only JSONL. A torn tail is skipped on load; a tool call that never got its result gets a terminal error appended at resume, so the next request is accepted. `pi --validate-session <file>` diagnoses any session file with line numbers.
 - **Tool runtime.** Tools can declare `timeoutMs` (the fork forwards it for extension tools) so a stuck call ends in a timeout error instead of hanging the run. Output to the model is capped at 200 KB by default (`tools.maxToolOutputBytes`, 0 disables): the model sees a head-and-tail excerpt, the full output spills to a file under `<sessionDir>/artifacts/<sessionId>/`. `/session` reports volume, truncated bytes, and artifact counts.
+- **Fused edit verification.** `edit` and `write` accept `thenRun`, an optional command that runs via bash in the same tool call once the change succeeds, saving one model round-trip per edit-then-verify cycle. The change is kept when the command fails (the error carries both outputs), the command is skipped when the change fails, and permission policies judge the fused command under their shell rules like any other bash call.
+- **Thinking hidden by default.** Reasoning blocks collapse behind a live preview: a header with an elapsed timer over a tail excerpt of the current run, an animated ellipsis while it streams, and on terminals that report their background color the oldest lines fade into it. The header freezes to `Thought for Ns` when the run ends; ctrl+t expands. Every reasoning window keeps its own header across tool calls, so a think-act-think cycle reads as alternating previews and tool calls instead of pages of gray text. Upstream shows full blocks by default; installs that ever pressed ctrl+t keep their choice. Reasoning models also offer an `xhigh` effort level, sent raw where the API accepts it and mapped to `high` where it does not.
+- **A more legible transcript.** Collapsed `read` results render `N lines (ctrl+o to expand)` and `grep` leads with its match count, so results state their size before their content. A tool without a result yet ticks `Elapsed Ns` once per second, so slow calls visibly work. In mixed-model sessions (after a handoff or manual switch), an assistant message whose model differs from the previous assistant message's carries a muted model-id line above it.
+- **Footer usage line.** The line reads traffic, cost, context, then cache detail: `↑66k ↓8.1k 8.3k/128k (6.5%) (auto) Cache 92.9%`. Context shows token count and window next to the percentage, and `?/128k` right after compaction instead of a fabricated `0.0%`. The `usageDisplay` setting (`"minimal"` by default, `"all"` in `/settings`) drops the cumulative cache read/write totals and keeps the hit rate.
+- **Skills anywhere in the prompt.** `/skill:name` tokens expand in place wherever they appear and chain (`first do X /skill:tdd then Y`), keeping the surrounding text in order; typing `/` anywhere in the editor opens autocomplete for skill commands. Unknown names and tokens not at a whitespace boundary (`path/to/skill:x`) pass through as literal text, and the TUI renders each expanded block as its own collapsible `[skill]` entry.
 - **Permissions, opt-in.** Restrict what the agent may do per project or machine: create `~/.pi/agent/permissions.json` (machine) or `.pi/permissions.json` (project, trusted only) and the built-in `permission-policies` extension activates; with no policy file it does nothing. Rules:
   ```json
   { "rules": [{ "tool": "bash", "command": "git push", "effect": "deny" }] }
