@@ -73,6 +73,8 @@ export interface ThinkingBudgetsSettings {
 
 export type MermaidRenderingMode = "off" | "final" | "streaming";
 
+export type UsageDisplay = "minimal" | "all";
+
 export interface MarkdownSettings {
 	codeBlockIndent?: string; // default: "  "
 	mermaid?: MermaidRenderingMode; // default: "streaming"
@@ -126,7 +128,7 @@ export interface Settings {
 	branchSummary?: BranchSummarySettings;
 	retry?: RetrySettings;
 	hideThinkingBlock?: boolean;
-	usageDisplay?: "minimal" | "all"; // default: "minimal" - footer usage stats detail (fork default; upstream shows all)
+	usageDisplay?: UsageDisplay; // default: "minimal" - footer usage stats detail (fork default; upstream shows all)
 	showCacheMissNotices?: boolean; // default: false - show cache cost and provider recovery notices
 	updateCheck?: boolean; // default: false - check GitHub for new fork releases at startup (the only phone-home the fork can do)
 	providerAttribution?: boolean; // default: false - send OpenRouter app-identification headers
@@ -976,11 +978,11 @@ export class SettingsManager {
 		return this.settings.showCacheMissNotices ?? false;
 	}
 
-	getUsageDisplay(): "minimal" | "all" {
+	getUsageDisplay(): UsageDisplay {
 		return this.settings.usageDisplay ?? "minimal";
 	}
 
-	setUsageDisplay(display: "minimal" | "all"): void {
+	setUsageDisplay(display: UsageDisplay): void {
 		this.globalSettings.usageDisplay = display;
 		this.markModified("usageDisplay");
 		this.save();

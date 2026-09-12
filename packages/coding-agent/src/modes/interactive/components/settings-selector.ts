@@ -17,6 +17,7 @@ import type {
 	FullscreenExitOutput,
 	MermaidRenderingMode,
 	TuiMode,
+	UsageDisplay,
 	WarningSettings,
 } from "../../../core/settings-manager.ts";
 import { getSettingsListTheme, parseAutoThemeSetting, type TerminalTheme, theme } from "../theme/theme.ts";
@@ -67,7 +68,7 @@ export interface SettingsConfig {
 	terminalTheme: TerminalTheme;
 	availableThemes: string[];
 	hideThinkingBlock: boolean;
-	usageDisplay: "minimal" | "all";
+	usageDisplay: UsageDisplay;
 	mermaidRenderingMode: MermaidRenderingMode;
 	showCacheMissNotices: boolean;
 	updateCheck: boolean;
@@ -106,7 +107,7 @@ export interface SettingsCallbacks {
 	onThemeChange: (theme: string) => void;
 	onThemePreview?: (theme: string) => void;
 	onHideThinkingBlockChange: (hidden: boolean) => void;
-	onUsageDisplayChange: (display: "minimal" | "all") => void;
+	onUsageDisplayChange: (display: UsageDisplay) => void;
 	onMermaidRenderingModeChange: (mode: MermaidRenderingMode) => void;
 	onShowCacheMissNoticesChange: (shown: boolean) => void;
 	onUpdateCheckChange: (enabled: boolean) => void;
@@ -886,7 +887,7 @@ export class SettingsSelectorComponent extends Container {
 						callbacks.onHideThinkingBlockChange(newValue === "true");
 						break;
 					case "usage-display":
-						callbacks.onUsageDisplayChange(newValue as "minimal" | "all");
+						callbacks.onUsageDisplayChange(newValue as UsageDisplay);
 						break;
 					case "mermaid-rendering":
 						callbacks.onMermaidRenderingModeChange(newValue as MermaidRenderingMode);
