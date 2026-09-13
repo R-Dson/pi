@@ -13,13 +13,13 @@ Pi Fork is a fork of [earendil-works/pi](https://github.com/earendil-works/pi), 
 
 ## Install
 
-From this repo's GitHub Releases. Nothing is published to npmjs.org. Needs Node.js >= 22.19 with npm.
+From this repo's GitHub Releases. Nothing is published to npmjs.org.
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/R-Dson/pi/main/scripts/install.sh | sh
 ```
 
-Re-running the install upgrades in place. Pin a version with `| sh -s 0.85.5-fork.19`. The script checks Node and npm up front, falls back to a `~/.local` prefix when npm's global directory needs root, warns before a downgrade, tells you when PATH resolves `pi` somewhere else, and `--uninstall` removes the fork.
+On darwin/linux (x64, arm64) this installs the prebuilt self-contained binary — only `curl` and `tar` needed, no Node.js or npm. Other platforms fall back to the npm tarball (Node.js >= 22.19 with npm). Re-running the install upgrades in place. Pin a version with `| sh -s 0.85.5-fork.19`, force a method with `PI_INSTALL_METHOD=binary|npm`, and `--uninstall` removes the fork. The script warns before a downgrade, refuses to touch a `pi` it does not own, and tells you when PATH resolves `pi` somewhere else.
 
 Alternatives:
 
@@ -115,7 +115,7 @@ npm run check         # Lint, format, and type check
 
 ## Releasing
 
-Manual: Actions → **Fork Release** → Run workflow (empty version = `<upstream-version>-fork.<run number>`). Publishes `@r-dson/*` to GitHub Packages, attaches `pi-fork.tgz` to the release, tags `v<version>`. Details in [docs/fork/install-from-github.md](docs/fork/install-from-github.md).
+Manual: Actions → **Fork Release** → Run workflow (empty version = `<upstream-version>-fork.<run number>`). Publishes `@r-dson/*` to GitHub Packages, attaches `pi-fork.tgz` and prebuilt platform binaries to the release, tags `v<version>`. Details in [docs/fork/install-from-github.md](docs/fork/install-from-github.md).
 
 ## Supply-chain hardening
 

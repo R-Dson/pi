@@ -816,6 +816,23 @@ Content`,
 			);
 		});
 
+		it("should explain setup options when the package manager is missing", async () => {
+			settingsManager = SettingsManager.inMemory({
+				npmCommand: ["pi-test-missing-package-manager"],
+			});
+			packageManager = new DefaultPackageManager({
+				cwd: tempDir,
+				agentDir,
+				settingsManager,
+			});
+
+			const installPromise = packageManager.install("npm:@scope/pkg");
+
+			await expect(installPromise).rejects.toThrow("pi-test-missing-package-manager was not found");
+			await expect(installPromise).rejects.toThrow("npmCommand");
+			await expect(installPromise).rejects.toThrow("run without one");
+		});
+
 		it("should pass legacy peer deps when uninstalling npm packages", async () => {
 			mkdirSync(join(agentDir, "npm"), { recursive: true });
 			const runCommandSpy = vi.spyOn(packageManager as any, "runCommand").mockResolvedValue(undefined);

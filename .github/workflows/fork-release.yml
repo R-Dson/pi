@@ -4,12 +4,16 @@ name: Fork Release
 # push/PR. Publishes all public workspace packages as @r-dson/* at a publish-time
 # version, then tags v<version> and creates a GitHub Release that also carries a
 # self-contained pi-fork.tgz asset (installable from the release URL with no
-# registry configuration). Ordering is release-safety-critical: the version is
-# checked against existing tags BEFORE anything is published (a colliding version
-# must fail while the release is still retryable), and the GitHub Release stays a
-# draft until the asset is uploaded, so releases/latest/download/pi-fork.tgz never
-# resolves to a release without its tarball. Repo files (manifests, changelogs)
-# are never modified; the only git object created is the tag.
+# registry configuration) and prebuilt self-contained pi-<os>-<arch> binaries
+# (bun-compiled; stamped with the fork name and version so --version and
+# update --self identify the install as the fork standalone channel).
+# Ordering is release-safety-critical: the version is checked against
+# existing tags BEFORE anything is published (a colliding version must fail
+# while the release is still retryable), and the GitHub Release stays a
+# draft until every asset is uploaded, so releases/latest/download/... never
+# resolves to a release without its assets. Nothing is committed: the only
+# git object created is the tag, and the workspace (including the
+# binary-manifest stamp) exists only on the ephemeral runner.
 
 on:
   workflow_dispatch:
@@ -124,6 +128,57 @@ jobs:
 
           node scripts/fork-standalone-package.mjs --version "$FORK_VERSION"
 
+      # The compiled binaries read the package.json next to the executable at
+      # runtime: pi --version prints its version field, and update --self
+      # classifies the install by its name. Unstamped, a binary install would
+      # report the upstream version and self-classify as the upstream npm
+      # package, offering to replace the fork with upstream pi. The patch runs
+      # after fork-standalone-package.mjs (which must read the pristine
+      # manifest) and after fork-publish (whose --auto version derives from
+      # the unmodified workspace version).
+      - name: Stamp fork identity into binary manifests
+        env:
+          FORK_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          node -e '
+            const fs = require("fs");
+            const path = "packages/coding-agent/package.json";
+            const manifest = JSON.parse(fs.readFileSync(path, "utf8"));
+            manifest.name = "@r-dson/pi-standalone";
+            manifest.version = process.env.FORK_VERSION;
+            fs.writeFileSync(path, `${JSON.stringify(manifest, null, "\t")}\n`);
+          '
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.3.14
+
+      - name: Build platform binaries
+        run: |
+          set -euo pipefail
+
+          ./scripts/build-binaries.sh \
+            --skip-install \
+            --skip-build \
+            --out packages/coding-agent/binaries
+
+      - name: Smoke-test linux-x64 binary
+        env:
+          FORK_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          smoke_dir="$(mktemp -d)"
+          tar -xzf packages/coding-agent/binaries/pi-linux-x64.tar.gz -C "$smoke_dir"
+          version="$("${smoke_dir}/pi/pi" --version)"
+          if [[ "${version}" != "${FORK_VERSION}" ]]; then
+            echo "::error::linux-x64 binary reports version ${version}; expected ${FORK_VERSION}."
+            exit 1
+          fi
+
       - name: Create draft GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -152,6 +207,8 @@ jobs:
             echo "curl -fsSL https://raw.githubusercontent.com/R-Dson/pi/main/scripts/install.sh | sh"
             echo '```'
             echo
+            echo "Prebuilt self-contained binaries for darwin/linux/windows (x64, arm64) ship as \`pi-<os>-<arch>.tar.gz\`/\`.zip\`; the install script prefers them and needs no Node.js or npm."
+            echo
             echo "Install instructions: [\`docs/fork/install-from-github.md\`](docs/fork/install-from-github.md)"
           } > RELEASE_NOTES.md
 
@@ -165,7 +222,7 @@ jobs:
             --title "Pi Fork" \
             --notes-file RELEASE_NOTES.md
 
-      - name: Upload standalone tarball
+      - name: Upload release assets
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -173,7 +230,22 @@ jobs:
         run: |
           set -euo pipefail
 
-          gh release upload "v${FORK_VERSION}" .fork-publish/pi-fork.tgz --clobber
+          binaries="packages/coding-agent/binaries"
+          binary_assets=(
+            pi-darwin-arm64.tar.gz
+            pi-darwin-x64.tar.gz
+            pi-linux-x64.tar.gz
+            pi-linux-arm64.tar.gz
+            pi-windows-x64.zip
+            pi-windows-arm64.zip
+          )
+          upload_args=(.fork-publish/pi-fork.tgz)
+          for asset in "${binary_assets[@]}"; do
+            test -f "${binaries}/${asset}"
+            upload_args+=("${binaries}/${asset}")
+          done
+
+          gh release upload "v${FORK_VERSION}" "${upload_args[@]}" --clobber
 
       - name: Publish GitHub Release
         env:

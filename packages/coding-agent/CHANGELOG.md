@@ -16,6 +16,7 @@
 - Added `thenRun` to the `edit` and `write` tools: an optional `{ command, timeout? }` run via bash in the same tool call after the file change succeeds, inside the file-mutation-queue slot so no other mutation interleaves. Saves one model round-trip per edit-then-verify cycle. The change is kept when the command fails (the error carries both outputs); the command is skipped when the change fails (`[thenRun:skipped]`/`[thenRun:failed]`/`[thenRun:succeeded]` markers in results). Permission policies judge the fused command under the bash/process-execute rules as well, so shell-denying policies still constrain fused calls. Design informed by NVlabs/SoL-Pi's Action Fusion, implemented natively.
 - Added `ctx.modelRegistry.stream()` and `streamSimple()` for extension model calls through configured providers with resolved authentication ([#8964](https://github.com/earendil-works/pi/issues/8964)).
 - Added per-model `reserveTokens` and `keepRecentTokens` settings through `compaction.modelOverrides`, with ordinary compaction settings as fallback ([#8133](https://github.com/earendil-works/pi-mono/issues/8133)).
+- Added prebuilt self-contained binaries to releases and made `install.sh` prefer them: on darwin/linux (x64, arm64) installing needs only `curl` and `tar` — no Node.js or npm — with the npm tarball path as fallback for other platforms, releases predating binary assets, or `PI_INSTALL_METHOD=npm`. Binary installs live under `<prefix>/lib/pi-fork` with `bin/pi` symlinked in; `--uninstall` removes either flavor. The `package.json` inside each binary archive is stamped to `@r-dson/pi-standalone@<version>` so binary installs report the fork version and `pi update --self` classifies them as the fork's standalone channel instead of the upstream npm package.
 
 ### Changed
 
@@ -29,6 +30,7 @@
 
 ### Fixed
 
+- Fixed `pi install`/`pi update` failing with a raw `spawn npm ENOENT` when no package manager is installed: the error now explains that pi and extensions placed under `~/.pi/agent/` run without one, and lists the options (install Node.js, point the `npmCommand` setting at an installed manager such as bun, or place the package's files manually).
 - Capped agent-level retry backoff at `retry.maxAgentDelayMs` (60s by default) so long retry runs stay responsive during prolonged transient outages ([#8826](https://github.com/earendil-works/pi/issues/8826)).
 - Fixed direct RPC `steer` and `follow_up` commands bypassing extension `input` handlers ([#8718](https://github.com/earendil-works/pi/issues/8718)).
 - Fixed premature missing-model errors after login by waiting for catalog discovery. Radius now defaults to `balanced`, falling back to the first available Radius model when needed.

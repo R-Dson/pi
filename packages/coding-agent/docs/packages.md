@@ -40,6 +40,8 @@ pi update --extension npm:@foo/bar
 
 These commands manage pi packages and `pi update` can update the pi CLI installation. To uninstall pi itself, see [Quickstart](quickstart.md#uninstall).
 
+For npm and git sources, `install`/`remove`/`update` shell out to a package manager: `npm` by default, or whatever the `npmCommand` setting names (argv-style, e.g. `["bun"]` or `["mise", "exec", "--", "npm"]`). The precompiled pi binary runs pi and its packages without Node.js — packages load as source inside pi, so the package manager is only the fetch tool. When the command is missing, pi fails with a hint listing the options: install Node.js, point `npmCommand` at an installed manager such as bun, or place the package's files under `~/.pi/agent/` yourself.
+
 By default, `install` and `remove` write to user settings (`~/.pi/agent/settings.json`). Use `-l` to write to project settings (`.pi/settings.json`) instead. Project settings can be shared with your team, and pi installs any missing packages automatically on startup after the project is trusted.
 
 To try a package without installing it, use `--extension` or `-e`. This installs to a temporary directory for the current run only:

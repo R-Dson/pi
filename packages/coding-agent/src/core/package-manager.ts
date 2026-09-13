@@ -1526,11 +1526,16 @@ export class DefaultPackageManager implements PackageManager {
 
 	private async getLatestNpmVersion(packageSpec: string, range?: string): Promise<string> {
 		const npmCommand = this.getNpmCommand();
-		const stdout = await this.runCommandCapture(
-			npmCommand.command,
-			[...npmCommand.args, "view", packageSpec, "version", "--json"],
-			{ cwd: this.cwd, timeoutMs: NETWORK_TIMEOUT_MS },
-		);
+		let stdout: string;
+		try {
+			stdout = await this.runCommandCapture(
+				npmCommand.command,
+				[...npmCommand.args, "view", packageSpec, "version", "--json"],
+				{ cwd: this.cwd, timeoutMs: NETWORK_TIMEOUT_MS },
+			);
+		} catch (error) {
+			throw this.mapPackageManagerSpawnError(error, npmCommand.command);
+		}
 		const raw = stdout.trim();
 		if (!raw) throw new Error("Empty response from npm view");
 		const parsed = JSON.parse(raw) as unknown;
@@ -1780,9 +1785,25 @@ export class DefaultPackageManager implements PackageManager {
 		return packageManagerCommand ? basename(packageManagerCommand).replace(/\.(cmd|exe)$/i, "") : "";
 	}
 
+	// A missing package manager is a setup gap, not a pi failure: pi and
+	// locally placed extensions run without one, so the error must say what the
+	// manager is actually needed for and how to substitute it.
+	private mapPackageManagerSpawnError(error: unknown, command: string): unknown {
+		if (error instanceof Error && (error as NodeJS.ErrnoException).code === "ENOENT") {
+			return new Error(
+				`${command} was not found. A package manager is needed only to fetch third-party packages (pi itself and extensions placed under ~/.pi/agent/ run without one). Install Node.js (https://nodejs.org), set the "npmCommand" setting to an installed package manager (for example ["bun"] or ["pnpm"]), or place the package's files under ~/.pi/agent/ yourself.`,
+			);
+		}
+		return error;
+	}
+
 	private async runNpmCommand(args: string[], options?: { cwd?: string }): Promise<void> {
 		const npmCommand = this.getNpmCommand();
-		await this.runCommand(npmCommand.command, [...npmCommand.args, ...args], options);
+		try {
+			await this.runCommand(npmCommand.command, [...npmCommand.args, ...args], options);
+		} catch (error) {
+			throw this.mapPackageManagerSpawnError(error, npmCommand.command);
+		}
 	}
 
 	private getGitDependencyInstallArgs(): string[] {
@@ -1795,7 +1816,11 @@ export class DefaultPackageManager implements PackageManager {
 
 	private runNpmCommandSync(args: string[]): string {
 		const npmCommand = this.getNpmCommand();
-		return this.runCommandSync(npmCommand.command, [...npmCommand.args, ...args]);
+		try {
+			return this.runCommandSync(npmCommand.command, [...npmCommand.args, ...args]);
+		} catch (error) {
+			throw this.mapPackageManagerSpawnError(error, npmCommand.command);
+		}
 	}
 
 	private getNpmInstallArgs(specs: string[], installRoot: string): string[] {
@@ -2705,10 +2730,14 @@ export class DefaultPackageManager implements PackageManager {
 			encoding: "utf-8",
 			env,
 		});
-		if (result.error || result.status !== 0) {
-			throw new Error(
-				`Failed to run ${command} ${args.join(" ")}: ${result.error?.message || result.stderr || result.stdout}`,
-			);
+		// Rethrow the spawn error itself (it carries the ENOENT code the npm
+		// runners map to a setup hint); only exit-code failures get the wrapped
+		// message.
+		if (result.error) {
+			throw result.error;
+		}
+		if (result.status !== 0) {
+			throw new Error(`Failed to run ${command} ${args.join(" ")}: ${result.stderr || result.stdout}`);
 		}
 		return (result.stdout || result.stderr || "").trim();
 	}
