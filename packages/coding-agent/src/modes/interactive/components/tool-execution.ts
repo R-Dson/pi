@@ -146,6 +146,7 @@ export class ToolExecutionComponent extends Container {
 			state: this.rendererState,
 			cwd: this.cwd,
 			executionStarted: this.executionStarted,
+			executionStartedAt: this.executionStartedAt,
 			argsComplete: this.argsComplete,
 			isPartial: this.isPartial,
 			expanded: this.expanded,

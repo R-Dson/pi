@@ -328,6 +328,7 @@ export function buildTestTree(
  */
 export function stubTaskToolOptions() {
 	return {
+		nextTaskNumber: () => 1,
 		getMaxSubAgents: () => 2,
 		getStreamFn: () => {
 			throw new Error("task tool streamFn not available in this test");

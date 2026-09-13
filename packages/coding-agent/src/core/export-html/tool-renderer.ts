@@ -87,6 +87,7 @@ export function createToolHtmlRenderer(deps: ToolHtmlRendererDeps): ToolHtmlRend
 			state: getState(toolCallId),
 			cwd,
 			executionStarted: true,
+			executionStartedAt: undefined,
 			argsComplete: true,
 			isPartial,
 			expanded,

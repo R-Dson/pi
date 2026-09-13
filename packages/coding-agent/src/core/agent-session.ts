@@ -458,6 +458,17 @@ export class AgentSession {
 
 	// Caps concurrently running sub-agents spawned by the task tool; survives tool-registry rebuilds
 	private readonly _subAgentLimiter = new SubAgentLimiter();
+	// "Task N" numbering for sub-agent spawns; the base counts resumed history so numbers continue
+	private _subAgentSpawnCount = 0;
+	private _subAgentNumberBase: number | undefined;
+
+	/** Next "Task N" number for a sub-agent spawn, continuing past resumed history. */
+	private _nextSubAgentNumber(): number {
+		this._subAgentNumberBase ??= this.agent.state.messages.filter(
+			(message) => message.role === "toolResult" && message.toolName === "task",
+		).length;
+		return ++this._subAgentSpawnCount + this._subAgentNumberBase;
+	}
 
 	// Base system prompt (without extension appends) - used to apply fresh appends each turn
 	private _baseSystemPrompt = "";
@@ -2975,6 +2986,7 @@ export class AgentSession {
 					// observer tracks the main agent's prefix, which sub-agents would corrupt).
 					task: {
 						limiter: this._subAgentLimiter,
+						nextTaskNumber: () => this._nextSubAgentNumber(),
 						getMaxSubAgents: () => this.settingsManager.getMaxSubAgents(),
 						getStreamFn: () => unwrapStreamFn(this.agent.streamFunction),
 						getModel: () => this.agent.state.model,

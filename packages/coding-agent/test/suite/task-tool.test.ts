@@ -3,7 +3,13 @@ import { join } from "node:path";
 import type { StreamFn } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage, Context, ToolResultMessage } from "@earendil-works/pi-ai";
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
-import { fauxAssistantMessage, fauxToolCall, registerFauxProvider } from "@earendil-works/pi-ai/compat";
+import {
+	fauxAssistantMessage,
+	fauxText,
+	fauxThinking,
+	fauxToolCall,
+	registerFauxProvider,
+} from "@earendil-works/pi-ai/compat";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createTaskTool, SubAgentLimiter } from "../../src/core/tools/task.ts";
 import { createHarness, getMessageText, type Harness } from "./harness.ts";
@@ -83,6 +89,76 @@ describe("task tool", () => {
 		// The sub-agent's read really executed against the session cwd and its
 		// output reached the sub-agent's follow-up turn.
 		expect(getMessageText(toolResults[0])).toContain("sub-agent saw: marker");
+	});
+
+	it("streams the sub-agent's live activity and returns its conversation as the transcript", async () => {
+		const harness = await createHarness();
+		harnesses.push(harness);
+		const longFile = Array.from({ length: 20 }, (_, index) => `marker line ${index}`).join("\n");
+		writeFileSync(join(harness.tempDir, "marker.txt"), longFile);
+
+		const partials: Array<{ content: Array<{ type: string; text?: string }>; details?: unknown }> = [];
+		const unsubscribe = harness.session.subscribe((event) => {
+			if (event.type === "tool_execution_update" && event.toolName === "task") {
+				partials.push(event.partialResult as (typeof partials)[number]);
+			}
+		});
+
+		harness.setResponses([
+			fauxAssistantMessage([fauxToolCall("task", { prompt: "Read the marker and report." })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("read", { path: "marker.txt" })], { stopReason: "toolUse" }),
+			(context) =>
+				fauxAssistantMessage([
+					fauxThinking("let me check the file contents"),
+					fauxText(`sub-agent saw: ${toolResultTexts(context).join(" | ")}`),
+				]),
+			fauxAssistantMessage("main agent conclusion"),
+		]);
+
+		try {
+			await harness.session.prompt("delegate this");
+		} finally {
+			unsubscribe();
+		}
+
+		// Live: while the sub-agent's read runs, the task row shows it as the current activity.
+		const activities = partials.map((partial) => (partial.details as { activity?: string })?.activity);
+		expect(activities.some((activity) => activity?.includes("read") && activity.includes("marker.txt"))).toBe(true);
+
+		// Retro: the final result carries the sub-agent's whole conversation for the
+		// expanded view - thinking included, long results head+tail excerpted.
+		const details = taskToolResults(harness)[0].details as {
+			transcript?: Array<Record<string, unknown>>;
+			totalCalls?: number;
+			task?: number;
+			durationMs?: number;
+		};
+		expect(details.totalCalls).toBe(1);
+		// Session-scoped numbering: each spawn gets a stable "Task N" label.
+		expect(details.task).toBe(1);
+		// Wall-time duration is persisted so resumed rows keep their header.
+		expect(details.durationMs).toBeGreaterThanOrEqual(0);
+		expect(details.transcript?.map((entry) => entry.kind)).toEqual([
+			"user",
+			"tool_call",
+			"tool_result",
+			"thinking",
+			"assistant",
+		]);
+		expect(String(details.transcript?.[0]?.text)).toContain("Read the marker and report.");
+		const callEntry = details.transcript?.[1];
+		expect(callEntry?.tool).toBe("read");
+		expect(String(callEntry?.args)).toContain("marker.txt");
+		const resultEntry = details.transcript?.[2];
+		expect(resultEntry?.tool).toBe("read");
+		// Real content, head+tail excerpted past the 16-line threshold.
+		expect(String(resultEntry?.text)).toContain("marker line 0");
+		expect(String(resultEntry?.text)).toContain("marker line 19");
+		expect(String(resultEntry?.text)).toContain("(4 lines omitted)");
+		expect(String(details.transcript?.[3]?.text)).toContain("let me check the file contents");
+		expect(String(details.transcript?.[4]?.text)).toContain("sub-agent saw:");
 	});
 
 	it("applies the session's tool_call extension gate to sub-agent tool calls", async () => {
@@ -165,6 +241,9 @@ describe("task tool", () => {
 		const resultTexts = toolResults.map((result) => getMessageText(result)).sort();
 		expect(resultTexts).toEqual(["first answer", "second answer"]);
 		expect(toolResults.every((result) => !result.isError)).toBe(true);
+		// Parallel spawns get distinct sequential numbers.
+		const taskNumbers = toolResults.map((result) => (result.details as { task?: number } | undefined)?.task).sort();
+		expect(taskNumbers).toEqual([1, 2]);
 	});
 
 	it("SubAgentLimiter hands off slots FIFO without ever exceeding the cap", async () => {
@@ -234,6 +313,7 @@ describe("task tool", () => {
 		const faux = registerFauxProvider({});
 		try {
 			const tool = createTaskTool({
+				nextTaskNumber: () => 1,
 				getMaxSubAgents: () => 2,
 				getStreamFn: () => streamFn,
 				getModel: () => faux.getModel(),

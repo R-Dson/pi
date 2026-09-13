@@ -442,6 +442,8 @@ export interface ToolRenderContext<TState = any, TArgs = any> {
 	cwd: string;
 	/** Whether the tool execution has started. */
 	executionStarted: boolean;
+	/** When execution started (Date.now() ms), for live elapsed rendering; undefined before start. */
+	executionStartedAt: number | undefined;
 	/** Whether the tool call arguments are complete. */
 	argsComplete: boolean;
 	/** Whether the tool result is partial/streaming. */

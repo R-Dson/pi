@@ -113,7 +113,7 @@ import { loadAllHighlightLanguages } from "../../utils/syntax-highlight.ts";
 import { ensureTool, type ToolStatus } from "../../utils/tools-manager.ts";
 import { createChatViewport } from "./chat-viewport.ts";
 import { ArminComponent } from "./components/armin.ts";
-import { AssistantMessageComponent, setThinkingPreviewFadeBackground } from "./components/assistant-message.ts";
+import { AssistantMessageComponent } from "./components/assistant-message.ts";
 import { BashExecutionComponent } from "./components/bash-execution.ts";
 import { BranchSummaryMessageComponent } from "./components/branch-summary-message.ts";
 import { CompactionSummaryMessageComponent } from "./components/compaction-summary-message.ts";
@@ -136,6 +136,7 @@ import {
 	formatAuthSelectorProviderType,
 	OAuthSelectorComponent,
 } from "./components/oauth-selector.ts";
+import { setPreviewFadeBackground } from "./components/preview-window.ts";
 import { ScopedModelsSelectorComponent } from "./components/scoped-models-selector.ts";
 import { SessionSelectorComponent } from "./components/session-selector.ts";
 import { SettingsSelectorComponent } from "./components/settings-selector.ts";
@@ -1015,7 +1016,7 @@ export class InteractiveMode {
 		// do not answer within the timeout keep the uniform gray preview.
 		try {
 			void this.ui.queryTerminalBackgroundColor({ timeoutMs: 300 }).then((rgb) => {
-				setThinkingPreviewFadeBackground(rgb ?? undefined);
+				setPreviewFadeBackground(rgb ?? undefined);
 			});
 		} catch {
 			// Query unsupported before the TUI is live; the preview stays uniform.

@@ -75,8 +75,10 @@ export {
 	createTaskTool,
 	createTaskToolDefinition,
 	SubAgentLimiter,
+	type TaskToolDetails,
 	type TaskToolInput,
 	type TaskToolOptions,
+	type TaskTranscriptEntry,
 } from "./task.ts";
 export {
 	DEFAULT_MAX_BYTES,

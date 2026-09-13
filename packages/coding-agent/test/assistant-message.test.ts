@@ -2,10 +2,8 @@ import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { setKeybindings, visibleWidth } from "@earendil-works/pi-tui";
 import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
 import { KeybindingsManager } from "../src/core/keybindings.ts";
-import {
-	AssistantMessageComponent,
-	setThinkingPreviewFadeBackground,
-} from "../src/modes/interactive/components/assistant-message.ts";
+import { AssistantMessageComponent } from "../src/modes/interactive/components/assistant-message.ts";
+import { setPreviewFadeBackground } from "../src/modes/interactive/components/preview-window.ts";
 import { UserMessageComponent } from "../src/modes/interactive/components/user-message.ts";
 import { getMarkdownTheme, initTheme } from "../src/modes/interactive/theme/theme.ts";
 import { stripAnsi } from "../src/utils/ansi.ts";
@@ -275,7 +273,7 @@ describe("AssistantMessageComponent", () => {
 			// Restore a fresh manager so later suites do not inherit this one.
 			setKeybindings(new KeybindingsManager());
 			// No terminal background endpoint leaks into later suites.
-			setThinkingPreviewFadeBackground(undefined);
+			setPreviewFadeBackground(undefined);
 		});
 
 		test("live header animates a breathing ellipsis", () => {
@@ -322,7 +320,7 @@ describe("AssistantMessageComponent", () => {
 
 			// Dark theme's thinking gray is #808080; a black terminal background
 			// makes the gradient run from near-black (oldest) to near-gray (newest).
-			setThinkingPreviewFadeBackground({ r: 0, g: 0, b: 0 });
+			setPreviewFadeBackground({ r: 0, g: 0, b: 0 });
 			// 60 lines, 6 visible: the fold dominates, so the oldest visible word
 			// sinks near the background.
 			const lines = Array.from({ length: 60 }, (_, i) => `reasoning step ${i + 1} of the plan`);
@@ -356,7 +354,7 @@ describe("AssistantMessageComponent", () => {
 		test("the fade ramps in with window fill, then deepens with the fold", () => {
 			initTheme("dark");
 
-			setThinkingPreviewFadeBackground({ r: 0, g: 0, b: 0 });
+			setPreviewFadeBackground({ r: 0, g: 0, b: 0 });
 			const component = new AssistantMessageComponent(undefined, true);
 
 			// A single line is fully gray: the fade signals older content, and
@@ -404,7 +402,7 @@ describe("AssistantMessageComponent", () => {
 		test("without a terminal background the preview stays uniform", () => {
 			initTheme("dark");
 
-			setThinkingPreviewFadeBackground(undefined);
+			setPreviewFadeBackground(undefined);
 			const component = new AssistantMessageComponent(undefined, true);
 			component.updateContent(
 				createAssistantMessage([{ type: "thinking", thinking: "reasoning without an endpoint" }]),
@@ -683,7 +681,7 @@ describe("AssistantMessageComponent", () => {
 		test("the finished block keeps the fade into the terminal background", () => {
 			initTheme("dark");
 
-			setThinkingPreviewFadeBackground({ r: 0, g: 0, b: 0 });
+			setPreviewFadeBackground({ r: 0, g: 0, b: 0 });
 			// 60 lines, 6 visible: the fold dominates, so the oldest visible word
 			// sits near the background — the fade survives into the transcript.
 			const lines = Array.from({ length: 60 }, (_, i) => `reasoning step ${i + 1} of the plan`);
