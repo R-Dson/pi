@@ -38,6 +38,6 @@ Run repository commands from the repo root (two directories above this skill), u
    ```bash
    gh workflow run fork-release.yml --repo R-Dson/pi --ref main
    ```
-   The workflow publishes all `@r-dson/*` packages to the GitHub Packages npm registry, tags `v<upstream-version>-fork.<run>`, and creates the GitHub Release (titled `Pi Fork <tag>`) with the `pi-fork.tgz` standalone asset. The version is checked against existing tags before anything publishes, so a collision fails while the run is still retryable.
+   The workflow publishes all `@r-dson/*` packages to the GitHub Packages npm registry, tags `v<upstream-version>-fork.<run>`, and creates the GitHub Release (titled `Pi Fork`; the tag and the notes' first line carry the version) with the `pi-fork.tgz` standalone asset. The version is checked against existing tags before anything publishes, so a collision fails while the run is still retryable.
 
 4. **Verify**: watch the run to green (`gh run watch <id> --repo R-Dson/pi`), then confirm the release is marked Latest and carries `pi-fork.tgz`. Failure recovery: a run that failed before publishing can be rerun (`gh run rerun <id>` — the version is still free); a run that failed after publishing cannot, because the rerun keeps the same run number and trips the tag-free guard by design, so dispatch fresh instead (the new run number yields a new version).

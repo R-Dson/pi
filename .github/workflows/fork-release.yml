@@ -158,10 +158,11 @@ jobs:
           # Draft: invisible to releases/latest until the asset is uploaded and
           # the release is promoted, so the stable download URL only ever
           # resolves to a complete release.
+          # Title is constant; the tag (and the notes' first line) carry the version.
           gh release create "${TAG}" \
             --verify-tag \
             --draft \
-            --title "Pi Fork ${TAG}" \
+            --title "Pi Fork" \
             --notes-file RELEASE_NOTES.md
 
       - name: Upload standalone tarball
