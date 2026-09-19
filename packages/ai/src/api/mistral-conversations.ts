@@ -1,7 +1,6 @@
 import { calculateCost, clampThinkingLevel } from "../models.ts";
 import type {
 	AssistantMessage,
-	Context,
 	Message,
 	Model,
 	SimpleStreamOptions,
@@ -12,12 +11,15 @@ import type {
 	ThinkingContent,
 	Tool,
 	ToolCall,
+	TranscriptContext,
 } from "../types.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { shortHash } from "../utils/hash.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { parseStreamingJson } from "../utils/json-parse.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
+import { getSystemMessageText, renderSystemMessageUpdate } from "../utils/text.ts";
+import { getCurrentTools, resolveTranscript } from "../utils/transcript.ts";
 import { getJsonSchemaToolParameters, resolveJsonSchemaStrictSampling } from "./constrained-sampling.ts";
 import { buildBaseOptions } from "./simple-options.ts";
 import { transformMessages } from "./transform-messages.ts";
@@ -120,10 +122,11 @@ type MistralCompletionEvent = {
  */
 export const stream: StreamFunction<"mistral-conversations", MistralOptions> = (
 	model: Model<"mistral-conversations">,
-	context: Context,
+	context: TranscriptContext,
 	options?: MistralOptions,
 ): AssistantMessageEventStream => {
 	const stream = new AssistantMessageEventStream();
+	const normalizedContext = resolveTranscript(context, model.compat?.supportsMidConvoSystemMessages);
 
 	(async () => {
 		const output = createOutput(model);
@@ -135,9 +138,11 @@ export const stream: StreamFunction<"mistral-conversations", MistralOptions> = (
 			}
 
 			const normalizeMistralToolCallId = createMistralToolCallIdNormalizer();
-			const transformedMessages = transformMessages(context.messages, model, (id) => normalizeMistralToolCallId(id));
+			const transformedMessages = transformMessages(normalizedContext.messages, model, (id) =>
+				normalizeMistralToolCallId(id),
+			);
 
-			let payload = buildChatPayload(model, context, transformedMessages, options);
+			let payload = buildChatPayload(model, normalizedContext, transformedMessages, options);
 			const nextPayload = await options?.onPayload?.(payload, model);
 			if (nextPayload !== undefined) {
 				payload = nextPayload as MistralChatPayload;
@@ -179,7 +184,7 @@ export const stream: StreamFunction<"mistral-conversations", MistralOptions> = (
  */
 export const streamSimple: StreamFunction<"mistral-conversations", SimpleStreamOptions> = (
 	model: Model<"mistral-conversations">,
-	context: Context,
+	context: TranscriptContext,
 	options?: SimpleStreamOptions,
 ): AssistantMessageEventStream => {
 	const apiKey = options?.apiKey;
@@ -500,7 +505,7 @@ function parseMistralEvent(raw: string): MistralCompletionEvent | typeof MISTRAL
 
 function buildChatPayload(
 	model: Model<"mistral-conversations">,
-	context: Context,
+	context: TranscriptContext,
 	messages: Message[],
 	options?: MistralOptions,
 ): MistralChatPayload {
@@ -510,20 +515,14 @@ function buildChatPayload(
 		messages: toChatMessages(messages, model.input.includes("image")),
 	};
 
-	if (context.tools?.length) payload.tools = toFunctionTools(context.tools);
+	const currentTools = getCurrentTools(context.messages);
+	if (currentTools.length > 0) payload.tools = toFunctionTools(currentTools);
 	if (options?.temperature !== undefined) payload.temperature = options.temperature;
 	if (options?.maxTokens !== undefined) payload.maxTokens = options.maxTokens;
 	if (options?.toolChoice) payload.toolChoice = mapToolChoice(options.toolChoice);
 	if (options?.promptMode) payload.promptMode = options.promptMode;
 	if (options?.reasoningEffort) payload.reasoningEffort = options.reasoningEffort;
 	if (shouldUsePromptCaching(options)) payload.promptCacheKey = options.sessionId;
-
-	if (context.systemPrompt) {
-		payload.messages.unshift({
-			role: "system",
-			content: sanitizeSurrogates(context.systemPrompt),
-		});
-	}
 
 	return payload;
 }
@@ -782,7 +781,13 @@ function stripSymbolKeys(value: unknown): unknown {
 function toChatMessages(messages: Message[], supportsImages: boolean): MistralChatMessage[] {
 	const result: MistralChatMessage[] = [];
 
-	for (const msg of messages) {
+	for (const [index, msg] of messages.entries()) {
+		if (msg.role === "system") {
+			const text = index === 0 ? getSystemMessageText(msg) : renderSystemMessageUpdate(msg);
+			if (text.length > 0) result.push({ role: "system", content: sanitizeSurrogates(text) });
+			continue;
+		}
+
 		if (msg.role === "user") {
 			if (typeof msg.content === "string") {
 				result.push({ role: "user", content: sanitizeSurrogates(msg.content) });

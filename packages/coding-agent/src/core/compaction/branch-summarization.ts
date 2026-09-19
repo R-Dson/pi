@@ -6,9 +6,9 @@
  */
 
 import type { AgentMessage, StreamFn } from "@earendil-works/pi-agent-core";
-import type { RetryCallbacks, RetryPolicy } from "@earendil-works/pi-ai";
-import { contentText } from "@earendil-works/pi-ai";
-import type { Context, Model, SimpleStreamOptions, Usage } from "@earendil-works/pi-ai/compat";
+import type { Message, RetryCallbacks, RetryPolicy, TranscriptContext } from "@earendil-works/pi-ai";
+import { contentText, getInitialSystemMessage, normalizeContext } from "@earendil-works/pi-ai";
+import type { Model, SimpleStreamOptions, Usage } from "@earendil-works/pi-ai/compat";
 import { convertToLlm } from "../messages.ts";
 import type { ReadonlySessionManager, SessionEntry } from "../session-manager.ts";
 import { sessionEntryToContextMessages } from "../sessions/projector.ts";
@@ -402,18 +402,26 @@ export async function generateBranchSummary(
 	// attribution headers) stays consistent without running through agent
 	// state/events. Retried via completeSummarization so transient stream drops
 	// reuse the configured retry policy.
-	const context: Context = {
-		systemPrompt: prefix.systemPrompt,
-		tools: prefix.tools,
-		messages: [
-			...convertToLlm(messages),
-			{
-				role: "user",
-				content: [{ type: "text", text: promptText }],
-				timestamp: Date.now(),
-			},
-		],
-	};
+	const replayMessages: Message[] = [
+		...convertToLlm(messages),
+		{
+			role: "user",
+			content: [{ type: "text", text: promptText }],
+			timestamp: Date.now(),
+		},
+	];
+	// Replay the transcript's own system message when active so the leading bytes
+	// match the regular request exactly; otherwise fold the derived prefix into
+	// a leading system message, the same shape a regular request sends.
+	const history =
+		prefix.systemMessage && getInitialSystemMessage(replayMessages) ? replayMessages.slice(1) : replayMessages;
+	const context = prefix.systemMessage
+		? ({ messages: [prefix.systemMessage, ...history] } as TranscriptContext)
+		: normalizeContext({
+				systemPrompt: prefix.systemPrompt,
+				tools: prefix.tools,
+				messages: replayMessages,
+			});
 	// Upstream #8845: reasoning can consume a fixed 2048-token cap before the
 	// summary is written; derive the cap from the model instead.
 	const maxTokens = Math.min(4096, model.maxTokens > 0 ? model.maxTokens : Number.POSITIVE_INFINITY);

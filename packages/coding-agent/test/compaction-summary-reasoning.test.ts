@@ -1,5 +1,6 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import type { AssistantMessage, Context, Model, Usage } from "@earendil-works/pi-ai";
+import type { AssistantMessage, Model, Usage } from "@earendil-works/pi-ai";
+import { normalizeContext } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -140,18 +141,14 @@ describe("generateSummary reasoning options", () => {
 	});
 
 	it("standalone requests opt out of caching; replaying requests inherit it", async () => {
+		await completeSummarization(createModel(false), normalizeContext({ systemPrompt: "Summarize", messages: [] }), {
+			sessionId: "current-routing-session",
+			cacheRetention: "long",
+			toolChoice: "auto",
+		});
 		await completeSummarization(
 			createModel(false),
-			{ systemPrompt: "Summarize", messages: [] },
-			{
-				sessionId: "current-routing-session",
-				cacheRetention: "long",
-				toolChoice: "auto",
-			},
-		);
-		await completeSummarization(
-			createModel(false),
-			{ systemPrompt: "Summarize", messages: [] },
+			normalizeContext({ systemPrompt: "Summarize", messages: [] }),
 			{
 				sessionId: "current-routing-session",
 				toolChoice: "auto",
@@ -173,7 +170,7 @@ describe("generateSummary reasoning options", () => {
 		expect(replay).not.toHaveProperty("cacheRetention");
 	});
 
-	it("preserves the standalone split-turn summary prompt", async () => {
+	it("preserves the previous summary without an empty history request for a split turn", async () => {
 		const preparation: CompactionPreparation = {
 			firstKeptEntryId: "entry-keep",
 			messagesToSummarize: [],
@@ -181,13 +178,16 @@ describe("generateSummary reasoning options", () => {
 			turnPrefixMessages: messages,
 			isSplitTurn: true,
 			tokensBefore: 100,
+			previousSummary: "previous checkpoint",
 			fileOps: { read: new Set(), written: new Set(), edited: new Set() },
 			settings: { enabled: true, reserveTokens: 2000, keepRecentTokens: 20 },
 		};
 
-		await compact(preparation, createModel(false), prefix, "test-key");
+		const result = await compact(preparation, createModel(false), prefix, "test-key");
 
-		const requestContext = completeSimpleMock.mock.calls[0][1] as Context;
+		expect(completeSimpleMock).toHaveBeenCalledTimes(1);
+		expect(result.summary).toContain("previous checkpoint");
+		const requestContext = completeSimpleMock.mock.calls[0][1];
 		const prompt = JSON.stringify(requestContext.messages);
 		expect(prompt).toContain("This is the PREFIX of a turn that was too large to keep");
 		expect(prompt).toContain("<conversation>");

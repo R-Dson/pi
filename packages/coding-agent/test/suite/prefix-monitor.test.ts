@@ -95,16 +95,22 @@ describe("runtime prefix-stability monitor (issue #41)", () => {
 					pi.on("context", async (event) => {
 						// Rewrite the opening user message from the second request on,
 						// deterministically, so exactly one consecutive-request diff diverges.
-						if (event.messages.length < 2) return undefined;
-						const messages = event.messages.map((message, index) =>
-							index === 0 && message.role === "user"
-								? {
-										...message,
-										content: [{ type: "text" as const, text: "rewritten opener" }],
-									}
-								: message,
-						);
-						return { messages };
+						// The transcript opens with a system message, so target the first
+						// user message wherever it sits, and skip the first request
+						// (system + one user message).
+						if (event.messages.length < 3) return undefined;
+						let rewritten = false;
+						const messages = event.messages.map((message) => {
+							if (!rewritten && message.role === "user") {
+								rewritten = true;
+								return {
+									...message,
+									content: [{ type: "text" as const, text: "rewritten opener" }],
+								};
+							}
+							return message;
+						});
+						return rewritten ? { messages } : undefined;
 					});
 				},
 			],
@@ -394,17 +400,22 @@ describe("provider wire-rewrite attribution (issue #56)", () => {
 				(pi) => {
 					pi.on("context", async (event) => {
 						// Rewrite the opening user message from the third request
-						// on, so the divergence lands strictly after the fire.
-						if (event.messages.length < 5) return undefined;
-						const messages = event.messages.map((message, index) =>
-							index === 0 && message.role === "user"
-								? {
-										...message,
-										content: [{ type: "text" as const, text: "rewritten opener" }],
-									}
-								: message,
-						);
-						return { messages };
+						// on, so the divergence lands strictly after the fire. The
+						// transcript opens with a system message, so target the first
+						// user message wherever it sits.
+						if (event.messages.length < 6) return undefined;
+						let rewritten = false;
+						const messages = event.messages.map((message) => {
+							if (!rewritten && message.role === "user") {
+								rewritten = true;
+								return {
+									...message,
+									content: [{ type: "text" as const, text: "rewritten opener" }],
+								};
+							}
+							return message;
+						});
+						return rewritten ? { messages } : undefined;
 					});
 				},
 			],

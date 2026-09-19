@@ -24,7 +24,7 @@
  */
 
 import type { StreamFn } from "@earendil-works/pi-agent-core";
-import type { AssistantMessageEventStream, Context } from "@earendil-works/pi-ai";
+import type { AssistantMessageEventStream, TranscriptContext } from "@earendil-works/pi-ai";
 import type { Model } from "@earendil-works/pi-ai/compat";
 import type { AgentSessionEvent } from "../agent-session.ts";
 import { type CacheUsageTotals, CacheUsageTracker, type RequestKind } from "./cache-usage.ts";
@@ -105,7 +105,11 @@ export class ProviderRequestObserver {
 	 */
 	wrap(streamFn: StreamFn): StreamFn {
 		const inner = streamFn;
-		const monitored = (async (model: Model<any>, context: Context, options?: Parameters<StreamFn>[2]) => {
+		const monitored = (async (
+			model: Model<any>,
+			context: Parameters<StreamFn>[1],
+			options?: Parameters<StreamFn>[2],
+		) => {
 			this._observedProviderRequests++;
 			this._wireRewriteCausesThisRequest.clear();
 			const kind = this._claimRequestKind();
@@ -206,7 +210,7 @@ export class ProviderRequestObserver {
 	 * prompt caches are per model. Surfaces, never crashes: monitor failures
 	 * must not take down the request path.
 	 */
-	private _observeProviderRequest(model: Model<any>, context: Context): void {
+	private _observeProviderRequest(model: Model<any>, context: TranscriptContext): void {
 		try {
 			// A blockImages flip rewrites every message's images on this request
 			// (sdk.ts reads the setting per request). Announce BEFORE diffing so

@@ -2,7 +2,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { StreamFn } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage, Context, ToolResultMessage } from "@earendil-works/pi-ai";
-import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
+import { createAssistantMessageEventStream, getCurrentSystemPrompt, getCurrentTools } from "@earendil-works/pi-ai";
 import {
 	fauxAssistantMessage,
 	fauxText,
@@ -58,13 +58,14 @@ describe("task tool", () => {
 		expect(getMessageText(toolResults[0])).toContain("sub-agent final answer");
 
 		expect(subContexts).toHaveLength(1);
-		expect(subContexts[0].systemPrompt).toBe("You are a terse analyst.");
+		// The sub-agent prompt is folded into a leading system message.
 		const subMessages = subContexts[0].messages;
+		expect(getCurrentSystemPrompt(subMessages)).toBe("You are a terse analyst.");
 		const lastUser = subMessages[subMessages.length - 1];
 		expect(lastUser?.role).toBe("user");
 		expect(getMessageText(lastUser)).toContain("Summarize the data below.");
 		// One layer deep: the sub-agent cannot spawn its own sub-agents.
-		expect(subContexts[0].tools?.map((tool) => tool.name) ?? []).not.toContain("task");
+		expect(getCurrentTools(subMessages).map((tool) => tool.name)).not.toContain("task");
 	});
 
 	it("sub-agents run the tools they inherit from the main agent", async () => {

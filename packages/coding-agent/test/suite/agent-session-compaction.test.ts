@@ -1,13 +1,15 @@
 import type { AgentMessage, AgentTool } from "@earendil-works/pi-agent-core";
 import {
 	type AssistantMessage,
-	type Context,
 	createAssistantMessageEventStream,
 	fauxAssistantMessage,
 	fauxToolCall,
+	getCurrentSystemPrompt,
+	getCurrentTools,
 	type Message,
 	type Model,
 	type SimpleStreamOptions,
+	type TranscriptContext,
 } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -56,7 +58,7 @@ function createAssistant(
 function useSummaryStreamFn(
 	harness: Harness,
 	summary: string,
-	onRequest?: (context: Context, options: SimpleStreamOptions | undefined) => void,
+	onRequest?: (context: TranscriptContext, options: SimpleStreamOptions | undefined) => void,
 ): () => number {
 	let callCount = 0;
 	harness.session.agent.streamFunction = (model, context, options) => {
@@ -104,14 +106,16 @@ interface CapturedRequest {
 	sessionId: string | undefined;
 }
 
-function captureRequest(context: Context, options?: SimpleStreamOptions): CapturedRequest {
+function captureRequest(context: TranscriptContext, options?: SimpleStreamOptions): CapturedRequest {
 	return {
-		systemPrompt: context.systemPrompt,
-		tools: (context.tools ?? []).map((tool) => ({
+		systemPrompt: getCurrentSystemPrompt(context.messages),
+		tools: getCurrentTools(context.messages).map((tool) => ({
 			name: tool.name,
 			parameters: JSON.stringify(tool.parameters),
 		})),
-		messages: structuredClone(context.messages),
+		// JSON clone: the leading system message carries tool declarations whose
+		// execute functions cannot survive structuredClone.
+		messages: JSON.parse(JSON.stringify(context.messages)),
 		sessionId: options?.sessionId,
 	};
 }
@@ -201,7 +205,57 @@ describe("AgentSession compaction characterization", () => {
 		expect(statsAfter.tokens.cacheRead).toBe(statsBefore.tokens.cacheRead + summaryUsage.cacheRead);
 		expect(statsAfter.tokens.cacheWrite).toBe(statsBefore.tokens.cacheWrite + summaryUsage.cacheWrite);
 		expect(statsAfter.cost).toBe(statsBefore.cost + summaryUsage.cost.total);
-		expect(harness.session.messages[0]?.role).toBe("compactionSummary");
+		expect(harness.session.messages[0]?.role).toBe("system");
+		expect(harness.session.messages[1]?.role).toBe("compactionSummary");
+	});
+
+	it("checkpoints the replayed system state and folds summarized and retained system patches into it", async () => {
+		const harness = await createHarness();
+		harnesses.push(harness);
+		harness.setResponses([fauxAssistantMessage("declared")]);
+		await harness.session.prompt("declare the prompt");
+		const declared = harness.session.messages[0];
+		if (declared?.role !== "system") throw new Error("expected declared system message");
+
+		harness.sessionManager.appendMessage({
+			role: "system",
+			content: "summarized instruction",
+			sections: { early: "<early>1</early>" },
+			toolsRemoved: [{ name: "bash" }],
+			timestamp: Date.now(),
+		});
+		const firstKeptEntryId = harness.sessionManager.appendMessage({
+			role: "user",
+			content: [{ type: "text", text: "kept before patch" }],
+			timestamp: Date.now(),
+		});
+		harness.sessionManager.appendMessage({
+			role: "system",
+			content: "retained instruction",
+			sections: { extra: "<extra>late</extra>" },
+			toolsRemoved: [{ name: "read" }],
+			timestamp: Date.now(),
+		});
+		harness.sessionManager.appendMessage({
+			role: "user",
+			content: [{ type: "text", text: "kept after patch" }],
+			timestamp: Date.now(),
+		});
+		harness.sessionManager.appendCompaction("compacted", firstKeptEntryId, 100);
+
+		const messages = harness.sessionManager.buildSessionContext().messages;
+		expect(messages.map((message) => message.role)).toEqual(["system", "compactionSummary", "user", "user"]);
+		const checkpoint = messages[0];
+		if (checkpoint?.role !== "system") throw new Error("expected checkpoint system message");
+		expect(checkpoint.content).toBe("summarized instruction\n\nretained instruction");
+		expect(checkpoint.sections).toEqual({
+			...declared.sections,
+			early: "<early>1</early>",
+			extra: "<extra>late</extra>",
+		});
+		expect(checkpoint.toolsAdded?.map((tool) => tool.name)).toEqual(
+			harness.session.getActiveToolNames().filter((name) => name !== "read" && name !== "bash"),
+		);
 	});
 
 	it("allows a queued prompt to start when manual compaction ends", async () => {
@@ -288,13 +342,12 @@ describe("AgentSession compaction characterization", () => {
 			streamSimple: () => createAssistantMessageEventStream(),
 		});
 		seedCompactableSession(harness);
-		harness.setResponses([
-			(_context, options) => {
-				expect(options?.apiKey).toBeUndefined();
-				expect(options?.headers).toEqual({ Authorization: "Bearer ambient-token" });
-				return fauxAssistantMessage("summary with bearer auth");
-			},
-		]);
+		const summaryResponse = (_context: TranscriptContext, options: SimpleStreamOptions | undefined) => {
+			expect(options?.apiKey).toBeUndefined();
+			expect(options?.headers).toEqual({ Authorization: "Bearer ambient-token" });
+			return fauxAssistantMessage("summary with bearer auth");
+		};
+		harness.setResponses([summaryResponse]);
 
 		const result = await harness.session.compact();
 
@@ -312,7 +365,7 @@ describe("AgentSession compaction characterization", () => {
 		harness.session.agent.sessionId = "active-routing-session";
 		harness.session.agent.transport = "websocket";
 
-		let requestContext: Context | undefined;
+		let requestContext: TranscriptContext | undefined;
 		let requestOptions: SimpleStreamOptions | undefined;
 		useSummaryStreamFn(harness, "standalone summary", (context, options) => {
 			requestContext = context;
@@ -326,8 +379,8 @@ describe("AgentSession compaction characterization", () => {
 		// request. The history-summary path replays the agent prefix instead
 		// (see the prefix-replay test below).
 		expect(transformContext).not.toHaveBeenCalled();
-		expect(requestContext?.systemPrompt).not.toBe(harness.session.agent.state.systemPrompt);
-		expect(requestContext?.tools).toBeUndefined();
+		expect(getCurrentSystemPrompt(requestContext?.messages ?? [])).not.toBe(harness.session.agent.state.systemPrompt);
+		expect(getCurrentTools(requestContext?.messages ?? [])).toEqual([]);
 		expect(JSON.stringify(requestContext?.messages)).toContain("<conversation>");
 		expect(requestOptions).toMatchObject({ cacheRetention: "none" });
 		expect(requestOptions?.sessionId).not.toBe("active-routing-session");
@@ -361,7 +414,7 @@ describe("AgentSession compaction characterization", () => {
 		harness.session.agent.sessionId = "prefix-replay-routing";
 
 		const captures: CapturedRequest[] = [];
-		const capture = (reply: string) => (_context: Context, options: SimpleStreamOptions | undefined) => {
+		const capture = (reply: string) => (_context: TranscriptContext, options: SimpleStreamOptions | undefined) => {
 			captures.push(captureRequest(_context, options));
 			return fauxAssistantMessage(reply);
 		};
@@ -392,7 +445,12 @@ describe("AgentSession compaction characterization", () => {
 		expect(JSON.stringify(summarizerRequest.messages.slice(0, -1))).toBe(
 			JSON.stringify(regularRequest.messages.slice(0, -1)),
 		);
-		expect(summarizerRequest.messages.map((message) => message.role)).toEqual(["user", "assistant", "user"]);
+		expect(summarizerRequest.messages.map((message) => message.role)).toEqual([
+			"system",
+			"user",
+			"assistant",
+			"user",
+		]);
 
 		const instruction = summarizerRequest.messages.at(-1);
 		expect(instruction?.role).toBe("user");
@@ -1068,7 +1126,7 @@ describe("AgentSession compaction characterization", () => {
 		harnesses.push(harness);
 
 		const captures: CapturedRequest[] = [];
-		const capture = (reply: string) => (_context: Context) => {
+		const capture = (reply: string) => (_context: TranscriptContext) => {
 			captures.push(captureRequest(_context));
 			return fauxAssistantMessage(reply);
 		};
@@ -1094,8 +1152,9 @@ describe("AgentSession compaction characterization", () => {
 		await harness.session.prompt("fourth turn ".repeat(20).trim());
 		const regularRequest = captures[captures.length - 1]!;
 		// convertToLlm maps the checkpoint message to a user message on the wire,
-		// so assert on its content rather than its role.
-		expect(JSON.stringify(regularRequest.messages[0])).toContain("first checkpoint");
+		// and the compaction entry restores the leading system message before it,
+		// so assert on content rather than role/index 0.
+		expect(JSON.stringify(regularRequest.messages[1])).toContain("first checkpoint");
 		const summaryMessages = regularRequest.messages.slice(0, -1);
 
 		await harness.session.compact();
@@ -1106,7 +1165,7 @@ describe("AgentSession compaction characterization", () => {
 		// shared messages); the only delta is the appended instruction turn.
 		expect(summarizerRequest.systemPrompt).toBe(regularRequest.systemPrompt);
 		expect(summarizerRequest.tools).toEqual(regularRequest.tools);
-		expect(JSON.stringify(summarizerRequest.messages[0])).toContain("first checkpoint");
+		expect(JSON.stringify(summarizerRequest.messages[1])).toContain("first checkpoint");
 		const replayShared = summarizerRequest.messages.slice(0, summaryMessages.length);
 		expect(JSON.stringify(replayShared)).toBe(JSON.stringify(summaryMessages));
 		expect(summarizerRequest.messages).toHaveLength(summaryMessages.length + 1);

@@ -23,7 +23,7 @@ describe("buildSystemPrompt", () => {
 				cwd: process.cwd(),
 			});
 
-			expect(prompt).toContain("Available tools:\n(none)");
+			expect(prompt).toContain("<tools>\n(none)\n");
 		});
 
 		test("shows file paths guideline even with no tools", () => {
@@ -35,6 +35,43 @@ describe("buildSystemPrompt", () => {
 			});
 
 			expect(prompt).toContain("Show file paths clearly");
+		});
+	});
+
+	describe("prompt structure", () => {
+		test("keeps the default and custom prompt prefixes exact", () => {
+			const defaultPrompt = buildSystemPrompt({ cwd: "/tmp", selectedTools: [], contextFiles: [], skills: [] });
+			const customPrompt = buildSystemPrompt({
+				customPrompt: "You are Exact.",
+				cwd: "/tmp",
+				selectedTools: [],
+				contextFiles: [],
+				skills: [],
+			});
+
+			expect(defaultPrompt.startsWith("You are an expert coding assistant operating inside pi")).toBe(true);
+			expect(customPrompt.startsWith("You are Exact.\n\n<cwd>")).toBe(true);
+		});
+
+		test("preserves an exact forced prompt without sections", () => {
+			expect(buildSystemPrompt({ forceSystemPrompt: "exact", cwd: "/tmp" })).toBe("exact");
+		});
+
+		test("maps appended instructions and project context to stable sections", () => {
+			const prompt = buildSystemPrompt({
+				customPrompt: "You are Exact.",
+				appendSystemPrompt: "Additional instructions.",
+				contextFiles: [{ path: "/tmp/AGENTS.md", content: "Project instructions." }],
+				selectedTools: [],
+				skills: [],
+				cwd: "/tmp",
+			});
+
+			expect(prompt).toContain("<addendum>\nAdditional instructions.\n</addendum>");
+			expect(prompt).toContain(
+				'<project_context>\nProject-specific instructions and guidelines:\n\n<project_instructions path="/tmp/AGENTS.md">',
+			);
+			expect(prompt).toContain("<cwd>\n/tmp\n</cwd>");
 		});
 	});
 
@@ -152,6 +189,7 @@ describe("buildSystemPrompt", () => {
 				cwd: process.cwd(),
 			});
 
+			expect(prompt).toContain("<skills>");
 			expect(prompt).toContain("<available_skills>");
 			expect(prompt).toContain("<name>test-skill</name>");
 			expect(prompt).toContain("Use bash to load a skill's file");
@@ -196,14 +234,16 @@ const GOLDEN_HEADER =
 const GOLDEN_CUSTOM_TOOLS_NOTE =
 	"In addition to the tools above, you may have access to other custom tools depending on the project.";
 
-const GOLDEN_DOCS_SECTION = `Pi documentation (read only when the user asks about pi itself, its SDK, extensions, themes, skills, or TUI):
+const GOLDEN_DOCS_SECTION = `<docs>
+Pi documentation (read only when the user asks about pi itself, its SDK, extensions, themes, skills, or TUI):
 - Main documentation: <README>
 - Additional docs: <DOCS>
 - Examples: <EXAMPLES> (extensions, custom tools, SDK)
 - When reading pi docs or examples, resolve docs/... under Additional docs and examples/... under Examples, not the current working directory
 - When asked about: extensions (docs/extensions.md, examples/extensions/), themes (docs/themes.md), skills (docs/skills.md), prompt templates (docs/prompt-templates.md), TUI components (docs/tui.md), keybindings (docs/keybindings.md), SDK integrations (docs/sdk.md), custom providers (docs/custom-provider.md), adding models (docs/models.md), pi packages (docs/packages.md), environment variables (docs/environment-variables.md)
 - When working on pi topics, read the docs and examples, and follow .md cross-references before implementing
-- Always read pi .md files completely and follow links to related docs (e.g., tui.md for TUI API details)`;
+- Always read pi .md files completely and follow links to related docs (e.g., tui.md for TUI API details)
+</docs>`;
 
 const GOLDEN_ALWAYS_GUIDELINES = ["Be concise in your responses", "Show file paths clearly when working with files"];
 
@@ -261,20 +301,25 @@ describe("buildSystemPrompt golden output (issue #12 equivalence baseline)", () 
 
 		expect(prompt).toBe(`${GOLDEN_HEADER}
 
-Available tools:
+<tools>
 - read: Read files
 - bash: Run shell commands
 - edit: Apply surgical edits
 - write: Create or overwrite files
 
 ${GOLDEN_CUSTOM_TOOLS_NOTE}
+</tools>
 
-Guidelines:
+<rules>
 - Use bash for file operations like ls, rg, find
 ${GOLDEN_ALWAYS_GUIDELINES.map((g) => `- ${g}`).join("\n")}
+</rules>
 
 ${GOLDEN_DOCS_SECTION}
-Current working directory: /workspace/project`);
+
+<cwd>
+/workspace/project
+</cwd>`);
 	});
 
 	test("read-only tool set: bash guideline dropped, single tool listed", () => {
@@ -290,16 +335,21 @@ Current working directory: /workspace/project`);
 
 		expect(prompt).toBe(`${GOLDEN_HEADER}
 
-Available tools:
+<tools>
 - read: Read files
 
 ${GOLDEN_CUSTOM_TOOLS_NOTE}
+</tools>
 
-Guidelines:
+<rules>
 ${GOLDEN_ALWAYS_GUIDELINES.map((g) => `- ${g}`).join("\n")}
+</rules>
 
 ${GOLDEN_DOCS_SECTION}
-Current working directory: /workspace/project`);
+
+<cwd>
+/workspace/project
+</cwd>`);
 	});
 
 	test("bash alongside grep/find/ls drops the bash guideline; tools without snippets stay hidden; custom guidelines keep order", () => {
@@ -327,7 +377,7 @@ Current working directory: /workspace/project`);
 
 		expect(prompt).toBe(`${GOLDEN_HEADER}
 
-Available tools:
+<tools>
 - read: Read files
 - bash: Run shell commands
 - grep: Search file contents
@@ -335,13 +385,18 @@ Available tools:
 - ls: List directories
 
 ${GOLDEN_CUSTOM_TOOLS_NOTE}
+</tools>
 
-Guidelines:
+<rules>
 - Prefer grep over bash for searching.
 ${GOLDEN_ALWAYS_GUIDELINES.map((g) => `- ${g}`).join("\n")}
+</rules>
 
 ${GOLDEN_DOCS_SECTION}
-Current working directory: /workspace/project`);
+
+<cwd>
+/workspace/project
+</cwd>`);
 	});
 
 	test("project instructions render in order under <project_context>", () => {
@@ -363,18 +418,19 @@ Current working directory: /workspace/project`);
 
 		expect(prompt).toBe(`${GOLDEN_HEADER}
 
-Available tools:
+<tools>
 - read: Read files
 
 ${GOLDEN_CUSTOM_TOOLS_NOTE}
+</tools>
 
-Guidelines:
+<rules>
 ${GOLDEN_ALWAYS_GUIDELINES.map((g) => `- ${g}`).join("\n")}
+</rules>
 
 ${GOLDEN_DOCS_SECTION}
 
 <project_context>
-
 Project-specific instructions and guidelines:
 
 <project_instructions path="/workspace/project/AGENTS.md">
@@ -385,10 +441,11 @@ Keep answers short.
 Run ./test.sh before pushing.
 Sign the commit.
 </project_instructions>
-
 </project_context>
 
-Current working directory: /workspace/project`);
+<cwd>
+/workspace/project
+</cwd>`);
 	});
 
 	test("appendSystemPrompt renders between the docs section and the cwd line", () => {
@@ -405,18 +462,25 @@ Current working directory: /workspace/project`);
 
 		expect(prompt).toBe(`${GOLDEN_HEADER}
 
-Available tools:
+<tools>
 - read: Read files
 
 ${GOLDEN_CUSTOM_TOOLS_NOTE}
+</tools>
 
-Guidelines:
+<rules>
 ${GOLDEN_ALWAYS_GUIDELINES.map((g) => `- ${g}`).join("\n")}
+</rules>
 
 ${GOLDEN_DOCS_SECTION}
 
+<addendum>
 Extra rules apply.
-Current working directory: /workspace/project`);
+</addendum>
+
+<cwd>
+/workspace/project
+</cwd>`);
 	});
 
 	test("skills render XML-escaped after the docs section; disabled skills are excluded", () => {
@@ -444,16 +508,19 @@ Current working directory: /workspace/project`);
 
 		expect(prompt).toBe(`${GOLDEN_HEADER}
 
-Available tools:
+<tools>
 - read: Read files
 
 ${GOLDEN_CUSTOM_TOOLS_NOTE}
+</tools>
 
-Guidelines:
+<rules>
 ${GOLDEN_ALWAYS_GUIDELINES.map((g) => `- ${g}`).join("\n")}
+</rules>
 
 ${GOLDEN_DOCS_SECTION}
 
+<skills>
 The following skills provide specialized instructions for specific tasks.
 Use the read tool to load a skill's file when the task matches its description.
 When a skill file references a relative path, resolve it against the skill directory (parent of SKILL.md / dirname of the path) and use that absolute path in tool commands.
@@ -465,7 +532,11 @@ When a skill file references a relative path, resolve it against the skill direc
     <location>/workspace/project/.pi/skills/commit/SKILL.md</location>
   </skill>
 </available_skills>
-Current working directory: /workspace/project`);
+</skills>
+
+<cwd>
+/workspace/project
+</cwd>`);
 	});
 
 	test("combined section order: docs, append, project context, skills, cwd", () => {
@@ -493,33 +564,35 @@ Current working directory: /workspace/project`);
 
 		expect(prompt).toBe(`${GOLDEN_HEADER}
 
-Available tools:
+<tools>
 - read: Read files
 - bash: Run shell commands
 - edit: Apply surgical edits
 - write: Create or overwrite files
 
 ${GOLDEN_CUSTOM_TOOLS_NOTE}
+</tools>
 
-Guidelines:
+<rules>
 - Use bash for file operations like ls, rg, find
 ${GOLDEN_ALWAYS_GUIDELINES.map((g) => `- ${g}`).join("\n")}
+</rules>
 
 ${GOLDEN_DOCS_SECTION}
 
+<addendum>
 Extra rules apply.
+</addendum>
 
 <project_context>
-
 Project-specific instructions and guidelines:
 
 <project_instructions path="/workspace/project/AGENTS.md">
 Keep answers short.
 </project_instructions>
-
 </project_context>
 
-
+<skills>
 The following skills provide specialized instructions for specific tasks.
 Use the read tool to load a skill's file when the task matches its description.
 When a skill file references a relative path, resolve it against the skill directory (parent of SKILL.md / dirname of the path) and use that absolute path in tool commands.
@@ -531,7 +604,11 @@ When a skill file references a relative path, resolve it against the skill direc
     <location>/workspace/project/.pi/skills/review/SKILL.md</location>
   </skill>
 </available_skills>
-Current working directory: /workspace/project`);
+</skills>
+
+<cwd>
+/workspace/project
+</cwd>`);
 	});
 
 	test("customPrompt replaces the default prompt but keeps append, context, skills, and cwd", () => {
@@ -553,19 +630,19 @@ Current working directory: /workspace/project`);
 
 		expect(prompt).toBe(`You are a terse code reviewer.
 
+<addendum>
 Appended reviewer rules.
+</addendum>
 
 <project_context>
-
 Project-specific instructions and guidelines:
 
 <project_instructions path="/workspace/project/AGENTS.md">
 Review only what changed.
 </project_instructions>
-
 </project_context>
 
-
+<skills>
 The following skills provide specialized instructions for specific tasks.
 Use the read tool to load a skill's file when the task matches its description.
 When a skill file references a relative path, resolve it against the skill directory (parent of SKILL.md / dirname of the path) and use that absolute path in tool commands.
@@ -577,8 +654,11 @@ When a skill file references a relative path, resolve it against the skill direc
     <location>/workspace/project/.pi/skills/review/SKILL.md</location>
   </skill>
 </available_skills>
-Current working directory: /workspace/project
-`);
+</skills>
+
+<cwd>
+/workspace/project
+</cwd>`);
 	});
 
 	test("customPrompt without the read tool keeps the skills section via bash and omits the docs section", () => {
@@ -601,6 +681,7 @@ Current working directory: /workspace/project
 
 		expect(prompt).toBe(`You are a deployment checker.
 
+<skills>
 The following skills provide specialized instructions for specific tasks.
 Use bash to load a skill's file when the task matches its description.
 When a skill file references a relative path, resolve it against the skill directory (parent of SKILL.md / dirname of the path) and use that absolute path in tool commands.
@@ -612,8 +693,11 @@ When a skill file references a relative path, resolve it against the skill direc
     <location>/workspace/project/.pi/skills/review/SKILL.md</location>
   </skill>
 </available_skills>
-Current working directory: /workspace/project
-`);
+</skills>
+
+<cwd>
+/workspace/project
+</cwd>`);
 	});
 
 	test("normalizes backslashes in the cwd line", () => {
@@ -626,6 +710,6 @@ Current working directory: /workspace/project
 			}),
 		);
 
-		expect(prompt.endsWith("\nCurrent working directory: C:/workspace/project")).toBe(true);
+		expect(prompt.endsWith("<cwd>\nC:/workspace/project\n</cwd>")).toBe(true);
 	});
 });

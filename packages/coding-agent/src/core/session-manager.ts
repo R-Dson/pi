@@ -1,5 +1,12 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import { type ImageContent, type Message, type TextContent, type Usage, uuidv7 } from "@earendil-works/pi-ai";
+import {
+	getCurrentSystemMessage,
+	type ImageContent,
+	type Message,
+	type TextContent,
+	type Usage,
+	uuidv7,
+} from "@earendil-works/pi-ai";
 import { randomUUID } from "crypto";
 import {
 	appendFileSync,
@@ -868,17 +875,20 @@ export class SessionManager {
 		fromHook?: boolean,
 		usage?: Usage,
 	): string {
+		const timestamp = new Date().toISOString();
+		const systemMessage = getCurrentSystemMessage(this.buildSessionContext().messages);
 		const entry: CompactionEntry<T> = {
 			type: "compaction",
 			id: generateId(this.byId),
 			parentId: this.leafId,
-			timestamp: new Date().toISOString(),
+			timestamp,
 			summary,
 			firstKeptEntryId,
 			tokensBefore,
 			details,
 			usage,
 			fromHook,
+			...(systemMessage ? { systemMessage: { ...systemMessage, timestamp: new Date(timestamp).getTime() } } : {}),
 		};
 		this._appendEntry(entry);
 		return entry.id;
@@ -1416,6 +1426,32 @@ export class SessionManager {
 		}
 
 		return new SessionManager(resolvedTargetCwd, dir, newSessionFile, true);
+	}
+
+	/**
+	 * Find an exact session ID without loading transcript bodies.
+	 * @param cwd Working directory (used to compute default session directory)
+	 * @param id Exact session ID
+	 * @param sessionDir Optional session directory. If omitted, uses default (~/.pi/agent/sessions/<encoded-cwd>/).
+	 */
+	static findById(cwd: string, id: string, sessionDir?: string): string | undefined {
+		const dir = sessionDir ? normalizePath(sessionDir) : getDefaultSessionDir(cwd);
+		const filterCwd = sessionDir !== undefined && dir !== getDefaultSessionDirPath(cwd);
+		const resolvedCwd = resolvePath(cwd);
+
+		try {
+			for (const file of readdirSync(dir)) {
+				if (!file.endsWith(".jsonl")) continue;
+				const path = join(dir, file);
+				const header = readSessionHeaderForDiscovery(path);
+				if (header?.id !== id) continue;
+				if (filterCwd && !sessionCwdMatches(getSessionHeaderCwd(header), resolvedCwd)) continue;
+				return path;
+			}
+		} catch {
+			// Exact session discovery is best-effort, matching list().
+		}
+		return undefined;
 	}
 
 	/**

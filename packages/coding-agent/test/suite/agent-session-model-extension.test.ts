@@ -1,5 +1,11 @@
 import type { AgentTool, ThinkingLevel } from "@earendil-works/pi-agent-core";
-import { fauxAssistantMessage, fauxToolCall, type Model, type Usage } from "@earendil-works/pi-ai";
+import {
+	fauxAssistantMessage,
+	fauxToolCall,
+	getCurrentSystemPrompt,
+	type Model,
+	type Usage,
+} from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
 import type { BuildSystemPromptOptions, ExtensionAPI } from "../../src/index.ts";
@@ -476,7 +482,7 @@ describe("AgentSession model and extension characterization", () => {
 		let sawInjectedUserMessage = false;
 		harness.setResponses([
 			(context) => {
-				providerSystemPrompt = context.systemPrompt ?? "";
+				providerSystemPrompt = getCurrentSystemPrompt(context.messages);
 				sawInjectedUserMessage = context.messages.some(
 					(message) =>
 						message.role === "user" &&
@@ -539,6 +545,6 @@ describe("AgentSession model and extension characterization", () => {
 		harness.setResponses([fauxAssistantMessage("reply")]);
 		await harness.session.prompt("hello");
 
-		expect(roles).toEqual(["user", "assistant"]);
+		expect(roles).toEqual(["system", "user", "assistant"]);
 	});
 });

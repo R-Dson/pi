@@ -19,7 +19,8 @@
  */
 
 import type { AgentTool } from "@earendil-works/pi-agent-core";
-import type { Context, Message } from "@earendil-works/pi-ai";
+import type { Message, TranscriptContext } from "@earendil-works/pi-ai";
+import { getCurrentSystemPrompt, getCurrentTools } from "@earendil-works/pi-ai";
 import type { FauxResponseStep } from "@earendil-works/pi-ai/compat";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai/compat";
 import { Type } from "typebox";
@@ -33,10 +34,10 @@ interface CapturedRequest {
 	messages: Message[];
 }
 
-function captureRequest(context: Context): CapturedRequest {
+function captureRequest(context: TranscriptContext): CapturedRequest {
 	return {
-		systemPrompt: context.systemPrompt,
-		tools: serializeTools(context.tools),
+		systemPrompt: getCurrentSystemPrompt(context.messages),
+		tools: serializeTools(getCurrentTools(context.messages)),
 		messages: structuredClone(context.messages),
 	};
 }
@@ -117,8 +118,8 @@ describe("stable model-request prefix (issue #12 baseline)", () => {
 		expect(captures.length).toBe(2);
 		expectSamePromptAndTools(captures);
 		expectStablePrefix(captures[0]!.messages, captures[1]!.messages);
-		expect(captures[0]!.messages.map((message) => message.role)).toEqual(["user"]);
-		expect(captures[1]!.messages.map((message) => message.role)).toEqual(["user", "assistant", "user"]);
+		expect(captures[0]!.messages.map((message) => message.role)).toEqual(["system", "user"]);
+		expect(captures[1]!.messages.map((message) => message.role)).toEqual(["system", "user", "assistant", "user"]);
 	});
 
 	it("keeps the request prefix stable when the first turn executes a tool call", async () => {
@@ -152,17 +153,23 @@ describe("stable model-request prefix (issue #12 baseline)", () => {
 		expectSamePromptAndTools(captures);
 		// Follow-up request within turn 1: only the assistant tool call and its result were appended.
 		expectStablePrefix(captures[0]!.messages, captures[1]!.messages);
-		expect(captures[1]!.messages.map((message) => message.role)).toEqual(["user", "assistant", "toolResult"]);
+		expect(captures[1]!.messages.map((message) => message.role)).toEqual([
+			"system",
+			"user",
+			"assistant",
+			"toolResult",
+		]);
 		// Turn 2 request: only turn 1's closing assistant reply and the new user message were appended.
 		expectStablePrefix(captures[1]!.messages, captures[2]!.messages);
 		expect(captures[2]!.messages.map((message) => message.role)).toEqual([
+			"system",
 			"user",
 			"assistant",
 			"toolResult",
 			"assistant",
 			"user",
 		]);
-		const toolResult = captures[1]!.messages[2];
+		const toolResult = captures[1]!.messages[3];
 		if (toolResult?.role === "toolResult") {
 			expect(toolResult.toolName).toBe("bash");
 		} else {

@@ -6,8 +6,24 @@
  */
 
 import type { AgentMessage, AgentTool, StreamFn, ThinkingLevel } from "@earendil-works/pi-agent-core";
-import { contentText, type RetryCallbacks, type RetryPolicy, retryAssistantCall, uuidv7 } from "@earendil-works/pi-ai";
-import type { AssistantMessage, Context, Model, SimpleStreamOptions, Usage } from "@earendil-works/pi-ai/compat";
+import {
+	contentText,
+	getInitialSystemMessage,
+	type Message,
+	normalizeContext,
+	type RetryCallbacks,
+	type RetryPolicy,
+	retryAssistantCall,
+	uuidv7,
+} from "@earendil-works/pi-ai";
+import type {
+	AssistantMessage,
+	Model,
+	SimpleStreamOptions,
+	SystemMessage,
+	TranscriptContext,
+	Usage,
+} from "@earendil-works/pi-ai/compat";
 import { completeSimple } from "@earendil-works/pi-ai/compat";
 import { convertToLlm } from "../messages.ts";
 import {
@@ -82,7 +98,9 @@ function getMessageFromEntryForCompaction(entry: SessionEntry): AgentMessage | u
 	if (entry.type === "compaction") {
 		return undefined;
 	}
-	return sessionEntryToContextMessages(entry)[0];
+	// System messages are prompt state, not conversation; the compaction entry carries their replay.
+	const message = sessionEntryToContextMessages(entry)[0];
+	return message?.role === "system" ? undefined : message;
 }
 
 /** Result from compact() - SessionManager adds uuid/parentUuid when saving */
@@ -477,6 +495,12 @@ export function findCutPoint(
 export interface SummarizationPrefix {
 	systemPrompt: string;
 	tools: AgentTool[];
+	/**
+	 * The transcript's current system message, when one is active. Replayed as-is
+	 * so the summarizer request's leading bytes match the regular request's
+	 * exactly; `systemPrompt`/`tools` remain the derived fallback.
+	 */
+	systemMessage?: SystemMessage;
 }
 
 const SUMMARIZATION_PROMPT = `Summarize the conversation above. Create a structured context checkpoint summary that another LLM will use to continue the work.
@@ -607,7 +631,7 @@ function createSummarizationOptions(
  */
 export async function completeSummarization(
 	model: Model<any>,
-	context: Context,
+	context: TranscriptContext,
 	options: SimpleStreamOptions,
 	streamFn?: StreamFn,
 	retry?: RetryPolicy,
@@ -673,8 +697,8 @@ export async function generateSummary(
 }
 
 /** Build the provider context for a standalone summary request. */
-function buildSummarizationContext(promptText: string): Context {
-	return {
+function buildSummarizationContext(promptText: string): TranscriptContext {
+	return normalizeContext({
 		systemPrompt: SUMMARIZATION_SYSTEM_PROMPT,
 		messages: [
 			{
@@ -683,7 +707,7 @@ function buildSummarizationContext(promptText: string): Context {
 				timestamp: Date.now(),
 			},
 		],
-	};
+	});
 }
 
 /**
@@ -695,19 +719,29 @@ function buildReplaySummarizationContext(
 	currentMessages: AgentMessage[],
 	instruction: string,
 	prefix: SummarizationPrefix,
-): Context {
-	return {
+): TranscriptContext {
+	const replayMessages: Message[] = [
+		...convertToLlm(currentMessages),
+		{
+			role: "user",
+			content: [{ type: "text", text: instruction }],
+			timestamp: Date.now(),
+		},
+	];
+	if (prefix.systemMessage) {
+		// A checkpoint-headed transcript already restored its system message after
+		// the cut; the prefix supplies it, so drop a leading duplicate from the
+		// replayed history to keep the prefix byte-identical to a regular request.
+		const history = getInitialSystemMessage(replayMessages) ? replayMessages.slice(1) : replayMessages;
+		return { messages: [prefix.systemMessage, ...history] } as TranscriptContext;
+	}
+	// No active system message in the transcript: fold the derived prefix into a
+	// leading system message, the same shape a regular request sends.
+	return normalizeContext({
 		systemPrompt: prefix.systemPrompt,
 		tools: prefix.tools,
-		messages: [
-			...convertToLlm(currentMessages),
-			{
-				role: "user",
-				content: [{ type: "text", text: instruction }],
-				timestamp: Date.now(),
-			},
-		],
-	};
+		messages: replayMessages,
+	});
 }
 
 /** Generate or update a conversation summary and return its provider usage. */

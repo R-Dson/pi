@@ -1,6 +1,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
+import { getCurrentSystemPrompt, getCurrentTools } from "@earendil-works/pi-ai";
 import { fauxAssistantMessage, fauxToolCall, registerFauxProvider } from "@earendil-works/pi-ai/compat";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ExtensionAPI, ExtensionUIContext } from "../../src/core/extensions/types.ts";
@@ -140,8 +141,10 @@ describe("model-handoff built-in (#107)", () => {
 		let switchModel = "";
 		harness.setResponses([
 			(context) => {
-				providerSystemPrompt = context.systemPrompt ?? "";
-				switchModel = JSON.stringify(context.tools?.find((tool) => tool.name === "switch_model"));
+				providerSystemPrompt = getCurrentSystemPrompt(context.messages);
+				switchModel = JSON.stringify(
+					getCurrentTools(context.messages).find((tool) => tool.name === "switch_model"),
+				);
 				return fauxAssistantMessage("ok");
 			},
 		]);
@@ -178,7 +181,7 @@ describe("model-handoff built-in (#107)", () => {
 			(context) => {
 				// The request made by the target model keeps the tool and carries
 				// the baton tool result in its message history.
-				targetRequestHadTool = context.tools?.some((tool) => tool.name === "switch_model") ?? false;
+				targetRequestHadTool = getCurrentTools(context.messages).some((tool) => tool.name === "switch_model");
 				targetRequestSawBaton = JSON.stringify(context.messages).includes("mechanical from here");
 				return fauxAssistantMessage("fast done");
 			},
@@ -211,8 +214,8 @@ describe("model-handoff built-in (#107)", () => {
 		let switchModelTool = false;
 		harness.setResponses([
 			(context) => {
-				providerSystemPrompt = context.systemPrompt ?? "";
-				switchModelTool = context.tools?.some((tool) => tool.name === "switch_model") ?? false;
+				providerSystemPrompt = getCurrentSystemPrompt(context.messages);
+				switchModelTool = getCurrentTools(context.messages).some((tool) => tool.name === "switch_model");
 				return fauxAssistantMessage("ok");
 			},
 		]);
@@ -241,8 +244,8 @@ describe("model-handoff built-in (#107)", () => {
 		let switchModelTool = false;
 		harness.setResponses([
 			(context) => {
-				providerSystemPrompt = context.systemPrompt ?? "";
-				switchModelTool = context.tools?.some((tool) => tool.name === "switch_model") ?? false;
+				providerSystemPrompt = getCurrentSystemPrompt(context.messages);
+				switchModelTool = getCurrentTools(context.messages).some((tool) => tool.name === "switch_model");
 				return fauxAssistantMessage("ok");
 			},
 		]);
@@ -617,7 +620,9 @@ describe("model-handoff project config (#110)", () => {
 		let switchModel = "";
 		harness.setResponses([
 			(context) => {
-				switchModel = JSON.stringify(context.tools?.find((tool) => tool.name === "switch_model"));
+				switchModel = JSON.stringify(
+					getCurrentTools(context.messages).find((tool) => tool.name === "switch_model"),
+				);
 				return handoffTurn("fast", { reason: "machine tiers still work" });
 			},
 			fauxAssistantMessage("done"),
@@ -669,8 +674,8 @@ describe("model-handoff project config (#110)", () => {
 		let switchModelTool = false;
 		harness.setResponses([
 			(context) => {
-				providerSystemPrompt = context.systemPrompt ?? "";
-				switchModelTool = context.tools?.some((tool) => tool.name === "switch_model") ?? false;
+				providerSystemPrompt = getCurrentSystemPrompt(context.messages);
+				switchModelTool = getCurrentTools(context.messages).some((tool) => tool.name === "switch_model");
 				return fauxAssistantMessage("ok");
 			},
 		]);
@@ -729,7 +734,7 @@ describe("model-handoff project config (#110)", () => {
 		let switchModelTool = false;
 		harness.setResponses([
 			(context) => {
-				switchModelTool = context.tools?.some((tool) => tool.name === "switch_model") ?? false;
+				switchModelTool = getCurrentTools(context.messages).some((tool) => tool.name === "switch_model");
 				return fauxAssistantMessage("ok");
 			},
 		]);

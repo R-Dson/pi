@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- `user_bash` now fails closed: errors or invalid defined results abort the command without invoking later handlers or executing locally. Return `undefined` to continue propagation; otherwise return `{ operations }` or `{ result }` ([#9068](https://github.com/earendil-works/pi/issues/9068)).
+
 ### New Features
 
 - Sub-agents via the built-in `task` tool: spawn a one-layer sub-agent with the active tools (minus `task` itself), the same model, and fully LLM-provided instructions; `maxSubAgents` setting (default 2) caps concurrent runs, excess spawns queue.
@@ -17,6 +21,7 @@
 - Added `ctx.modelRegistry.stream()` and `streamSimple()` for extension model calls through configured providers with resolved authentication ([#8964](https://github.com/earendil-works/pi/issues/8964)).
 - Added per-model `reserveTokens` and `keepRecentTokens` settings through `compaction.modelOverrides`, with ordinary compaction settings as fallback ([#8133](https://github.com/earendil-works/pi-mono/issues/8133)).
 - Added prebuilt self-contained binaries to releases and made `install.sh` prefer them: on darwin/linux (x64, arm64) installing needs only `curl` and `tar` — no Node.js or npm — with the npm tarball path as fallback for other platforms, releases predating binary assets, or `PI_INSTALL_METHOD=npm`. Binary installs live under `<prefix>/lib/pi-fork` with `bin/pi` symlinked in; `--uninstall` removes either flavor. The `package.json` inside each binary archive is stamped to `@r-dson/pi-standalone@<version>` so binary installs report the fork version and `pi update --self` classifies them as the fork's standalone channel instead of the upstream npm package.
+- Added `compat.allowedFallbackModels` configuration for overriding or disabling Anthropic server-side fallback models ([#9294](https://github.com/earendil-works/pi/issues/9294)).
 
 ### Changed
 
@@ -31,6 +36,7 @@
 ### Fixed
 
 - Fixed `pi install`/`pi update` failing with a raw `spawn npm ENOENT` when no package manager is installed: the error now explains that pi and extensions placed under `~/.pi/agent/` run without one, and lists the options (install Node.js, point the `npmCommand` setting at an installed manager such as bun, or place the package's files manually).
+- Fixed local clipboard failures reporting success when the terminal ignored the fallback OSC 52 write, and added platform-specific setup guidance when no clipboard backend works ([#9618](https://github.com/earendil-works/pi/issues/9618)).
 - Capped agent-level retry backoff at `retry.maxAgentDelayMs` (60s by default) so long retry runs stay responsive during prolonged transient outages ([#8826](https://github.com/earendil-works/pi/issues/8826)).
 - Fixed direct RPC `steer` and `follow_up` commands bypassing extension `input` handlers ([#8718](https://github.com/earendil-works/pi/issues/8718)).
 - Fixed premature missing-model errors after login by waiting for catalog discovery. Radius now defaults to `balanced`, falling back to the first available Radius model when needed.
@@ -39,6 +45,7 @@
 - Updated runtime dependencies, including undici 8.10.2 with security fixes for interceptor cache poisoning, TLS callback reuse, and WebSocket crashes ([#9341](https://github.com/earendil-works/pi/pull/9341)).
 - Rejected session tree navigation while a compaction is running ([#9179](https://github.com/earendil-works/pi/pull/9179) by [@acmerfight](https://github.com/acmerfight)).
 - Preserved the active operation status (compaction, branch summary, retry) in the editor border when navigating the session tree.
+- Fixed `before_agent_start` handlers returning `systemPrompt` (and `forceSystemPrompt`) on models with mid-conversation system messages: the forced prompt is now persisted as a replacing system message and sent as the provider's leading system prompt instead of being appended as a section patch after the original prompt.
 
 ## [0.85.5] - 2026-09-06
 

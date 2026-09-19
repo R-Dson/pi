@@ -7,7 +7,8 @@
  * monitor and the tests share this module so the pinned semantics cannot drift.
  */
 
-import type { Context, Message } from "@earendil-works/pi-ai";
+import type { Context, Message, TranscriptContext } from "@earendil-works/pi-ai";
+import { normalizeContext } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
 import {
@@ -32,8 +33,8 @@ function toolResultMessage(text: string, timestamp = 2): Message {
 	};
 }
 
-function requestContext(overrides: Partial<Context> = {}): Context {
-	return {
+function requestContext(overrides: Partial<Context> = {}): TranscriptContext {
+	return normalizeContext({
 		systemPrompt: "system prompt",
 		tools: [
 			{ name: "bash", description: "Run a command", parameters: Type.Object({ command: Type.String() }) },
@@ -41,7 +42,7 @@ function requestContext(overrides: Partial<Context> = {}): Context {
 		],
 		messages: [userMessage("first turn")],
 		...overrides,
-	};
+	});
 }
 
 /** True when `result` equals `expected` including the optional divergence index. */

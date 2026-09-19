@@ -11,7 +11,8 @@
  * Pure module: no I/O, no global state.
  */
 
-import type { Context, Message } from "@earendil-works/pi-ai";
+import type { Message, Tool, TranscriptContext } from "@earendil-works/pi-ai";
+import { getCurrentSystemPrompt, getCurrentTools, getInitialSystemMessage } from "@earendil-works/pi-ai";
 
 /** Why a request diverged from the previous one, as computed by the pure diff. */
 export type PrefixDiffCause = "append-only" | "system-prompt" | "tools" | "history" | "reset";
@@ -76,7 +77,7 @@ interface SerializedPrefix {
 
 /** Normalize tools as `[{name, JSON(parameters)}]` in order — the shared
  * tool-identity convention for prefix comparisons. */
-export function serializeTools(tools: Context["tools"]): Array<{ name: string; parameters: string }> {
+export function serializeTools(tools: readonly Tool[] | undefined): Array<{ name: string; parameters: string }> {
 	return (tools ?? []).map((tool) => ({
 		name: tool.name,
 		parameters: JSON.stringify(tool.parameters),
@@ -88,11 +89,18 @@ export function serializeTools(tools: Context["tools"]): Array<{ name: string; p
  * order, and the message array as-is (referenced, not cloned — the result is
  * only ever compared, never mutated).
  */
-export function serializeRequestPrefix(context: Pick<Context, "systemPrompt" | "tools" | "messages">): string {
+export function serializeRequestPrefix(context: Pick<TranscriptContext, "messages">): string {
+	// The prompt and tool list live in the transcript's system messages; replaying
+	// them keeps the same section split the old Context fields carried, so diff
+	// causes (system-prompt, tools, history) are attributed exactly as before.
+	// The leading system message is already covered by the prompt and tools
+	// sections; dropping it from the history keeps divergence indexes counting
+	// conversation messages only.
+	const hasLeadingSystemMessage = getInitialSystemMessage(context.messages) !== undefined;
 	const prefix: SerializedPrefix = {
-		systemPrompt: context.systemPrompt,
-		tools: serializeTools(context.tools),
-		messages: context.messages,
+		systemPrompt: getCurrentSystemPrompt(context.messages),
+		tools: serializeTools(getCurrentTools(context.messages)),
+		messages: (hasLeadingSystemMessage ? context.messages.slice(1) : context.messages) as Message[],
 	};
 	return JSON.stringify(prefix);
 }

@@ -6,6 +6,7 @@ import { getSupportedThinkingLevels } from "../src/models.ts";
 import { XAI_MODELS } from "../src/providers/xai.models.ts";
 import { xaiProvider } from "../src/providers/xai.ts";
 import type { Context, Model } from "../src/types.ts";
+import { normalizeContext } from "../src/utils/transcript.ts";
 
 type CapturedRequest = {
 	url: string;
@@ -74,7 +75,7 @@ async function captureCompletionsUserAgent(headers?: Record<string, string>): Pr
 
 	const result = await streamOpenAICompletions(
 		customCompletionsModel,
-		{ messages: [{ role: "user", content: "hello", timestamp: 1 }] },
+		normalizeContext({ messages: [{ role: "user", content: "hello", timestamp: 1 }] }),
 		{ apiKey: "xai-test-token", headers },
 	).result();
 
@@ -98,7 +99,7 @@ async function captureRequest(
 		return completedResponse();
 	});
 
-	const result = await xaiProvider().stream(model, context, options).result();
+	const result = await xaiProvider().stream(model, normalizeContext(context), options).result();
 	expect(result.stopReason, result.errorMessage).toBe("stop");
 	expect(captured).toBeDefined();
 	return captured!;
@@ -242,7 +243,7 @@ describe("xAI Responses provider", () => {
 		};
 		const result = await streamOpenAIResponses(
 			openaiModel,
-			{ messages: [{ role: "user", content: "hello", timestamp: 1 }] },
+			normalizeContext({ messages: [{ role: "user", content: "hello", timestamp: 1 }] }),
 			{ apiKey: "test-token" },
 		).result();
 

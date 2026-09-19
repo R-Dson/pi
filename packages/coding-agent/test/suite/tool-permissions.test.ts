@@ -1,4 +1,4 @@
-import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, fauxToolCall, getCurrentTools } from "@earendil-works/pi-ai";
 import type { ToolResultMessage } from "@earendil-works/pi-ai/compat";
 import { afterEach, describe, expect, it } from "vitest";
 import type { Settings } from "../../src/core/settings-manager.ts";
@@ -69,7 +69,7 @@ describe("core ignores tools.permissions settings", () => {
 		let visibleTools: string[] = [];
 		harness.setResponses([
 			(context) => {
-				visibleTools = (context.tools ?? []).map((tool) => tool.name);
+				visibleTools = getCurrentTools(context.messages).map((tool) => tool.name);
 				return fauxAssistantMessage("done");
 			},
 		]);

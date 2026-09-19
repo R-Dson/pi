@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { stream as streamOpenAICompletions } from "../src/api/openai-completions.ts";
 import { getModel } from "../src/compat.ts";
+import { normalizeContext } from "../src/index.ts";
 import type { Model } from "../src/types.ts";
 
 const mockState = vi.hoisted(() => ({
@@ -54,10 +55,10 @@ async function usageFor(rawUsage: Record<string, unknown>) {
 	mockState.usage = rawUsage;
 	const message = await streamOpenAICompletions(
 		createModel(),
-		{
+		normalizeContext({
 			systemPrompt: "sys",
 			messages: [{ role: "user", content: "hi", timestamp: Date.now() }],
-		},
+		}),
 		{ apiKey: "test-key" },
 	).result();
 	return message.usage;

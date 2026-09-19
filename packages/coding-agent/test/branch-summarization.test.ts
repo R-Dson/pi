@@ -4,6 +4,8 @@ import {
 	type Context,
 	createAssistantMessageEventStream,
 	fauxAssistantMessage,
+	getCurrentSystemPrompt,
+	getCurrentTools,
 	type Model,
 	type SimpleStreamOptions,
 } from "@earendil-works/pi-ai";
@@ -81,17 +83,18 @@ describe("branch summarization", () => {
 			prefix,
 		});
 
-		expect(requestContext?.systemPrompt).toBe("You are the agent's real system prompt.");
-		expect(requestContext?.tools).toEqual([echoTool]);
-
+		// The prefix is folded into a leading system message; the rest replays the
+		// branch history, not a serialized blob, plus one appended instruction turn.
 		const messages = requestContext?.messages ?? [];
-		expect(messages).toHaveLength(2);
-		// The real branch message history is replayed, not serialized into a blob.
-		expect(messages[0]?.role).toBe("user");
-		expect(JSON.stringify(messages[0])).toContain("Abandoned request");
-		expect(JSON.stringify(messages[0])).not.toContain("[User]:");
+		expect(messages).toHaveLength(3);
+		expect(getCurrentSystemPrompt(messages)).toBe("You are the agent's real system prompt.");
+		expect(getCurrentTools(messages).map((tool) => tool.name)).toEqual(["bash"]);
+		expect(messages[0]?.role).toBe("system");
+		expect(messages[1]?.role).toBe("user");
+		expect(JSON.stringify(messages[1])).toContain("Abandoned request");
+		expect(JSON.stringify(messages[1])).not.toContain("[User]:");
 
-		const instruction = messages[1];
+		const instruction = messages[2];
 		expect(instruction?.role).toBe("user");
 		const instructionContent = instruction?.content;
 		const instructionText =
