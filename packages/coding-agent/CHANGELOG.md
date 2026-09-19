@@ -22,6 +22,7 @@
 - Added per-model `reserveTokens` and `keepRecentTokens` settings through `compaction.modelOverrides`, with ordinary compaction settings as fallback ([#8133](https://github.com/earendil-works/pi-mono/issues/8133)).
 - Added prebuilt self-contained binaries to releases and made `install.sh` prefer them: on darwin/linux (x64, arm64) installing needs only `curl` and `tar` — no Node.js or npm — with the npm tarball path as fallback for other platforms, releases predating binary assets, or `PI_INSTALL_METHOD=npm`. Binary installs live under `<prefix>/lib/pi-fork` with `bin/pi` symlinked in; `--uninstall` removes either flavor. The `package.json` inside each binary archive is stamped to `@r-dson/pi-standalone@<version>` so binary installs report the fork version and `pi update --self` classifies them as the fork's standalone channel instead of the upstream npm package.
 - Added `compat.allowedFallbackModels` configuration for overriding or disabling Anthropic server-side fallback models ([#9294](https://github.com/earendil-works/pi/issues/9294)).
+- Added an unsubscribe function from `pi.on()` so extensions can drop event handlers. Handlers added or removed during a dispatch apply to later dispatches, not the current one ([#8967](https://github.com/earendil-works/pi/issues/8967)).
 
 ### Changed
 
@@ -32,10 +33,13 @@
 - Moved compaction, branch summarization, and retry spinners into the editor border alongside the working indicator. Custom editors use the same embedding opt-in for all status spinners.
 - Enabled strict-prefer JSON-schema sampling by default for built-in `read`, `bash`, `powershell`, `edit`, and `write` tools, without requiring `PI_EXPERIMENTAL`. Extensions can re-register tool definitions with `constrainedSampling: false`.
 - Simplified clipboard handling to a native Linux clipboard implementation, dropping the `@mariozechner/clipboard` dependency ([#9163](https://github.com/earendil-works/pi/pull/9163)).
+- Formatted Bash and PowerShell tool durations of at least one minute as minutes and seconds, with hours when needed ([#9628](https://github.com/earendil-works/pi/issues/9628)).
 
 ### Fixed
 
 - Fixed `pi install`/`pi update` failing with a raw `spawn npm ENOENT` when no package manager is installed: the error now explains that pi and extensions placed under `~/.pi/agent/` run without one, and lists the options (install Node.js, point the `npmCommand` setting at an installed manager such as bun, or place the package's files manually).
+- Fixed mid-run threshold compaction silently skipping oversized trailing tool results ([#9740](https://github.com/earendil-works/pi/issues/9740)).
+- Fixed signal-terminated local shell commands being reported as successful with partial output ([#9577](https://github.com/earendil-works/pi/issues/9577) by [@BrendanJMurphy](https://github.com/BrendanJMurphy)).
 - Fixed local clipboard failures reporting success when the terminal ignored the fallback OSC 52 write, and added platform-specific setup guidance when no clipboard backend works ([#9618](https://github.com/earendil-works/pi/issues/9618)).
 - Capped agent-level retry backoff at `retry.maxAgentDelayMs` (60s by default) so long retry runs stay responsive during prolonged transient outages ([#8826](https://github.com/earendil-works/pi/issues/8826)).
 - Fixed direct RPC `steer` and `follow_up` commands bypassing extension `input` handlers ([#8718](https://github.com/earendil-works/pi/issues/8718)).
@@ -46,6 +50,7 @@
 - Rejected session tree navigation while a compaction is running ([#9179](https://github.com/earendil-works/pi/pull/9179) by [@acmerfight](https://github.com/acmerfight)).
 - Preserved the active operation status (compaction, branch summary, retry) in the editor border when navigating the session tree.
 - Fixed `before_agent_start` handlers returning `systemPrompt` (and `forceSystemPrompt`) on models with mid-conversation system messages: the forced prompt is now persisted as a replacing system message and sent as the provider's leading system prompt instead of being appended as a section patch after the original prompt.
+- Fixed loaded llama.cpp models with `enable_thinking` chat templates ignoring Pi's thinking level ([#9528](https://github.com/earendil-works/pi/issues/9528)).
 
 ## [0.85.5] - 2026-09-06
 

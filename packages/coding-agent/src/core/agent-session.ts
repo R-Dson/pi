@@ -114,7 +114,7 @@ import type { SlashCommandInfo } from "./slash-commands.ts";
 import { createSyntheticSourceInfo, type SourceInfo } from "./source-info.ts";
 import {
 	buildSystemPrompt,
-	buildSystemPromptState,
+	buildSystemPromptSections,
 	diffSystemPromptSections,
 	type NormalizedBuildSystemPromptOptions,
 	normalizeBuildSystemPromptOptions,
@@ -480,6 +480,8 @@ export class AgentSession {
 	private _baseSystemPromptOptions!: NormalizedBuildSystemPromptOptions;
 	/** Prompt options after before_agent_start mutations for the active run. */
 	private _runSystemPromptOptions?: NormalizedBuildSystemPromptOptions;
+	/** Last forced prompt seen by the projection, for transition announcements. */
+	private _lastForcedPrompt?: string;
 
 	constructor(config: AgentSessionConfig) {
 		this.agent = config.agent;
@@ -503,6 +505,7 @@ export class AgentSession {
 		this._installAgentToolHooks();
 		this._installAgentNextTurnRefresh();
 		this.agent.streamFunction = this._requestObserver.wrap(this.agent.streamFunction);
+		this._installAgentForcedPromptProjection();
 
 		this._buildRuntime({
 			activeToolNames: this._initialActiveToolNames,
@@ -1244,9 +1247,9 @@ export class AgentSession {
 	 * from `messages`), or undefined when the prompt is unchanged. Tool changes are declared by
 	 * the agent loop before the request.
 	 *
-	 * A forced prompt is opaque, so entering, changing, or leaving one cannot be expressed as
-	 * a section patch: it returns a `replace` message that discards the replayed state. The
-	 * agent loop fills in the full tool set, since replay through a replacement starts empty.
+	 * A forced prompt does not affect the transcript: the structured sections are still diffed
+	 * and persisted, and the forced text is projected onto the request by
+	 * {@link _installAgentForcedPromptProjection}.
 	 */
 	private _preparePromptAndToolLoadout(
 		options: NormalizedBuildSystemPromptOptions,
@@ -1257,18 +1260,47 @@ export class AgentSession {
 			const tool = this._toolRegistry.get(name);
 			return tool ? [tool] : [];
 		});
-		const current = getCurrentSystemMessage(messages);
-		const desired = buildSystemPromptState(options);
-		const currentIsOpaque = current !== undefined && current.sections === undefined;
-		if (desired.sections === undefined || currentIsOpaque) {
-			const unchanged =
-				currentIsOpaque &&
-				desired.sections === undefined &&
-				contentText(current.content) === contentText(desired.content);
-			return unchanged ? undefined : { role: "system", ...desired, replace: true, timestamp: Date.now() };
-		}
-		const sections = diffSystemPromptSections(current?.sections ?? {}, desired.sections);
+		const sections = diffSystemPromptSections(
+			getCurrentSystemMessage(messages)?.sections ?? {},
+			buildSystemPromptSections(options),
+		);
 		return sections ? { role: "system", content: "", sections, timestamp: Date.now() } : undefined;
+	}
+
+	/**
+	 * Send a forced prompt as the provider's leading system prompt without recording it.
+	 *
+	 * A `before_agent_start` handler that returns `systemPrompt` needs that exact text at the
+	 * head of the request; a mid-conversation system message would leave the original prompt
+	 * in place. The forced text is a rendering of the current prompt, so the transcript keeps
+	 * its structured sections and the request is projected instead: the system messages
+	 * collapse into one head holding the forced text and the current tools. Runs after the
+	 * `context` extension handlers.
+	 */
+	private _installAgentForcedPromptProjection(): void {
+		const previousTransformContext = this.agent.transformContext;
+		this.agent.transformContext = async (messages, signal) => {
+			const transformed = previousTransformContext ? await previousTransformContext(messages, signal) : messages;
+			const forced = this._runSystemPromptOptions?.forceSystemPrompt;
+			if (forced === undefined) {
+				this._lastForcedPrompt = undefined;
+				return transformed;
+			}
+			// Entering, changing, or leaving a forced prompt rewrites the request's
+			// leading system message: an expected rewrite for the prefix monitor.
+			if (this._lastForcedPrompt !== forced) {
+				this._requestObserver.expectInvalidation("extension-override");
+				this._lastForcedPrompt = forced;
+			}
+			const current = getCurrentSystemMessage(transformed);
+			const head: SystemMessage = {
+				role: "system",
+				content: forced,
+				...(current?.toolsAdded ? { toolsAdded: current.toolsAdded } : {}),
+				timestamp: current?.timestamp ?? Date.now(),
+			};
+			return [head, ...transformed.filter((message) => message.role !== "system")];
+		};
 	}
 
 	/** Restore the active tool loadout declared by the session transcript, if it declares one. */
@@ -1520,12 +1552,7 @@ export class AgentSession {
 			}
 			const updateMessage = this._preparePromptAndToolLoadout(result.systemPromptOptions);
 			this._runSystemPromptOptions = result.systemPromptOptions;
-			if (updateMessage) {
-				// A forced replacement discards replayed prompt state, rewriting the
-				// request prefix; section patches only append mid-conversation.
-				if (updateMessage.replace) this._requestObserver.expectInvalidation("extension-override");
-				messages.unshift(updateMessage);
-			}
+			if (updateMessage) messages.unshift(updateMessage);
 		} catch (error) {
 			preflightResult?.(false);
 			throw error;
