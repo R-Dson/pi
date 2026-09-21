@@ -21,6 +21,10 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { ExtensionFactory } from "../../src/index.ts";
 import { createHarness, type Harness } from "./harness.ts";
 
+/** Valid 1x1 transparent PNG: the prompt-image pipeline rejects undecodable bytes (upstream #9631). */
+const TINY_PNG_BASE64 =
+	"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+
 function echoTool(): AgentTool {
 	return {
 		name: "bash",
@@ -166,7 +170,7 @@ describe("runtime prefix-stability monitor (issue #41)", () => {
 		// The first request carries a real image; the toggle rewrites it (and the
 		// rest of history) into placeholders on the next request.
 		await harness.session.prompt("describe this", {
-			images: [{ type: "image", mimeType: "image/png", data: "ZmFrZQ==" }],
+			images: [{ type: "image", mimeType: "image/png", data: TINY_PNG_BASE64 }],
 		});
 		harness.settingsManager.setBlockImages(true);
 		await harness.session.prompt("second turn");
@@ -401,9 +405,9 @@ describe("provider wire-rewrite attribution (issue #56)", () => {
 					pi.on("context", async (event) => {
 						// Rewrite the opening user message from the third request
 						// on, so the divergence lands strictly after the fire. The
-						// transcript opens with a system message, so target the first
-						// user message wherever it sits.
-						if (event.messages.length < 6) return undefined;
+						// context event no longer carries the system message (upstream's
+						// context_with_system split), so request 3 shows 5 visible ones.
+						if (event.messages.length < 5) return undefined;
 						let rewritten = false;
 						const messages = event.messages.map((message) => {
 							if (!rewritten && message.role === "user") {

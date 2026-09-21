@@ -20,8 +20,6 @@ import {
 	type TranscriptContext,
 } from "@earendil-works/pi-ai";
 import { convertToLlm } from "../messages.ts";
-import type { CompactionEntry, SessionEntry } from "../session-manager.ts";
-import { sessionEntryToContextMessages } from "../sessions/projector.ts";
 import { SUMMARIZATION_SYSTEM_PROMPT, SUMMARIZER_PERSONA } from "./utils.ts";
 
 /**
@@ -183,18 +181,19 @@ export function buildReplaySummarizationContext(
 
 /**
  * The exact message list the model saw since the previous checkpoint, headed by
- * the checkpoint's own projection (system message plus compaction summary when
- * present): every regular request's context began this way, so the summarizer
- * request's prefix equals the prior request's from message 0.
+ * the checkpoint's own projected messages (system message plus compaction
+ * summary when present): every regular request's context began this way, so
+ * the summarizer request's prefix equals the prior request's from message 0.
+ * The checkpoint messages come from the canonical projection, so context
+ * edits apply to the checkpoint like any other entry.
  */
 export function buildReplayMessages(
-	pathEntries: SessionEntry[],
-	prevCompactionIndex: number,
+	checkpointMessages: AgentMessage[] | undefined,
 	messagesToSummarize: AgentMessage[],
 ): AgentMessage[] {
 	const replayMessages: AgentMessage[] = [];
-	if (prevCompactionIndex >= 0) {
-		replayMessages.push(...sessionEntryToContextMessages(pathEntries[prevCompactionIndex] as CompactionEntry));
+	if (checkpointMessages) {
+		replayMessages.push(...checkpointMessages);
 	}
 	replayMessages.push(...messagesToSummarize);
 	return replayMessages;

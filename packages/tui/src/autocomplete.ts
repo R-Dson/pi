@@ -3,8 +3,10 @@ import { readdirSync, statSync } from "fs";
 import { homedir } from "os";
 import { basename, dirname, join } from "path";
 import { fuzzyFilter } from "./fuzzy.ts";
+import { autocompleteBoundaryRegex, autocompleteSeparatorRegex } from "./utils.ts";
 
 const PATH_DELIMITERS = new Set([" ", "\t", '"', "'", "="]);
+const tokenStartRegex = new RegExp(`${autocompleteBoundaryRegex.source}$`, "u");
 
 function toDisplayPath(value: string): string {
 	return value.replace(/\\/g, "/");
@@ -43,12 +45,15 @@ function buildFdPathQuery(query: string): string {
 }
 
 function findLastDelimiter(text: string): number {
-	for (let i = text.length - 1; i >= 0; i -= 1) {
-		if (PATH_DELIMITERS.has(text[i] ?? "")) {
-			return i;
+	let lastDelimiter = -1;
+	let index = 0;
+	for (const character of text) {
+		index += character.length;
+		if (PATH_DELIMITERS.has(character) || autocompleteSeparatorRegex.test(character)) {
+			lastDelimiter = index - 1;
 		}
 	}
-	return -1;
+	return lastDelimiter;
 }
 
 function findUnclosedQuoteStart(text: string): number | null {
@@ -68,7 +73,7 @@ function findUnclosedQuoteStart(text: string): number | null {
 }
 
 function isTokenStart(text: string, index: number): boolean {
-	return index === 0 || PATH_DELIMITERS.has(text[index - 1] ?? "");
+	return PATH_DELIMITERS.has(text[index - 1] ?? "") || tokenStartRegex.test(text.slice(0, index));
 }
 
 /**
@@ -125,7 +130,7 @@ function buildCompletionValue(
 	path: string,
 	options: { isDirectory: boolean; isAtPrefix: boolean; isQuotedPrefix: boolean },
 ): string {
-	const needsQuotes = options.isQuotedPrefix || path.includes(" ");
+	const needsQuotes = options.isQuotedPrefix || autocompleteSeparatorRegex.test(path);
 	const prefix = options.isAtPrefix ? "@" : "";
 
 	if (!needsQuotes) {
@@ -335,7 +340,29 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 			const spaceIndex = textBeforeCursor.indexOf(" ");
 
 			if (spaceIndex === -1) {
-				const filtered = this.commandSuggestions(textBeforeCursor.slice(1), false);
+				const prefix = textBeforeCursor.slice(1);
+				const commandItems = this.commands.map((cmd) => {
+					const name = "name" in cmd ? cmd.name : cmd.value;
+					const hint = "argumentHint" in cmd && cmd.argumentHint ? cmd.argumentHint : undefined;
+					const desc = cmd.description ?? "";
+					const fullDesc = hint ? (desc ? `${hint} — ${desc}` : hint) : desc;
+					return {
+						name,
+						label: name,
+						description: fullDesc || undefined,
+					};
+				});
+
+				const filtered = fuzzyFilter(commandItems, prefix, (item) =>
+					!prefix.startsWith("skill:") && item.name.startsWith("skill:")
+						? item.name.slice("skill:".length)
+						: item.name,
+				).map((item) => ({
+					value: item.name,
+					label: item.label,
+					...(item.description && { description: item.description }),
+				}));
+
 				if (filtered.length === 0) return null;
 
 				return {
@@ -553,9 +580,9 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 			return pathPrefix;
 		}
 
-		// Return empty string only after a space (not for completely empty text)
+		// Return an empty prefix after whitespace or CJK punctuation, but not for empty text.
 		// Empty text should not trigger file suggestions - that's for forced Tab completion
-		if (pathPrefix === "" && text.endsWith(" ")) {
+		if (pathPrefix === "" && text !== "" && tokenStartRegex.test(text)) {
 			return pathPrefix;
 		}
 
@@ -734,8 +761,8 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 
 			// Sort directories first, then alphabetically
 			suggestions.sort((a, b) => {
-				const aIsDir = a.value.endsWith("/");
-				const bIsDir = b.value.endsWith("/");
+				const aIsDir = a.label.endsWith("/");
+				const bIsDir = b.label.endsWith("/");
 				if (aIsDir && !bIsDir) return -1;
 				if (!aIsDir && bIsDir) return 1;
 				return a.label.localeCompare(b.label);

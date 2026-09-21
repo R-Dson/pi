@@ -7,8 +7,21 @@
  */
 
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import type { ImageContent, SystemMessage, TextContent, Usage } from "@earendil-works/pi-ai";
-import { createBranchSummaryMessage, createCompactionSummaryMessage, createCustomMessage } from "../messages.ts";
+import type {
+	AssistantMessage,
+	ImageContent,
+	SystemMessage,
+	TextContent,
+	ToolResultMessage,
+	Usage,
+	UserMessage,
+} from "@earendil-works/pi-ai";
+import {
+	type CustomMessage,
+	createBranchSummaryMessage,
+	createCompactionSummaryMessage,
+	createCustomMessage,
+} from "../messages.ts";
 
 export const CURRENT_SESSION_VERSION = 3;
 
@@ -42,6 +55,17 @@ export interface ModelChangeEntry extends SessionEntryBase {
 	type: "model_change";
 	provider: string;
 	modelId: string;
+}
+
+export interface UsageEntry extends SessionEntryBase {
+	type: "usage";
+	/** Arbitrary usage category, such as "cache_warm". */
+	kind: string;
+	provider: string;
+	model: string;
+	usage: Usage;
+	/** Optional human-readable qualifier for usage notices. */
+	note?: string;
 }
 
 export interface CompactionEntry<T = unknown> extends SessionEntryBase {
@@ -120,15 +144,32 @@ export interface CustomMessageEntry<T = unknown> extends SessionEntryBase {
 	display: boolean;
 }
 
+/** Content that an append-only context edit may replace without changing message metadata. */
+export type ContextEditableContent =
+	| UserMessage["content"]
+	| AssistantMessage["content"]
+	| ToolResultMessage["content"]
+	| CustomMessage["content"];
+
+/** Append-only change to one earlier entry's contribution to model context. */
+export interface ContextEditEntry extends SessionEntryBase {
+	type: "context_edit";
+	targetId: string;
+	/** Null omits the target from model context. A value replaces only its content. */
+	replacement: { content: ContextEditableContent } | null;
+}
+
 /** Session entry - has id/parentId for tree structure (returned by "read" methods in SessionManager) */
 export type SessionEntry =
 	| SessionMessageEntry
 	| ThinkingLevelChangeEntry
 	| ModelChangeEntry
+	| UsageEntry
 	| CompactionEntry
 	| BranchSummaryEntry
 	| CustomEntry
 	| CustomMessageEntry
+	| ContextEditEntry
 	| LabelEntry
 	| SessionInfoEntry;
 
@@ -136,6 +177,20 @@ export type SessionEntry =
 export type FileEntry = SessionHeader | SessionEntry;
 
 export interface SessionContext {
+	messages: AgentMessage[];
+	thinkingLevel: string;
+	model: { provider: string; modelId: string } | null;
+}
+
+export interface ProjectedSessionEntry {
+	/** Raw append-only entry that owns this projected contribution. */
+	sourceEntry: SessionEntry;
+	/** Model-visible messages after context edits. Empty for state-only entries and omissions. */
+	messages: AgentMessage[];
+}
+
+export interface SessionProjection {
+	entries: ProjectedSessionEntry[];
 	messages: AgentMessage[];
 	thinkingLevel: string;
 	model: { provider: string; modelId: string } | null;
@@ -301,6 +356,67 @@ export function buildSessionContext(
 	const { thinkingLevel, model } = getSessionContextSettings(path);
 	const messages = buildContextEntries(entries, leafId, byId).flatMap(sessionEntryToContextMessages);
 	return { messages, thinkingLevel, model };
+}
+
+function projectContextEntry(entry: SessionEntry, edit: ContextEditEntry | undefined): AgentMessage[] {
+	const messages = sessionEntryToContextMessages(entry);
+	if (!edit) return messages;
+	const replacement = edit.replacement;
+	if (replacement === null) return [];
+
+	return messages.map((message) => {
+		if (
+			message.role !== "user" &&
+			message.role !== "assistant" &&
+			message.role !== "toolResult" &&
+			message.role !== "custom"
+		) {
+			return message;
+		}
+		const content =
+			(message.role === "assistant" || message.role === "toolResult") && typeof replacement.content === "string"
+				? [{ type: "text" as const, text: replacement.content }]
+				: replacement.content;
+		return { ...message, content } as AgentMessage;
+	});
+}
+
+/**
+ * Build the canonical session projection: every context entry's model-visible
+ * messages after append-only context edits, headed by the newest compaction's
+ * checkpoint. Older compaction entries inside the retained range contribute
+ * nothing (only the newest at index zero carries the checkpoint and summary).
+ */
+export function buildSessionProjection(
+	entries: SessionEntry[],
+	leafId?: string | null,
+	byId?: Map<string, SessionEntry>,
+): SessionProjection {
+	const path = buildSessionPath(entries, leafId, byId);
+	const { thinkingLevel, model } = getSessionContextSettings(path);
+	const contextEntries = buildContextEntries(entries, leafId, byId);
+	const edits = new Map<string, ContextEditEntry>();
+	for (const entry of contextEntries) {
+		if (entry.type === "context_edit") edits.set(entry.targetId, entry);
+	}
+	const projectedEntries = contextEntries.map(
+		(sourceEntry, index): ProjectedSessionEntry => ({
+			sourceEntry,
+			// buildContextEntries() may retain an older compaction entry because its
+			// raw ID lies inside the newest retained range. Only the newest compaction
+			// at index zero contributes a checkpoint and summary.
+			messages:
+				sourceEntry.type === "compaction" && index > 0
+					? []
+					: projectContextEntry(sourceEntry, edits.get(sourceEntry.id)),
+		}),
+	);
+	return {
+		entries: projectedEntries,
+		messages: projectedEntries.flatMap((entry) => entry.messages),
+		thinkingLevel,
+		model,
+	};
 }
 
 /** A tool call of the final assistant tool-call turn with no matching result later on the path. */
