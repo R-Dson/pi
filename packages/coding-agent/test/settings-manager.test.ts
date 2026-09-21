@@ -253,6 +253,25 @@ describe("SettingsManager", () => {
 		});
 	});
 
+	describe("taskTimeoutMs setting", () => {
+		it("defaults to 10 minutes and honors overrides; 0 disables", () => {
+			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ taskTimeoutMs: 60000 }));
+
+			const manager = SettingsManager.create(projectDir, agentDir);
+			expect(manager.getTaskTimeoutMs()).toBe(60000);
+
+			expect(SettingsManager.inMemory().getTaskTimeoutMs()).toBe(600000);
+			expect(SettingsManager.inMemory({ taskTimeoutMs: 0 }).getTaskTimeoutMs()).toBe(0);
+		});
+
+		it("rejects values that are not finite numbers >= 0, or above the setTimeout ceiling", () => {
+			for (const invalid of [-1, "3000", null, 2 ** 31]) {
+				const manager = SettingsManager.inMemory({ taskTimeoutMs: invalid as number });
+				expect(() => manager.getTaskTimeoutMs(), `taskTimeoutMs: ${String(invalid)}`).toThrow(/taskTimeoutMs/);
+			}
+		});
+	});
+
 	describe("error tracking", () => {
 		it("should collect and clear load errors via drainErrors", () => {
 			const globalSettingsPath = join(agentDir, "settings.json");

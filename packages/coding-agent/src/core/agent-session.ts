@@ -122,6 +122,7 @@ import {
 import { type BashOperations, createLocalBashOperations } from "./tools/bash.ts";
 import { createAllToolDefinitions, SubAgentLimiter } from "./tools/index.ts";
 import { boundToolResultText } from "./tools/output-bounds.ts";
+import { type BashToolDefinition, createSessionFusedCommandExecutor } from "./tools/then-run.ts";
 import { createToolDefinitionFromAgentTool } from "./tools/tool-definition-wrapper.ts";
 import { addUsageToTotals, createUsageTotals } from "./usage-totals.ts";
 
@@ -3046,6 +3047,23 @@ export class AgentSession {
 		const autoResizeImages = this.settingsManager.getImageAutoResize();
 		const shellCommandPrefix = this.settingsManager.getShellCommandPrefix();
 		const shellPath = this.settingsManager.getShellPath();
+		// The fused thenRun command runs through the session's bash semantics: the
+		// settings-built base bash definition (its options apply; not the registry
+		// entry — its tools are hook-wrapped, and the executor fires its own gate
+		// events, while its active-tool filtering would make a deactivated bash
+		// silently drop the session's bash settings to a fresh default definition)
+		// and the extension gate, which sees the command as a real bash tool_call
+		// (id "<parent>:thenRun"). Runner and definition are read lazily at call
+		// time, so reloads and runtime rebuilds apply. Not built for a
+		// baseToolsOverride session: the embedder supplied already-constructed
+		// AgentTools the session cannot inject into.
+		const fusedCommand = this._baseToolsOverride
+			? undefined
+			: createSessionFusedCommandExecutor({
+					getCwd: () => this._cwd,
+					getRunner: () => this._extensionRunner,
+					getBashDefinition: () => this._baseToolDefinitions.get("bash") as BashToolDefinition | undefined,
+				});
 		const baseToolDefinitions = this._baseToolsOverride
 			? Object.fromEntries(
 					Object.entries(this._baseToolsOverride).map(([name, tool]) => [
@@ -3056,6 +3074,8 @@ export class AgentSession {
 			: createAllToolDefinitions(this._cwd, {
 					read: { autoResizeImages },
 					bash: { commandPrefix: shellCommandPrefix, shellPath },
+					edit: { fusedCommand },
+					write: { fusedCommand },
 					// The task tool closes over live session state: sub-agents inherit the
 					// current model/thinking level and the active toolset minus task itself,
 					// and stream through the session's provider path (unwrapped: the request
@@ -3064,6 +3084,7 @@ export class AgentSession {
 						limiter: this._subAgentLimiter,
 						nextTaskNumber: () => this._nextSubAgentNumber(),
 						getMaxSubAgents: () => this.settingsManager.getMaxSubAgents(),
+						getTaskTimeoutMs: () => this.settingsManager.getTaskTimeoutMs(),
 						getStreamFn: () => unwrapStreamFn(this.agent.streamFunction),
 						getModel: () => this.agent.state.model,
 						getThinkingLevel: () => this.agent.state.thinkingLevel,

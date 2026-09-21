@@ -72,24 +72,6 @@ interface PermissionFile {
 	rules?: PermissionRule[];
 }
 
-/** The bash command a fused thenRun argument carries, when present. */
-function fusedThenRunCommand(input: Record<string, unknown>): string | undefined {
-	const thenRun = input.thenRun;
-	if (
-		typeof thenRun === "object" &&
-		thenRun !== null &&
-		typeof (thenRun as { command?: unknown }).command === "string"
-	) {
-		return (thenRun as { command: string }).command;
-	}
-	return undefined;
-}
-
-/** deny > ask > allow, the same precedence layered evaluation itself uses. */
-function decisionSeverity(decision: PermissionDecision): number {
-	return decision.kind === "deny" ? 2 : decision.kind === "ask" ? 1 : 0;
-}
-
 /** Layered configuration resolved from the global and project policy files. */
 interface ResolvedPermissionConfig {
 	profile: ToolProfile;
@@ -208,7 +190,7 @@ export default function permissionPolicies(pi: ExtensionAPI) {
 		if (!config) reload(ctx);
 		if (!config) return;
 		const tools = pi.getAllTools();
-		let decision = evaluatePermissionLayered({
+		const decision = evaluatePermissionLayered({
 			toolName: event.toolName,
 			capability: capabilityOf(tools, event.toolName),
 			args: event.input as Record<string, unknown>,
@@ -219,34 +201,13 @@ export default function permissionPolicies(pi: ExtensionAPI) {
 			// process working directory.
 			cwd: ctx.cwd,
 		});
-		// A fused thenRun command executes bash inside the mutation tool, so the
-		// tool_call gate only sees the edit/write facet. Judge the shell facet
-		// against the shell rules too and keep the stricter outcome; otherwise a
-		// bash-denying policy would not constrain fused commands.
-		const fusedCommand = fusedThenRunCommand(event.input as Record<string, unknown>);
-		let fusedContext = "";
-		if (fusedCommand !== undefined) {
-			const shellDecision = evaluatePermissionLayered({
-				toolName: "bash",
-				capability: "process.execute",
-				args: { command: fusedCommand },
-				baseRules: config.baseRules,
-				rules: config.rules,
-				defaultEffect: "allow",
-				cwd: ctx.cwd,
-			});
-			if (decisionSeverity(shellDecision) > decisionSeverity(decision)) {
-				decision = shellDecision;
-			}
-			// The decision text names the rule, not the offending command; name
-			// the fused command so approvals and denials are reviewable.
-			fusedContext = `\nFused command: ${fusedCommand}`;
-		}
+		// Fused thenRun commands need no special casing here: the session runs
+		// them through the gate as their own bash tool_call before execution.
 		if (decision.kind === "allow") return;
 
 		const howToAllow = `Adjust rules in ${config.projectPath} (project) or ${config.globalPath} (global), then /reload.`;
 		if (decision.kind === "deny") {
-			return { block: true, reason: describeDecision(decision, config, howToAllow) + fusedContext };
+			return { block: true, reason: describeDecision(decision, config, howToAllow) };
 		}
 
 		// ask: interactive approval when a dialog is available; otherwise the
@@ -254,14 +215,10 @@ export default function permissionPolicies(pi: ExtensionAPI) {
 		if (ctx.hasUI) {
 			const approved = await ctx.ui.confirm(
 				`Allow ${event.toolName}?`,
-				describeDecision(
-					decision,
-					config,
-					"Approving runs this call once; add an allow rule to stop being asked.",
-				) + fusedContext,
+				describeDecision(decision, config, "Approving runs this call once; add an allow rule to stop being asked."),
 			);
 			if (approved) return;
 		}
-		return { block: true, reason: describeDecision(decision, config, howToAllow) + fusedContext };
+		return { block: true, reason: describeDecision(decision, config, howToAllow) };
 	});
 }

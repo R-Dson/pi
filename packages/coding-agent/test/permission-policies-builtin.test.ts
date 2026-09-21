@@ -155,29 +155,27 @@ describe("permission-policies builtin", () => {
 		expect((await toolCall("bash", { command: "git push --force" }))?.block).toBeUndefined();
 	});
 
-	it("judges a fused thenRun command under the shell rules", async () => {
+	it("treats a fused thenRun argument as plain edit/write; the command gates as its own bash call", async () => {
 		const cwd = projectWithPolicy(`{ "rules": [{ "tool": "bash", "command": "git push", "effect": "deny" }] }`);
 		const { sessionStart, toolCall } = install(cwd, {
 			tools: [makeTool("edit", "filesystem.write"), makeTool("bash", "process.execute")],
 		});
 		sessionStart("startup");
 
-		// The edit facet is allowed, but the fused command matches the bash deny rule.
-		const blocked = await toolCall("edit", {
-			path: "src/a.ts",
-			edits: [],
-			thenRun: { command: "git push origin main" },
-		});
-		expect(blocked?.block).toBe(true);
-		expect(blocked?.reason).toContain("git push");
-
-		// A fused command no rule matches proceeds.
+		// The extension no longer inspects thenRun fields: the session runs the
+		// fused command through the gate as a real bash tool_call before
+		// execution, so a bash-deny rule blocks it there (pinned end to end in
+		// test/suite/then-run-gate.test.ts). The edit facet itself proceeds.
 		expect(
-			(await toolCall("edit", { path: "src/a.ts", edits: [], thenRun: { command: "npm test" } }))?.block,
+			(await toolCall("edit", { path: "src/a.ts", edits: [], thenRun: { command: "git push origin main" } }))?.block,
 		).toBeUndefined();
+		expect((await toolCall("bash", { command: "git push origin main" }))?.block).toBe(true);
+
+		// A command no rule matches proceeds.
+		expect((await toolCall("bash", { command: "npm test" }))?.block).toBeUndefined();
 	});
 
-	it("asks before a fused thenRun command when shell rules ask", async () => {
+	it("ask rules fire for the bash facet; a fused command arrives as its own bash call", async () => {
 		const cwd = projectWithPolicy(`{ "rules": [{ "capability": "process.execute", "effect": "ask" }] }`);
 		const approved = install(cwd, {
 			tools: [makeTool("write", "filesystem.write"), makeTool("bash", "process.execute")],
@@ -185,10 +183,12 @@ describe("permission-policies builtin", () => {
 			confirmAnswer: true,
 		});
 		approved.sessionStart("startup");
+		// The write facet itself is not a process.execute call and proceeds.
 		expect(
 			(await approved.toolCall("write", { path: "a.txt", content: "x", thenRun: { command: "echo hi" } }))?.block,
 		).toBeUndefined();
-		expect(approved.confirmPrompt()).toContain("echo hi");
+		// The fused command arrives as its own bash tool_call and hits the ask rule.
+		expect((await approved.toolCall("bash", { command: "echo hi" }))?.block).toBeUndefined();
 
 		const denied = install(cwd, {
 			tools: [makeTool("write", "filesystem.write"), makeTool("bash", "process.execute")],
@@ -196,9 +196,7 @@ describe("permission-policies builtin", () => {
 			confirmAnswer: false,
 		});
 		denied.sessionStart("startup");
-		expect(
-			(await denied.toolCall("write", { path: "a.txt", content: "x", thenRun: { command: "echo hi" } }))?.block,
-		).toBe(true);
+		expect((await denied.toolCall("bash", { command: "echo hi" }))?.block).toBe(true);
 	});
 
 	it("still applies the global policy file in an untrusted project", () => {

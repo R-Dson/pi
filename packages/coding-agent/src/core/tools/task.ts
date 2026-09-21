@@ -14,7 +14,7 @@ import { type Static, Type } from "typebox";
 import type { ToolDefinition } from "../extensions/types.ts";
 import { taskRenderers } from "./renderers/task.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
-import { formatSize } from "./truncate.ts";
+import { formatSize, truncateLine } from "./truncate.ts";
 
 const taskSchema = Type.Object({
 	prompt: Type.String({
@@ -69,9 +69,21 @@ export interface TaskToolDetails {
 const MAX_TRANSCRIPT_ENTRIES = 500;
 const EXCERPT_HEAD_LINES = 8;
 const EXCERPT_TAIL_LINES = 8;
+/** Per-line excerpt cap: a single huge line (minified output) must not survive the line-count bound. */
+const EXCERPT_MAX_LINE_CHARS = 2000;
 const ACTIVITY_ARG_LIMIT = 60;
 const CALL_ARG_LIMIT = 160;
 const ELLIPSIS = "...";
+
+/** Default sub-agent deadline (the `taskTimeoutMs` setting, 10 minutes; 0 disables). */
+export const DEFAULT_TASK_TIMEOUT_MS = 600_000;
+
+/**
+ * Ceiling for `taskTimeoutMs`: `setTimeout` silently coerces larger values to a
+ * 1ms deadline, so both the setting getter and the tool's deadline setup reject
+ * them instead (the agent loop's `timeoutMs` range check).
+ */
+export const MAX_TASK_TIMEOUT_MS = 2_147_483_647;
 
 /**
  * Salient argument keys, tried in order before falling back to the first string
@@ -104,11 +116,12 @@ function excerptLines(text: string): string {
 	if (lines.length > 0 && lines[lines.length - 1] === "") {
 		lines.pop();
 	}
-	if (lines.length <= EXCERPT_HEAD_LINES + EXCERPT_TAIL_LINES) {
-		return lines.join("\n");
+	const bounded = lines.map((line) => truncateLine(line, EXCERPT_MAX_LINE_CHARS).text);
+	if (bounded.length <= EXCERPT_HEAD_LINES + EXCERPT_TAIL_LINES) {
+		return bounded.join("\n");
 	}
-	const omitted = lines.length - EXCERPT_HEAD_LINES - EXCERPT_TAIL_LINES;
-	return `${lines.slice(0, EXCERPT_HEAD_LINES).join("\n")}\n... (${omitted} lines omitted)\n${lines
+	const omitted = bounded.length - EXCERPT_HEAD_LINES - EXCERPT_TAIL_LINES;
+	return `${bounded.slice(0, EXCERPT_HEAD_LINES).join("\n")}\n... (${omitted} lines omitted)\n${bounded
 		.slice(-EXCERPT_TAIL_LINES)
 		.join("\n")}`;
 }
@@ -198,6 +211,13 @@ export class SubAgentLimiter {
 export interface TaskToolOptions {
 	/** Max simultaneously running sub-agents (the `maxSubAgents` setting). */
 	getMaxSubAgents(): number;
+	/**
+	 * Wall-clock deadline per sub-agent run in ms (the `taskTimeoutMs` setting;
+	 * 0 disables). A hung provider stream ends in a timeout error instead of
+	 * holding a limiter slot forever. Read per spawn, so settings changes apply
+	 * without a runtime rebuild.
+	 */
+	getTaskTimeoutMs?(): number;
 	/** Stream function for sub-agent completions. Pass the session's, unwrapped. */
 	getStreamFn(): StreamFn;
 	/** Current model, inherited by sub-agents. */
@@ -278,6 +298,29 @@ export function createTaskToolDefinition(
 					throw new Error("Operation aborted");
 				}
 
+				// Per-spawn deadline, the agent loop's timer discipline: an unref'd
+				// timer cleared on settle, and a race for streams that never settle
+				// on their own. Whichever settles first decides the reported error:
+				// the deadline rejects with the timeout message, a user abort or a
+				// failed run settles with its own error.
+				const timeoutMs = options.getTaskTimeoutMs?.() ?? DEFAULT_TASK_TIMEOUT_MS;
+				// The agent loop's invalid-timeout contract: a value above 2^31-1
+				// would be silently coerced by setTimeout to a 1ms deadline, while
+				// NaN and negatives compare false against the > 0 deadline guard
+				// and silently disable it, so reject the whole range here too.
+				if (!Number.isFinite(timeoutMs) || timeoutMs < 0 || timeoutMs > MAX_TASK_TIMEOUT_MS) {
+					throw new RangeError(
+						"taskTimeoutMs is out of range: must be a finite non-negative number not exceeding 2^31-1",
+					);
+				}
+				const deadlineController = timeoutMs > 0 ? new AbortController() : undefined;
+				let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
+				if (deadlineController) {
+					deadlineTimer = setTimeout(() => deadlineController.abort(), timeoutMs);
+					deadlineTimer.unref?.();
+				}
+				const timeoutMessage = `Sub-agent timed out after ${timeoutMs}ms`;
+
 				const subAgent = new Agent({
 					initialState: {
 						systemPrompt: params.systemPrompt ?? "",
@@ -323,12 +366,31 @@ export function createTaskToolDefinition(
 						}
 					}
 				});
+				// The deadline aborts the sub-agent through the same listener as a user
+				// abort; the race exists for streams that never settle on their own.
+				const runSignal =
+					signal && deadlineController
+						? AbortSignal.any([signal, deadlineController.signal])
+						: (signal ?? deadlineController?.signal);
 				const onAbort = () => subAgent.abort();
-				signal?.addEventListener("abort", onAbort, { once: true });
+				runSignal?.addEventListener("abort", onAbort, { once: true });
+				const deadline = deadlineController
+					? new Promise<never>((_resolve, reject) => {
+							deadlineController.signal.addEventListener(
+								"abort",
+								() => {
+									reject(new Error(timeoutMessage));
+								},
+								{ once: true },
+							);
+						})
+					: undefined;
 				try {
-					await subAgent.prompt(params.prompt);
+					const run = subAgent.prompt(params.prompt);
+					await (deadline ? Promise.race([run, deadline]) : run);
 				} finally {
-					signal?.removeEventListener("abort", onAbort);
+					if (deadlineTimer !== undefined) clearTimeout(deadlineTimer);
+					runSignal?.removeEventListener("abort", onAbort);
 					unsubscribe();
 				}
 

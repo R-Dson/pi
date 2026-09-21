@@ -258,6 +258,7 @@ Windows paths in JSON must use forward slashes or escaped backslashes:
 | `defaultTools` | string[] | - | Built-in tools enabled initially. When omitted, Pi uses its standard defaults |
 | `tools.maxToolOutputBytes` | number | `204800` | Max UTF-8 bytes of tool result text sent to the model before it is replaced by a head+tail excerpt. The full output spills to a file under `<sessionDir>/artifacts/<sessionId>/` (persisted sessions). `0` or less disables the cap |
 | `maxSubAgents` | number | `2` | Max sub-agents the `task` tool runs simultaneously. Additional spawns queue until a slot frees. Any integer `>= 1`; there is no upper limit |
+| `taskTimeoutMs` | number | `600000` | Wall-clock deadline per `task` sub-agent run in milliseconds. A hung sub-agent stream ends in a timeout error and frees its slot. `0` disables the deadline; any finite number `>= 0` up to `2147483647` (the `setTimeout` ceiling) |
 
 `defaultTools` selects the built-in tools enabled at startup. Extension and SDK custom tools remain enabled. Available built-ins are `read`, `bash`, `powershell`, `edit`, `write`, `grep`, `find`, `ls`, and `task`:
 
@@ -278,6 +279,8 @@ On Windows, select `powershell` instead of `bash`, or include both:
 An empty array starts with no built-in tools while preserving extension and SDK custom tools. `--tools` replaces this behavior with a strict allowlist for all tools, `--no-tools` disables all tools, and `--no-builtin-tools` disables the built-in defaults. `--exclude-tools` filters the resulting list. A project `defaultTools` array replaces the global array.
 
 `tools.maxToolOutputBytes` bounds what the model sees, not what the tool did: over the cap the model receives the first ~60% and last ~40% of the budget around a marker reporting the omitted bytes and the artifact path. Built-in tools (`read`, `grep`, `bash`) truncate their own output already, so in practice the cap governs extension tools.
+
+`taskTimeoutMs` bounds each sub-agent run: a sub-agent whose provider stream hangs ends in a `Sub-agent timed out after Nms` error instead of holding a `maxSubAgents` slot indefinitely. The deadline is read per spawn, so a settings change applies to the next spawn without a reload.
 
 `maxSubAgents` caps how many sub-agents the `task` tool runs at once. The `task` tool spawns a sub-agent - a fresh one-layer conversation with the currently active tools (minus `task` itself), the same model, and instructions the main agent provides in full. Sub-agent tool calls go through the same permission rules and output bounding as the main agent's.
 

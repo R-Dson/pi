@@ -9,6 +9,7 @@ import { normalizePath, resolvePath } from "../utils/paths.ts";
 import { stripBom } from "../utils/text.ts";
 import { DEFAULT_HTTP_IDLE_TIMEOUT_MS, parseHttpIdleTimeoutMs } from "./http-dispatcher.ts";
 import { DEFAULT_MAX_TOOL_OUTPUT_BYTES } from "./tools/output-bounds.ts";
+import { DEFAULT_TASK_TIMEOUT_MS, MAX_TASK_TIMEOUT_MS } from "./tools/task.ts";
 
 export interface CompactionModelOverride {
 	reserveTokens?: number;
@@ -150,6 +151,7 @@ export interface Settings {
 	enabledModels?: string[]; // Model patterns for cycling (same format as --models CLI flag)
 	defaultTools?: string[]; // Initial built-in tool selection
 	maxSubAgents?: number; // Max simultaneously running sub-agents spawned by the task tool (default: 2)
+	taskTimeoutMs?: number; // Wall-clock deadline per task-tool sub-agent run in ms (default: 600000, 0 disables)
 	tools?: ToolsSettings; // Tool result output bounding
 	doubleEscapeAction?: "fork" | "tree" | "none"; // Action for double-escape with empty editor (default: "tree")
 	treeFilterMode?: "default" | "no-tools" | "user-only" | "labeled-only" | "all"; // Default filter when opening /tree
@@ -1341,6 +1343,19 @@ export class SettingsManager {
 			throw new Error(`Invalid maxSubAgents setting: ${String(value)}. Expected an integer >= 1.`);
 		}
 		return value ?? 2;
+	}
+
+	getTaskTimeoutMs(): number {
+		const value = this.settings.taskTimeoutMs;
+		if (
+			value !== undefined &&
+			(typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > MAX_TASK_TIMEOUT_MS)
+		) {
+			throw new Error(
+				`Invalid taskTimeoutMs setting: ${String(value)}. Expected a finite number >= 0 and <= ${MAX_TASK_TIMEOUT_MS} (the setTimeout ceiling).`,
+			);
+		}
+		return value ?? DEFAULT_TASK_TIMEOUT_MS;
 	}
 
 	getMaxToolOutputBytes(): number {

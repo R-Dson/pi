@@ -6,7 +6,7 @@ import type { ExtensionContext, ToolDefinition } from "../extensions/types.ts";
 import { withFileMutationQueue } from "./file-mutation-queue.ts";
 import { resolveToCwd } from "./path-utils.ts";
 import { writeRenderers } from "./renderers/write.ts";
-import { appendThenRunResult, thenRunSchema, thenRunSkippedError } from "./then-run.ts";
+import { appendThenRunResult, type FusedCommandExecutor, thenRunSchema, thenRunSkippedError } from "./then-run.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
 
 const writeSchema = Type.Object({
@@ -44,6 +44,8 @@ const defaultWriteOperations: WriteOperations = {
 export interface WriteToolOptions {
 	/** Custom operations for file writing. Default: local filesystem */
 	operations?: WriteOperations;
+	/** Session fused-command executor for thenRun; omitted runs a local ungated bash */
+	fusedCommand?: FusedCommandExecutor;
 }
 
 export function createWriteToolDefinition(
@@ -109,6 +111,7 @@ export function createWriteToolDefinition(
 					mutationContent: [{ type: "text", text: mutationText }],
 					signal,
 					ctx,
+					fusedCommand: options?.fusedCommand,
 				});
 				return { content: merged, details: undefined };
 			});

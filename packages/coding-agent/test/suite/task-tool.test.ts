@@ -9,6 +9,7 @@ import {
 	fauxThinking,
 	fauxToolCall,
 	registerFauxProvider,
+	streamSimple,
 } from "@earendil-works/pi-ai/compat";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createTaskTool, SubAgentLimiter } from "../../src/core/tools/task.ts";
@@ -280,6 +281,130 @@ describe("task tool", () => {
 		await Promise.all([first, second, third]);
 
 		expect(maxInFlight).toBe(1);
+	});
+
+	it("ends a hung sub-agent run at the task deadline and reports the timeout", async () => {
+		// A stream that never settles on its own: only the deadline aborts it.
+		const streamFn: StreamFn = async (_model, _context, streamOptions) => {
+			await new Promise<void>((resolve) => {
+				streamOptions?.signal?.addEventListener("abort", () => resolve(), { once: true });
+			});
+			const message: AssistantMessage = {
+				role: "assistant",
+				content: [],
+				api: "test",
+				provider: "test",
+				model: "test",
+				usage: {
+					input: 0,
+					output: 0,
+					cacheRead: 0,
+					cacheWrite: 0,
+					totalTokens: 0,
+					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+				},
+				stopReason: "aborted",
+				errorMessage: "Request was aborted",
+				timestamp: Date.now(),
+			};
+			const stream = createAssistantMessageEventStream();
+			stream.push({ type: "error", reason: "aborted", error: message });
+			stream.end(message);
+			return stream;
+		};
+		const faux = registerFauxProvider({});
+		try {
+			const tool = createTaskTool({
+				nextTaskNumber: () => 1,
+				getMaxSubAgents: () => 2,
+				getTaskTimeoutMs: () => 20,
+				getStreamFn: () => streamFn,
+				getModel: () => faux.getModel(),
+				getThinkingLevel: () => undefined,
+				getTools: () => [],
+				limiter: new SubAgentLimiter(),
+			});
+
+			await expect(tool.execute("call-1", { prompt: "do it" })).rejects.toThrow(/timed out after 20ms/);
+		} finally {
+			faux.unregister();
+		}
+	});
+
+	it("rejects a taskTimeoutMs above the setTimeout ceiling instead of coercing it to a 1ms deadline", async () => {
+		const faux = registerFauxProvider({});
+		try {
+			const tool = createTaskTool({
+				nextTaskNumber: () => 1,
+				getMaxSubAgents: () => 2,
+				getTaskTimeoutMs: () => 2 ** 31,
+				// Never called: the range check rejects before the sub-agent spawns.
+				getStreamFn: () => streamSimple,
+				getModel: () => faux.getModel(),
+				getThinkingLevel: () => undefined,
+				getTools: () => [],
+				limiter: new SubAgentLimiter(),
+			});
+
+			await expect(tool.execute("call-1", { prompt: "do it" })).rejects.toThrow(/out of range/);
+		} finally {
+			faux.unregister();
+		}
+	});
+
+	it("rejects a non-finite or negative taskTimeoutMs instead of silently disabling the deadline", async () => {
+		const faux = registerFauxProvider({});
+		try {
+			let timeoutMs = Number.NaN;
+			const tool = createTaskTool({
+				nextTaskNumber: () => 1,
+				getMaxSubAgents: () => 2,
+				getTaskTimeoutMs: () => timeoutMs,
+				getStreamFn: () => streamSimple,
+				getModel: () => faux.getModel(),
+				getThinkingLevel: () => undefined,
+				getTools: () => [],
+				limiter: new SubAgentLimiter(),
+			});
+
+			// Without the check, NaN and negatives compare false against both the
+			// ceiling and the deadline's > 0 guard, silently disabling the deadline.
+			await expect(tool.execute("call-1", { prompt: "do it" })).rejects.toThrow(/out of range/);
+			timeoutMs = -1;
+			await expect(tool.execute("call-2", { prompt: "do it" })).rejects.toThrow(/out of range/);
+		} finally {
+			faux.unregister();
+		}
+	});
+
+	it("bounds each transcript excerpt line in addition to the line count", async () => {
+		const harness = await createHarness();
+		harnesses.push(harness);
+		// Three lines total (under the 16-line head+tail threshold), one of them huge:
+		// the line-count cap alone would keep all 5000 chars.
+		const longLine = "x".repeat(5000);
+		writeFileSync(join(harness.tempDir, "marker.txt"), `short one\n${longLine}\nshort two`);
+
+		harness.setResponses([
+			fauxAssistantMessage([fauxToolCall("task", { prompt: "Read the marker and report." })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("read", { path: "marker.txt" })], { stopReason: "toolUse" }),
+			(context) => fauxAssistantMessage(`sub-agent saw: ${toolResultTexts(context).join(" | ")}`),
+			fauxAssistantMessage("main agent conclusion"),
+		]);
+
+		await harness.session.prompt("delegate this");
+
+		const details = taskToolResults(harness)[0].details as {
+			transcript?: Array<Record<string, unknown>>;
+		};
+		const resultEntry = details.transcript?.find((entry) => entry.kind === "tool_result");
+		const text = String(resultEntry?.text);
+		expect(text).toContain("short one");
+		expect(text).toContain("short two");
+		expect(text).toContain("... [truncated]");
+		expect(text.length).toBeLessThan(5000);
 	});
 
 	it("aborts the running sub-agent when the tool call is aborted", async () => {

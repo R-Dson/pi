@@ -16,7 +16,13 @@ import {
 import { withFileMutationQueue } from "./file-mutation-queue.ts";
 import { resolveToCwd } from "./path-utils.ts";
 import { type EditRenderState, editRenderers } from "./renderers/edit.ts";
-import { appendThenRunResult, type ThenRunInput, thenRunSchema, thenRunSkippedError } from "./then-run.ts";
+import {
+	appendThenRunResult,
+	type FusedCommandExecutor,
+	type ThenRunInput,
+	thenRunSchema,
+	thenRunSkippedError,
+} from "./then-run.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
 
 const replaceEditSchema = Type.Object(
@@ -101,6 +107,8 @@ const defaultEditOperations: EditOperations = {
 export interface EditToolOptions {
 	/** Custom operations for file editing. Default: local filesystem */
 	operations?: EditOperations;
+	/** Session fused-command executor for thenRun; omitted runs a local ungated bash */
+	fusedCommand?: FusedCommandExecutor;
 }
 
 function prepareEditArguments(input: unknown): EditToolInput {
@@ -229,6 +237,7 @@ export function createEditToolDefinition(
 					mutationContent: mutation.content,
 					signal,
 					ctx,
+					fusedCommand: options?.fusedCommand,
 				});
 				return { content, details: mutation.details };
 			});
