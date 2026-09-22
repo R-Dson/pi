@@ -22,6 +22,7 @@
 - Changed the fork's display name to Pi Fork: the interactive terminal title reads `Pi Fork` instead of `π`, and the update notice says "Pi Fork update available". Cosmetic only; the `pi` binary, `.pi` config dir, package names, and `PI_*` env vars are unchanged.
 - Enabled strict-prefer JSON-schema sampling by default for built-in `read`, `bash`, `powershell`, `edit`, and `write` tools, without requiring `PI_EXPERIMENTAL`. Extensions can re-register tool definitions with `constrainedSampling: false`.
 - Internal: the compaction/branch-summary replay construction moved to fork-owned modules (`core/compaction/replay.ts`, `core/compaction/branch-units.ts`) with request bytes pinned by a golden digest test; no behavior change.
+- Changed the default xAI model to Grok 4.7.
 
 ### Fixed
 

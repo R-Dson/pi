@@ -5,6 +5,11 @@
 ### Added
 
 - Added `cacheWriteReadRatio(model)`: cache-write ÷ cache-read cost rate from the model's pricing, for deciding when a context rewrite (for example compaction) pays off. Returns 0 when cache writes are free and undefined when cache reads are free or unrated. Design informed by NVlabs/SoL-Pi's compaction economics.
+- Added Grok 4.7 to the built-in xAI model catalog with long-context pricing metadata.
+
+### Fixed
+
+- Fixed image-only user messages being rejected by some OpenAI-compatible providers because they included an empty text part ([#9797](https://github.com/earendil-works/pi/issues/9797))
 
 ## [0.87.0] - 2026-09-21
 
