@@ -121,28 +121,28 @@ describe("CombinedAutocompleteProvider", () => {
 			{ name: "skill:to-spec", description: "Write a spec", midTextInvocable: true },
 		];
 
-	test("shows all commands for a leading slash on the first line", async () => {
-		const provider = new CombinedAutocompleteProvider(commands, "/tmp");
-		const line = "/";
-		const result = await getSuggestions(provider, [line], 0, line.length);
+		test("shows all commands for a leading slash on the first line", async () => {
+			const provider = new CombinedAutocompleteProvider(commands, "/tmp");
+			const line = "/";
+			const result = await getSuggestions(provider, [line], 0, line.length);
 
-		assert.notEqual(result, null, "Should return suggestions");
-		// Leading-slash completion is not limited to midTextInvocable commands, and
-		// skill commands match by bare name under upstream's ranking (#9120), so a
-		// bare "/" shows everything.
-		const names = result?.items.map((item) => item.value).sort();
-		assert.deepStrictEqual(names, ["model", "skill:tdd", "skill:to-spec"]);
-	});
+			assert.notEqual(result, null, "Should return suggestions");
+			// Leading-slash completion is not limited to midTextInvocable commands, and
+			// skill commands match by bare name under upstream's ranking (#9120), so a
+			// bare "/" shows everything.
+			const names = result?.items.map((item) => item.value).sort();
+			assert.deepStrictEqual(names, ["model", "skill:tdd", "skill:to-spec"]);
+		});
 
-	test("matches leading-slash skill commands by bare name, not the skill: prefix", async () => {
-		const provider = new CombinedAutocompleteProvider(commands, "/tmp");
-		const line = "/spec";
-		const result = await getSuggestions(provider, [line], 0, line.length);
+		test("matches leading-slash skill commands by bare name, not the skill: prefix", async () => {
+			const provider = new CombinedAutocompleteProvider(commands, "/tmp");
+			const line = "/spec";
+			const result = await getSuggestions(provider, [line], 0, line.length);
 
-		assert.notEqual(result, null, "Should return suggestions");
-		const names = result?.items.map((item) => item.value).sort();
-		assert.deepStrictEqual(names, ["skill:to-spec"]);
-	});
+			assert.notEqual(result, null, "Should return suggestions");
+			const names = result?.items.map((item) => item.value).sort();
+			assert.deepStrictEqual(names, ["skill:to-spec"]);
+		});
 
 		test("shows only mid-text invocable commands for a mid-text slash token", async () => {
 			const provider = new CombinedAutocompleteProvider(commands, "/tmp");

@@ -11,13 +11,8 @@ import { contentText } from "@earendil-works/pi-ai";
 import type { Model, SimpleStreamOptions, Usage } from "@earendil-works/pi-ai/compat";
 import type { ReadonlySessionManager, SessionEntry } from "../session-manager.ts";
 import { groupBranchUnits } from "./branch-units.ts";
-import {
-	completeSummarization,
-	estimateTokens,
-	getSummarizationFailure,
-	type SummarizationPrefix,
-} from "./compaction.ts";
-import { buildReplaySummarizationContext } from "./replay.ts";
+import { completeSummarization, estimateTokens, getSummarizationFailure } from "./compaction.ts";
+import { buildReplaySummarizationContext, type SummarizationPrefix } from "./replay.ts";
 import {
 	computeFileLists,
 	createFileOps,

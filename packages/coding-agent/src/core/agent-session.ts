@@ -117,6 +117,7 @@ import {
 	getLatestCompactionEntry,
 	type SessionEntry,
 	SessionManager,
+	type SessionProjection,
 } from "./session-manager.ts";
 import type { CacheUsageTotals, RequestKind } from "./sessions/cache-usage.ts";
 import { type PrefixInvalidationCause, serializeTools } from "./sessions/prefix-stability.ts";
@@ -852,12 +853,14 @@ export class AgentSession {
 	// Event Subscription
 	// =========================================================================
 
-	private _refreshFinalizedContext(): void {
+	/** Rebuild agent state from the canonical projection; returns it so callers needing the messages do not rebuild. */
+	private _refreshFinalizedContext(): SessionProjection {
 		const projection = this.sessionManager.buildSessionProjection();
 		for (const entry of projection.entries) {
 			for (const message of entry.messages) this._entryIdsByMessage.set(message, entry.sourceEntry.id);
 		}
 		this.agent.state.messages = projection.messages;
+		return projection;
 	}
 
 	private _applyBoundaryDrafts(manager: SessionManager, drafts: SessionBoundaryDraft[]): SessionEntry[] {
@@ -2681,11 +2684,11 @@ export class AgentSession {
 
 			this.sessionManager.appendCompaction(summary, firstKeptEntryId, tokensBefore, details, fromExtension, usage);
 			const newEntries = this.sessionManager.getEntries();
-			this._refreshFinalizedContext();
+			const refreshedProjection = this._refreshFinalizedContext();
 			// The rebuilt context (checkpoint + kept tail) starts a new prefix; the
 			// next regular request must attribute to compaction, not surprise us.
 			this._requestObserver.expectInvalidation("compaction");
-			const estimatedTokensAfter = estimateMessagesTokens(this.sessionManager.buildSessionProjection().messages);
+			const estimatedTokensAfter = estimateMessagesTokens(refreshedProjection.messages);
 
 			// Get the saved compaction entry for the extension event
 			const savedCompactionEntry = newEntries.find((e) => e.type === "compaction" && e.summary === summary) as
@@ -3023,11 +3026,11 @@ export class AgentSession {
 
 			this.sessionManager.appendCompaction(summary, firstKeptEntryId, tokensBefore, details, fromExtension, usage);
 			const newEntries = this.sessionManager.getEntries();
-			this._refreshFinalizedContext();
+			const refreshedProjection = this._refreshFinalizedContext();
 			// The rebuilt context (checkpoint + kept tail) starts a new prefix; the
 			// next regular request must attribute to compaction, not surprise us.
 			this._requestObserver.expectInvalidation("compaction");
-			const estimatedTokensAfter = estimateMessagesTokens(this.sessionManager.buildSessionProjection().messages);
+			const estimatedTokensAfter = estimateMessagesTokens(refreshedProjection.messages);
 
 			// Get the saved compaction entry for the extension event
 			const savedCompactionEntry = newEntries.find((e) => e.type === "compaction" && e.summary === summary) as

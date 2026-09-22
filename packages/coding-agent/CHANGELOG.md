@@ -2,27 +2,17 @@
 
 ## [Unreleased]
 
-### Breaking Changes
-
-- `user_bash` now fails closed: errors or invalid defined results abort the command without invoking later handlers or executing locally. Return `undefined` to continue propagation; otherwise return `{ operations }` or `{ result }` ([#9068](https://github.com/earendil-works/pi/issues/9068)).
-
 ### New Features
 
 - Sub-agents via the built-in `task` tool: spawn a one-layer sub-agent with the active tools (minus `task` itself), the same model, and fully LLM-provided instructions; `maxSubAgents` setting (default 2) caps concurrent runs, excess spawns queue. Each run ends at the `taskTimeoutMs` deadline (default 10 minutes, 0 disables) instead of holding a slot forever on a hung stream.
 - Fused edit/write verification with `thenRun`: the model can attach a shell command to a file change and both run in a single tool call, saving a round-trip per edit-then-verify cycle. The fused command fires a real `tool_call` event for its bash facet, so every gating extension (not just permission policies) judges it, and it runs under the session's bash settings.
-- Per-model compaction token budgets via `compaction.modelOverrides` ([settings.md](docs/settings.md)).
-- Extension access to provider streaming through `ctx.modelRegistry.stream()` and `streamSimple()` ([extensions.md](docs/extensions.md)).
 - The footer shows context tokens (`8.3k/128k (6.3%)`) alongside the percentage.
 
 ### Added
 
 - Added the `task` tool: spawns a sub-agent - a fresh conversation with the currently active tools (minus `task`, so sub-agents cannot spawn their own), the same model and thinking level, and a fully LLM-provided briefing (`prompt` plus optional `systemPrompt`). The sub-agent's final response becomes the tool result, with its usage attached. Sub-agent tool calls flow through the session's `tool_call`/`tool_result` extension hooks, so permission policies and output bounding apply unchanged. Each sub-agent renders as a `Task N` window with the same look as the hidden-thinking preview (shared machinery): while it runs, a header with a live timer over a fixed-height faded tail of its current tool call and streamed text; when it ends, a frozen-duration `Task N · M tool calls` header with a natural-height tail collapsed and the sub-agent's whole conversation expanded (`ctrl+o`) - its prompt, thinking, assistant turns, and every tool call with its result (images as markers), each message excerpted head+tail so huge outputs stay bounded (last 500 entries, with a marker for earlier dropped ones). New `maxSubAgents` setting (integer `>= 1`, default 2, no upper limit) caps simultaneously running sub-agents per session; further spawns queue until a slot frees.
 - Added `thenRun` to the `edit` and `write` tools: an optional `{ command, timeout? }` run via bash in the same tool call after the file change succeeds, inside the file-mutation-queue slot so no other mutation interleaves. Saves one model round-trip per edit-then-verify cycle. The change is kept when the command fails (the error carries both outputs); the command is skipped when the change fails (`[thenRun:skipped]`/`[thenRun:failed]`/`[thenRun:succeeded]` markers in results). The fused command fires a `tool_call` event for its bash facet through the session's gate (extensions can block, ask, or rewrite it) and runs under the session's bash settings. Design informed by NVlabs/SoL-Pi's Action Fusion, implemented natively.
-- Added `ctx.modelRegistry.stream()` and `streamSimple()` for extension model calls through configured providers with resolved authentication ([#8964](https://github.com/earendil-works/pi/issues/8964)).
-- Added per-model `reserveTokens` and `keepRecentTokens` settings through `compaction.modelOverrides`, with ordinary compaction settings as fallback ([#8133](https://github.com/earendil-works/pi-mono/issues/8133)).
 - Added prebuilt self-contained binaries to releases and made `install.sh` prefer them: on darwin/linux (x64, arm64) installing needs only `curl` and `tar` — no Node.js or npm — with the npm tarball path as fallback for other platforms, releases predating binary assets, or `PI_INSTALL_METHOD=npm`. Binary installs live under `<prefix>/lib/pi-fork` with `bin/pi` symlinked in; `--uninstall` removes either flavor. The `package.json` inside each binary archive is stamped to `@r-dson/pi-standalone@<version>` so binary installs report the fork version and `pi update --self` classifies them as the fork's standalone channel instead of the upstream npm package.
-- Added `compat.allowedFallbackModels` configuration for overriding or disabling Anthropic server-side fallback models ([#9294](https://github.com/earendil-works/pi/issues/9294)).
-- Added an unsubscribe function from `pi.on()` so extensions can drop event handlers. Handlers added or removed during a dispatch apply to later dispatches, not the current one ([#8967](https://github.com/earendil-works/pi/issues/8967)).
 
 ### Changed
 
@@ -30,10 +20,7 @@
 - Changed the footer's usage line: the cache diagnostics (`Read`/`Write`/`Cache %`) now trail the context usage instead of sitting between the token counters and it — the line reads traffic (`↑in ↓out`), cost, context, then cache detail. New `usageDisplay` setting (`"minimal"` default, `"all"` in `/settings`): minimal drops the cumulative cache read/write totals and keeps the hit rate, so the line reads `↑66k ↓8.1k 8.3k/128k (6.5%) (auto) Cache 92.9%`.
 - Changed the bash and powershell tools to spill truncated full output into the session artifacts directory (`<sessionDir>/artifacts/<sessionId>/`) for persisted sessions instead of the OS temp dir, so the omitted head of a long command output stays recallable with the `read` tool for the whole session. Falls back to the temp dir for in-memory sessions. Design informed by NVlabs/SoL-Pi's ObservationPack archive.
 - Changed the fork's display name to Pi Fork: the interactive terminal title reads `Pi Fork` instead of `π`, and the update notice says "Pi Fork update available". Cosmetic only; the `pi` binary, `.pi` config dir, package names, and `PI_*` env vars are unchanged.
-- Moved compaction, branch summarization, and retry spinners into the editor border alongside the working indicator. Custom editors use the same embedding opt-in for all status spinners.
 - Enabled strict-prefer JSON-schema sampling by default for built-in `read`, `bash`, `powershell`, `edit`, and `write` tools, without requiring `PI_EXPERIMENTAL`. Extensions can re-register tool definitions with `constrainedSampling: false`.
-- Simplified clipboard handling to a native Linux clipboard implementation, dropping the `@mariozechner/clipboard` dependency ([#9163](https://github.com/earendil-works/pi/pull/9163)).
-- Formatted Bash and PowerShell tool durations of at least one minute as minutes and seconds, with hours when needed ([#9628](https://github.com/earendil-works/pi/issues/9628)).
 - Internal: the compaction/branch-summary replay construction moved to fork-owned modules (`core/compaction/replay.ts`, `core/compaction/branch-units.ts`) with request bytes pinned by a golden digest test; no behavior change.
 
 ### Fixed
@@ -42,19 +29,9 @@
 - Fixed `task` sub-agent runs having no deadline: a new `taskTimeoutMs` setting (top-level beside `maxSubAgents`, default 600000 ms, 0 disables, read per spawn) ends a hung sub-agent stream in a `Sub-agent timed out after Nms` error and frees its `maxSubAgents` slot. Invalid values (non-finite, negative, or above the 2^31-1 `setTimeout` ceiling) are rejected by the setting and the tool instead of silently disabling or coercing the deadline. Task transcript excerpts also truncate each line at 2000 chars, so a single huge line (minified output) no longer survives the line-count bound.
 - Fixed `docs/usage.md`'s Design Principles claiming the core excludes built-in sub-agents while the fork ships the `task` tool: the section now states the fork's one deliberate divergence.
 - Fixed `pi install`/`pi update` failing with a raw `spawn npm ENOENT` when no package manager is installed: the error now explains that pi and extensions placed under `~/.pi/agent/` run without one, and lists the options (install Node.js, point the `npmCommand` setting at an installed manager such as bun, or place the package's files manually).
-- Fixed mid-run threshold compaction silently skipping oversized trailing tool results ([#9740](https://github.com/earendil-works/pi/issues/9740)).
-- Fixed signal-terminated local shell commands being reported as successful with partial output ([#9577](https://github.com/earendil-works/pi/issues/9577) by [@BrendanJMurphy](https://github.com/BrendanJMurphy)).
-- Fixed local clipboard failures reporting success when the terminal ignored the fallback OSC 52 write, and added platform-specific setup guidance when no clipboard backend works ([#9618](https://github.com/earendil-works/pi/issues/9618)).
-- Capped agent-level retry backoff at `retry.maxAgentDelayMs` (60s by default) so long retry runs stay responsive during prolonged transient outages ([#8826](https://github.com/earendil-works/pi/issues/8826)).
-- Fixed direct RPC `steer` and `follow_up` commands bypassing extension `input` handlers ([#8718](https://github.com/earendil-works/pi/issues/8718)).
-- Fixed premature missing-model errors after login by waiting for catalog discovery. Radius now defaults to `balanced`, falling back to the first available Radius model when needed.
-- Fixed fullscreen mode reserving a blank row for custom footers that render zero rows ([#8919](https://github.com/earendil-works/pi/issues/8919)).
-- Fixed extension tools without parameter schemas to be rejected during registration instead of breaking provider requests ([#9300](https://github.com/earendil-works/pi/issues/9300)).
 - Updated runtime dependencies, including undici 8.10.2 with security fixes for interceptor cache poisoning, TLS callback reuse, and WebSocket crashes ([#9341](https://github.com/earendil-works/pi/pull/9341)).
-- Rejected session tree navigation while a compaction is running ([#9179](https://github.com/earendil-works/pi/pull/9179) by [@acmerfight](https://github.com/acmerfight)).
 - Preserved the active operation status (compaction, branch summary, retry) in the editor border when navigating the session tree.
 - Fixed `before_agent_start` handlers returning `systemPrompt` (and `forceSystemPrompt`) on models with mid-conversation system messages: the forced prompt is now persisted as a replacing system message and sent as the provider's leading system prompt instead of being appended as a section patch after the original prompt.
-- Fixed loaded llama.cpp models with `enable_thinking` chat templates ignoring Pi's thinking level ([#9528](https://github.com/earendil-works/pi/issues/9528)).
 
 ## [0.87.0] - 2026-09-21
 

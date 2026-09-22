@@ -96,8 +96,11 @@ function extractFileOperations(
 // ============================================================================
 
 /**
- * Extract AgentMessage from an entry if it produces one.
- * Returns undefined for entries that don't contribute to LLM context.
+ * The model-visible messages a projected entry contributes to summarization:
+ * its projected messages minus system messages (prompt state, not conversation
+ * — the compaction entry carries the checkpoint's system replay) and minus
+ * compaction checkpoints (only the newest heads the projection, and it is
+ * never part of the messages to summarize).
  */
 function getMessagesFromProjectedEntryForCompaction(entry: ProjectedSessionEntry): AgentMessage[] {
 	if (entry.sourceEntry.type === "compaction") return [];
