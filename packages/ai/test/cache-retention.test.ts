@@ -508,7 +508,6 @@ describe("Cache Retention (PI_CACHE_RETENTION)", () => {
 			MODELS.opencode["kimi-k2.5"],
 			MODELS.opencode["kimi-k2.6"],
 			MODELS.opencode["minimax-m2.7"],
-			MODELS["opencode-go"]["kimi-k2.6"],
 		] as const)("should omit long cache retention for $provider/$id", async (metadata) => {
 			const model = metadata as Model<"openai-completions">;
 			let capturedPayload: OpenAICompletionsCachePayload | undefined;
@@ -530,10 +529,39 @@ describe("Cache Retention (PI_CACHE_RETENTION)", () => {
 				// Expected to fail
 			}
 
-			expect(model.compat?.supportsLongCacheRetention).toBe(false);
+			// Omitted means unsupported exactly like an explicit false.
+			expect(model.compat?.supportsLongCacheRetention ?? false).toBe(false);
 			expect(capturedPayload).toBeDefined();
 			expect(capturedPayload?.prompt_cache_key).toBeUndefined();
 			expect(capturedPayload?.prompt_cache_retention).toBeUndefined();
+		});
+
+		it("routes and applies long cache retention for opencode-go models", async () => {
+			const model = MODELS["opencode-go"]["deepseek-v4-flash"] as Model<"openai-completions">;
+			let capturedPayload: OpenAICompletionsCachePayload | undefined;
+
+			try {
+				const s = streamOpenAICompletions(model, context, {
+					apiKey: "fake-key",
+					cacheRetention: "long",
+					sessionId: "session-opencode-go-long-cache",
+					onPayload: stopAfterPayload<OpenAICompletionsCachePayload>((payload) => {
+						capturedPayload = payload;
+					}),
+				});
+
+				for await (const event of s) {
+					if (event.type === "error") break;
+				}
+			} catch {
+				// Expected to fail
+			}
+
+			expect(capturedPayload).toBeDefined();
+			// opencode-go routes by session cache key and its provider default
+			// enables the long-retention extension.
+			expect(capturedPayload?.prompt_cache_key).toBe("session-opencode-go-long-cache");
+			expect(capturedPayload?.prompt_cache_retention).toBe("24h");
 		});
 
 		it.each([MODELS.cerebras["gpt-oss-120b"], MODELS.cerebras["qwen-3.8-27b"]] as const)(
