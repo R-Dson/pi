@@ -41,6 +41,7 @@ function makeTool(name: string): ToolInfo {
 		description: `The ${name} tool`,
 		parameters: {},
 		promptGuidelines: undefined,
+		exposure: "direct",
 		sourceInfo: createSyntheticSourceInfo(`example:${name}`, { source: "example" }),
 	};
 }

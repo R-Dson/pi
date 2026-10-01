@@ -41,9 +41,10 @@ describe("SessionManager append immutability", () => {
 		const userMessage = { role: "user" as const, content: "check the append path", timestamp: 1 };
 		const userEntryId = session.appendMessage(userMessage);
 
-		// Deferred creation: no assistant message yet, so the file does not exist
-		// (upstream behavior: abandoned prompts leave no session file).
-		expect(existsSync(file)).toBe(false);
+		// Upstream #10000: the file is created at the first user message, so a
+		// prompt survives pi exiting during the first turn. Setup-only sessions
+		// (model/thinking entries, no messages) still leave no file.
+		expect(existsSync(file)).toBe(true);
 		let previous = "";
 
 		/** Assert content only grew over previous by complete JSON lines and return it. */
@@ -77,16 +78,16 @@ describe("SessionManager append immutability", () => {
 		};
 		const assistantEntryId = session.appendMessage(assistantMessage);
 
-		// The first assistant message flushes every pending entry (header, user,
-		// assistant) as complete lines; previous bytes (none) are untouched. The
-		// flush batch size is upstream's deferred-creation behavior, not this
-		// property, so only completeness and ordering are asserted.
+		// The user append wrote header + user (upstream #10000: first message
+		// creates the file); the assistant append adds its own line. The flush
+		// batch sizes are upstream's creation behavior, not this property, so
+		// only completeness and ordering are asserted.
 		let content = readContent();
 		let added = grewOnlyByCompleteLines(content);
-		expect(added.length).toBeGreaterThanOrEqual(3);
+		expect(added.length).toBeGreaterThanOrEqual(2);
 		expect((JSON.parse(added[0]) as FileEntry).type).toBe("session");
 		const flushedUser = JSON.parse(added[1]) as FileEntry;
-		const flushedAssistant = JSON.parse(added[2]) as FileEntry;
+		const flushedAssistant = JSON.parse(added[added.length - 1]) as FileEntry;
 		previous = content;
 
 		const toolResultMessage = {

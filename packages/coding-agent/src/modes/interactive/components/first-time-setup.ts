@@ -1,6 +1,7 @@
 import { Container, getKeybindings, Spacer, Text } from "@earendil-works/pi-tui";
 import { APP_NAME } from "../../../config.ts";
-import { type TerminalTheme, theme } from "../theme/theme.ts";
+import { SYSTEM_THEME_NAME } from "../theme/system-theme.ts";
+import { theme } from "../theme/theme.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
 import { keyHint, rawKeyHint } from "./keybinding-hints.ts";
 
@@ -12,10 +13,9 @@ export interface FirstTimeSetupResult {
 }
 
 export interface FirstTimeSetupOptions {
-	detectedTheme: TerminalTheme;
-	/** Every registered theme name; "/" (Automatic) should be first — it is the default selection, falling back to the first entry when absent. */
+	/** Every registered theme name; the system theme should be first — it is the default selection, falling back to the first entry when absent. */
 	themes: string[];
-	/** Start at the privacy questions: settings already carry a theme, so asking again (preselected Automatic) could overwrite it. */
+	/** Start at the privacy questions: settings already carry a theme, so asking again (preselected System) could overwrite it. */
 	skipTheme?: boolean;
 	onThemePreview: (themeName: string) => void;
 	onSubmit: (result: FirstTimeSetupResult) => void;
@@ -43,12 +43,9 @@ const YES_NO_STEPS: Record<YesNoStep, { question: string; explanation: string }>
 	},
 };
 
-// The theme-setting value for "follow terminal appearance" (same value the
-// /settings theme submenu calls Automatic); rendered with a friendlier label.
-const AUTOMATIC_THEME = "/";
-
+// The theme-setting value that follows the terminal's colors; rendered with a friendlier label.
 const THEME_LABELS: Record<string, string> = {
-	[AUTOMATIC_THEME]: "Automatic",
+	[SYSTEM_THEME_NAME]: "System (matches your terminal colors)",
 };
 
 /**
@@ -71,12 +68,18 @@ export class FirstTimeSetupComponent extends Container {
 		this.options = options;
 		this.themes = options.themes;
 		this.themeAsked = options.skipTheme !== true;
-		// The theme question is first for fresh installs (Automatic, following
-		// the detected terminal appearance, is the default selection); an
+		// The theme question is first for fresh installs (System, following
+		// the terminal's colors, is the default selection); an
 		// install that already set a theme starts at the privacy questions.
 		this.step = this.themeAsked ? "theme" : "updateCheck";
-		this.themeIndex = Math.max(0, this.themes.indexOf(AUTOMATIC_THEME));
+		this.themeIndex = Math.max(0, this.themes.indexOf(SYSTEM_THEME_NAME));
 		this.update();
+	}
+
+	/** Rebuild on theme changes, e.g. when the system theme receives the terminal's colors. */
+	override invalidate(): void {
+		this.update();
+		super.invalidate();
 	}
 
 	// Rebuild the whole dialog on every change so theme previews recolor all text.
@@ -93,7 +96,6 @@ export class FirstTimeSetupComponent extends Container {
 			);
 			this.addChild(new Spacer(1));
 			this.addChild(new Text(theme.fg("text", "Pick a theme."), 1, 0));
-			this.addChild(new Text(theme.fg("muted", `Detected system appearance: ${this.options.detectedTheme}`), 1, 0));
 			this.addChild(new Spacer(1));
 			this.addOptionList(this.themes, this.themeIndex);
 		} else {

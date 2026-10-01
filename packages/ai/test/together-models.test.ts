@@ -13,7 +13,7 @@ afterEach(() => {
 });
 
 describe("Together models", () => {
-	it("registers the Kimi K3 model via OpenAI-compatible Chat Completions API", () => {
+	it("registers the default Kimi K3 model via OpenAI-compatible Chat Completions API", () => {
 		const model = getModel("together", "moonshotai/Kimi-K3");
 
 		expect(model).toBeDefined();

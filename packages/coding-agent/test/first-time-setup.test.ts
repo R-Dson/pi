@@ -9,6 +9,7 @@ import {
 	FirstTimeSetupComponent,
 	type FirstTimeSetupResult,
 } from "../src/modes/interactive/components/first-time-setup.ts";
+import { SYSTEM_THEME_NAME } from "../src/modes/interactive/theme/system-theme.ts";
 import { initTheme } from "../src/modes/interactive/theme/theme.ts";
 
 function render(container: Container): string {
@@ -26,7 +27,6 @@ describe("FirstTimeSetupComponent theme step", () => {
 		const previews: string[] = [];
 		let submitted: FirstTimeSetupResult | undefined;
 		const component = new FirstTimeSetupComponent({
-			detectedTheme: "dark",
 			themes: ["dark", "light", "dracula"],
 			onThemePreview: (theme) => previews.push(theme),
 			onSubmit: (result) => {
@@ -54,12 +54,11 @@ describe("FirstTimeSetupComponent theme step", () => {
 		expect(submitted?.providerAttribution).toBe(false);
 	});
 
-	it("defaults to Automatic for fresh installs when it is offered", () => {
+	it("defaults to the system theme for fresh installs when it is offered", () => {
 		const previews: string[] = [];
 		let submitted: FirstTimeSetupResult | undefined;
 		const component = new FirstTimeSetupComponent({
-			detectedTheme: "light",
-			themes: ["/", "dark", "light", "dracula"],
+			themes: [SYSTEM_THEME_NAME, "dark", "light", "dracula"],
 			onThemePreview: (theme) => previews.push(theme),
 			onSubmit: (result) => {
 				submitted = result;
@@ -68,21 +67,20 @@ describe("FirstTimeSetupComponent theme step", () => {
 		});
 
 		const rendered = render(component);
-		expect(rendered).toContain("→ Automatic");
+		expect(rendered).toContain("→ System");
 		expect(rendered).toContain("dark");
 		expect(rendered).toContain("dracula");
 
-		// Confirming without navigating keeps Automatic ("/").
+		// Confirming without navigating keeps the system theme.
 		component.handleInput("\n");
 		component.handleInput("\n");
 		component.handleInput("\n");
-		expect(submitted?.theme).toBe("/");
+		expect(submitted?.theme).toBe(SYSTEM_THEME_NAME);
 
-		// Navigating previews the raw values; the caller resolves "/" to the
-		// detected appearance.
+		// Navigating previews the raw values; the system theme recolors from
+		// the terminal on its own.
 		const navigating = new FirstTimeSetupComponent({
-			detectedTheme: "light",
-			themes: ["/", "dark", "light", "dracula"],
+			themes: [SYSTEM_THEME_NAME, "dark", "light", "dracula"],
 			onThemePreview: (theme) => previews.push(theme),
 			onSubmit: () => {},
 			onCancel: () => {},
@@ -90,12 +88,11 @@ describe("FirstTimeSetupComponent theme step", () => {
 		navigating.handleInput("j");
 		expect(previews.at(-1)).toBe("dark");
 		navigating.handleInput("k");
-		expect(previews.at(-1)).toBe("/");
+		expect(previews.at(-1)).toBe(SYSTEM_THEME_NAME);
 	});
 
-	it("falls back to the first theme when Automatic is not offered", () => {
+	it("falls back to the first theme when the system theme is not offered", () => {
 		const component = new FirstTimeSetupComponent({
-			detectedTheme: "dark",
 			themes: ["dark", "light"],
 			onThemePreview: () => {},
 			onSubmit: () => {},
@@ -108,8 +105,7 @@ describe("FirstTimeSetupComponent theme step", () => {
 		const previews: string[] = [];
 		let submitted: FirstTimeSetupResult | undefined;
 		const component = new FirstTimeSetupComponent({
-			detectedTheme: "dark",
-			themes: ["/", "dark", "light"],
+			themes: [SYSTEM_THEME_NAME, "dark", "light"],
 			skipTheme: true,
 			onThemePreview: (theme) => previews.push(theme),
 			onSubmit: (result) => {

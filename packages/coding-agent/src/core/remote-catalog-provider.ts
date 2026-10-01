@@ -1,19 +1,12 @@
-import type { Api, Model, ModelsStoreEntry, Provider } from "@earendil-works/pi-ai";
+import { type AnyModel, getModelType, isModelType, type ModelsStoreEntry, type Provider } from "@earendil-works/pi-ai";
 
-function mergeModels(baseline: readonly Model<Api>[], dynamic: readonly Model<Api>[]): Model<Api>[] {
-	const merged = [...baseline];
-	for (const model of dynamic) {
-		const index = merged.findIndex((entry) => entry.id === model.id);
-		if (index >= 0) merged[index] = model;
-		else merged.push(model);
-	}
-	return merged;
+function mergeModels<TModel extends AnyModel>(baseline: readonly TModel[], dynamic: readonly TModel[]): TModel[] {
+	const merged = new Map<string, TModel>();
+	for (const model of [...baseline, ...dynamic]) merged.set(`${getModelType(model)}\0${model.id}`, model);
+	return [...merged.values()];
 }
 
-function remoteModels(
-	entry: ModelsStoreEntry | undefined,
-	localGeneratedAt: number | undefined,
-): readonly Model<Api>[] {
+function remoteModels(entry: ModelsStoreEntry | undefined, localGeneratedAt: number | undefined): readonly AnyModel[] {
 	if (!entry) return [];
 	if (localGeneratedAt !== undefined && (entry.lastModified === undefined || entry.lastModified <= localGeneratedAt)) {
 		return [];
@@ -29,11 +22,16 @@ function remoteModels(
  * the network, regardless of `allowNetwork`/`force`.
  */
 export function withRemoteCatalog(provider: Provider, localGeneratedAt?: number): Provider {
-	let dynamicModels: readonly Model<Api>[] = [];
+	let dynamicModels: readonly AnyModel[] = [];
 
 	return {
 		...provider,
-		getModels: () => mergeModels(provider.getModels(), dynamicModels),
+		getModels: () =>
+			mergeModels(
+				provider.getModels(),
+				dynamicModels.filter((model) => isModelType(model, "chat")),
+			),
+		getAllModels: () => mergeModels(provider.getAllModels?.() ?? provider.getModels(), dynamicModels),
 		refreshModels: async (context) => {
 			const restored = remoteModels(context.stored, localGeneratedAt).filter(
 				(model) => model.provider === provider.id,

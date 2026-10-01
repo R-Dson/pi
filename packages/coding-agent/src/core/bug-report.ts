@@ -58,7 +58,8 @@ export function redactJsonValue(value: unknown): unknown {
 }
 
 function redactSettings(settings: Settings): Settings {
-	return redactJsonValue(settings) as Settings;
+	const { deviceId: _deviceId, ...rest } = settings;
+	return redactJsonValue(rest) as Settings;
 }
 
 function collectEnvironment() {

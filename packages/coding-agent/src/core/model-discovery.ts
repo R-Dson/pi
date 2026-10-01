@@ -7,7 +7,7 @@
  * and modelOverrides keep applying on top (see provider-composer.ts).
  */
 
-import type { Api, Model, RefreshModelsContext } from "@earendil-works/pi-ai";
+import type { AnyModel, Api, Model, RefreshModelsContext } from "@earendil-works/pi-ai";
 import type { ModelsJsonProvider } from "./model-config.ts";
 import { resolveHeadersOrThrow } from "./resolve-config-value.ts";
 
@@ -241,7 +241,7 @@ export async function refreshDiscoveredModels(
 	providerId: string,
 	config: ModelsJsonProvider,
 	context: RefreshModelsContext,
-	setDiscoveredModels: (models: readonly Model<Api>[]) => void,
+	setDiscoveredModels: (models: readonly AnyModel[]) => void,
 ): Promise<boolean> {
 	const protocol = discoveryProtocolOf(config);
 	if (!protocol || !config.baseUrl) return true;

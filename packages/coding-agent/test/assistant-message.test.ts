@@ -365,7 +365,11 @@ describe("AssistantMessageComponent", () => {
 			);
 			let reds = tailWordReds(component.render(100).join("\n"));
 			expect(reds.length).toBeGreaterThan(2);
-			expect(reds.every((r) => r === 128)).toBe(true);
+			// Uniform at the theme's preview gray (the exact value depends on the
+			// theme engine's okhsl conversion; uniformity and clearly-gray are the
+			// properties under test).
+			expect(reds.every((r) => r === reds[0])).toBe(true);
+			expect(reds[0]).toBeGreaterThanOrEqual(96);
 
 			// Three lines: the oldest word is dimmed partway — the fade ramps in
 			// as the tail climbs toward the top of the window, but stays well

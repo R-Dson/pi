@@ -3,7 +3,7 @@ import { constants } from "fs";
 import { access as fsAccess, readFile as fsReadFile, writeFile as fsWriteFile } from "fs/promises";
 import { type Static, Type } from "typebox";
 import { splitBom } from "../../utils/text.ts";
-import type { ExtensionContext, ToolDefinition } from "../extensions/types.ts";
+import type { ExtensionToolContext, ToolDefinition } from "../extensions/types.ts";
 import {
 	applyEditsToNormalizedContent,
 	detectLineEnding,
@@ -168,7 +168,7 @@ export function createEditToolDefinition(
 		constrainedSampling: { type: "json_schema", strict: "prefer" },
 		renderShell: "self",
 		prepareArguments: prepareEditArguments,
-		async execute(toolCallId, input: EditToolInput, signal?: AbortSignal, _onUpdate?, ctx?: ExtensionContext) {
+		async execute(toolCallId, input: EditToolInput, signal?: AbortSignal, _onUpdate?, ctx?: ExtensionToolContext) {
 			const { path, edits } = validateEditInput(input);
 			const thenRun: ThenRunInput | undefined = input.thenRun;
 			const absolutePath = resolveToCwd(path, ctx?.cwd || cwd);

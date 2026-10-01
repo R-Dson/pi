@@ -3,7 +3,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type {
-	ExtensionContext,
+	ExtensionToolContext,
 	ToolCallEvent,
 	ToolCallEventResult,
 	ToolResultEvent,
@@ -14,7 +14,7 @@ import { createEditToolDefinition } from "../src/core/tools/edit.ts";
 import { type BashToolDefinition, createSessionFusedCommandExecutor } from "../src/core/tools/then-run.ts";
 import { createWriteToolDefinition } from "../src/core/tools/write.ts";
 
-function fakeCtx(cwd: string): ExtensionContext {
+function fakeCtx(cwd: string): ExtensionToolContext {
 	return {
 		cwd,
 		// The bash tool reads session metadata when ctx is present; an unpersisted
@@ -24,7 +24,7 @@ function fakeCtx(cwd: string): ExtensionContext {
 			getSessionFile: () => undefined,
 			getSessionDir: () => cwd,
 		},
-	} as unknown as ExtensionContext;
+	} as unknown as ExtensionToolContext;
 }
 
 function getTextOutput(result: { content: Array<{ type: string; text?: string }> }): string {
@@ -300,7 +300,7 @@ describe("bash full-output spill location", () => {
 		rmSync(testDir, { recursive: true, force: true });
 	});
 
-	function sessionCtx(sessionId: string): ExtensionContext {
+	function sessionCtx(sessionId: string): ExtensionToolContext {
 		return {
 			cwd: testDir,
 			sessionManager: {
@@ -308,7 +308,7 @@ describe("bash full-output spill location", () => {
 				getSessionDir: () => testDir,
 				getSessionId: () => sessionId,
 			},
-		} as unknown as ExtensionContext;
+		} as unknown as ExtensionToolContext;
 	}
 
 	it("spills truncated output into the session artifacts directory", async () => {

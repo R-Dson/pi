@@ -17,6 +17,7 @@ function makeTool(name: string, capability?: string): ToolInfo {
 		description: `The ${name} tool`,
 		parameters: {},
 		promptGuidelines: undefined,
+		exposure: "direct",
 		...(capability ? { capability: capability as ToolInfo["capability"] } : {}),
 		sourceInfo: createSyntheticSourceInfo(`example:${name}`, { source: "example" }),
 	};

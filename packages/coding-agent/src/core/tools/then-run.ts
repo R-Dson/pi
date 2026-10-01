@@ -1,7 +1,7 @@
 import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
 import { type Static, Type } from "typebox";
 import type { ExtensionRunner } from "../extensions/runner.ts";
-import type { ExtensionContext } from "../extensions/types.ts";
+import type { ExtensionToolContext } from "../extensions/types.ts";
 import { createBashToolDefinition } from "./bash.ts";
 
 export const thenRunSchema = Type.Object({
@@ -58,7 +58,7 @@ export type FusedCommandExecutor = (
 	toolCallId: string,
 	input: { command: string; timeout?: number },
 	signal: AbortSignal | undefined,
-	ctx: ExtensionContext | undefined,
+	ctx: ExtensionToolContext | undefined,
 ) => Promise<FusedCommandOutcome>;
 
 /**
@@ -143,8 +143,20 @@ export function createSessionFusedCommandExecutor(deps: {
 
 		let content: (TextContent | ImageContent)[];
 		try {
-			const result = await bash.execute(callId, effective, signal, undefined, ctx ?? ({ cwd } as ExtensionContext));
+			const result = await bash.execute(
+				callId,
+				effective,
+				signal,
+				undefined,
+				ctx ?? ({ cwd } as ExtensionToolContext),
+			);
 			content = result.content;
+			// Nonzero exits resolve with `isError: true` (upstream stopped throwing
+			// on them); the mutation is kept and the command reports failure.
+			if (result.isError) {
+				const observed = await observe(content, true);
+				return { status: "failed", command: effective.command, output: textOf(observed?.content ?? content) };
+			}
 		} catch (error) {
 			const output = errorMessage(error);
 			await observe([{ type: "text", text: output }], true);
@@ -171,7 +183,7 @@ export async function appendThenRunResult(options: {
 	thenRun: ThenRunInput;
 	mutationContent: (TextContent | ImageContent)[];
 	signal: AbortSignal | undefined;
-	ctx: ExtensionContext | undefined;
+	ctx: ExtensionToolContext | undefined;
 	/** Session executor; omitted by plain factories (fresh local bash, no gate). */
 	fusedCommand?: FusedCommandExecutor;
 }): Promise<(TextContent | ImageContent)[]> {

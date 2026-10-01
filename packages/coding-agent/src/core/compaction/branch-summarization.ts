@@ -5,7 +5,7 @@
  * a summary of the branch being left so context isn't lost.
  */
 
-import type { AgentMessage, StreamFn } from "@earendil-works/pi-agent-core";
+import type { AgentMessage, StreamFn, ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { RetryCallbacks, RetryPolicy } from "@earendil-works/pi-ai";
 import { contentText } from "@earendil-works/pi-ai";
 import type { Model, SimpleStreamOptions, Usage } from "@earendil-works/pi-ai/compat";
@@ -70,6 +70,8 @@ export interface GenerateBranchSummaryOptions {
 	env?: Record<string, string>;
 	/** Abort signal for cancellation */
 	signal: AbortSignal;
+	/** Thinking level for the summarizer request (from the resolved model route). */
+	thinkingLevel?: ThinkingLevel;
 	/** Optional custom instructions for summarization */
 	customInstructions?: string;
 	/** If true, customInstructions replaces the default prompt instead of being appended */
@@ -321,6 +323,9 @@ export async function generateBranchSummary(
 	// summary is written; derive the cap from the model instead.
 	const maxTokens = Math.min(4096, model.maxTokens > 0 ? model.maxTokens : Number.POSITIVE_INFINITY);
 	const requestOptions: SimpleStreamOptions = { apiKey, headers, env, signal, maxTokens, sessionId };
+	if (model.reasoning && options.thinkingLevel && options.thinkingLevel !== "off") {
+		requestOptions.reasoning = options.thinkingLevel;
+	}
 	const response = await completeSummarization(model, context, requestOptions, streamFn, retry, callbacks, false);
 
 	// Check if aborted or errored
