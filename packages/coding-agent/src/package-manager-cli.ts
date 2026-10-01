@@ -142,7 +142,7 @@ Update pi, installed packages, or model catalogs.
 Options:
   --self                  Update pi only (default when no target is given)
   --extensions            Update installed packages only
-  --models                Restore model catalogs from the local store
+  --models                Refresh model catalogs (builtins from the local store, discovered providers live)
   --all                   Update pi and installed packages
   --extension <source>    Update one package only
   -a, --approve           Trust project-local files for this command
@@ -151,7 +151,7 @@ Options:
 Short forms:
   ${APP_NAME} update                Update pi only
   ${APP_NAME} update --all          Update pi and all extensions
-  ${APP_NAME} update --models       Restore model catalogs from the local store
+  ${APP_NAME} update --models       Refresh model catalogs
   ${APP_NAME} update <source>       Update one package
   ${APP_NAME} update pi             Update pi only (self works as alias to pi)
 `);
@@ -371,6 +371,7 @@ function updateTargetIncludesExtensions(target: UpdateTarget): boolean {
 async function refreshModelCatalogs(agentDir: string): Promise<void> {
 	const controller = new AbortController();
 	const timeout = setTimeout(() => controller.abort(), 15_000);
+	const allowNetwork = process.env.PI_OFFLINE === undefined;
 	try {
 		const modelRuntime = await ModelRuntime.create({
 			authPath: join(agentDir, "auth.json"),
@@ -380,9 +381,12 @@ async function refreshModelCatalogs(agentDir: string): Promise<void> {
 		});
 		// allowNetwork/force are inert for the builtin catalogs after the fork's
 		// catalog neutralization (issue #32): refresh restores the persisted
-		// local overlay and never touches pi.dev. Report what actually happened.
+		// local overlay and never touches pi.dev. Providers configured with
+		// "discover" in models.json do fetch their endpoint here, so the network
+		// phase must honor PI_OFFLINE like every other model fetch. Report what
+		// actually happened.
 		const result = await modelRuntime.refresh({
-			allowNetwork: true,
+			allowNetwork,
 			force: true,
 			signal: controller.signal,
 		});
@@ -396,7 +400,13 @@ async function refreshModelCatalogs(agentDir: string): Promise<void> {
 	} finally {
 		clearTimeout(timeout);
 	}
-	console.log(chalk.green("Model catalogs restored from the local store (network refresh unavailable in this fork)"));
+	console.log(
+		chalk.green(
+			allowNetwork
+				? "Model catalogs refreshed (builtin catalogs from the local store; discovered providers live)"
+				: "Model catalogs restored from the local store (PI_OFFLINE set)",
+		),
+	);
 }
 
 function printSelfUpdateUnavailable(

@@ -390,7 +390,7 @@ describe("package commands", () => {
 			signal: expect.any(AbortSignal),
 		});
 		expect(logSpy.mock.calls.map(([message]) => String(message)).join("\n")).toContain(
-			"Model catalogs restored from the local store",
+			"Model catalogs refreshed (builtin catalogs from the local store; discovered providers live)",
 		);
 		expect(errorSpy).not.toHaveBeenCalled();
 		expect(process.exitCode).toBeUndefined();

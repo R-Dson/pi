@@ -5,6 +5,7 @@ Add custom providers and models (Ollama, vLLM, LM Studio, proxies) via `~/.pi/ag
 ## Table of Contents
 
 - [Minimal Example](#minimal-example)
+- [Model Discovery](#model-discovery)
 - [Full Example](#full-example)
 - [Supported APIs](#supported-apis)
 - [Provider Configuration](#provider-configuration)
@@ -62,6 +63,55 @@ You can set `compat` at the provider level to apply to all models, or at the mod
   }
 }
 ```
+
+## Model Discovery
+
+Instead of listing models by hand, a provider can discover them from the server. Set `discover` on the provider and pi fetches the model list whenever model catalogs refresh with network (interactive startup, opening `/model`, or `pi update --models`; non-interactive sessions restore the persisted catalog at startup and fetch on their next refresh):
+
+```json
+{
+  "providers": {
+    "ollama": {
+      "baseUrl": "http://localhost:11434/v1",
+      "api": "openai-completions",
+      "apiKey": "ollama",
+      "discover": "ollama"
+    }
+  }
+}
+```
+
+Two protocols are supported:
+
+- `true` or `"openai"` — OpenAI-compatible servers (vLLM, LM Studio, llama.cpp, gateways). pi reads `GET {baseUrl}/models` and picks up context-window fields when the server sends them (vLLM's `max_model_len` and the common equivalents). When the listing reports no context lengths, it probes llama.cpp's `/props` once to fill in the context window and detect `enable_thinking` reasoning models (a listing that already carries context skips the probe).
+- `"ollama"` — Ollama's native endpoints. pi reads `/api/tags` and probes `/api/show` per model, picking up the context length, vision capability, and thinking-template models (Qwen3-style).
+
+What discovery infers:
+
+- `contextWindow` from the server when reported, else 128000; `maxTokens` mirrors it. Zero `cost` for every discovered model.
+- `reasoning: true` plus a working thinking-level map when the server's chat template uses `enable_thinking`.
+- `input: ["text", "image"]` for models the server reports as vision-capable.
+- A conservative `compat` block for local servers (`supportsDeveloperRole`, `supportsReasoningEffort`, `supportsStrictMode`, `supportsStore` all false, `max_tokens` field). Your provider-level `compat` merges over it.
+
+Discovered models are a baseline, not a replacement for this file: an explicit entry in `models[]` with the same id replaces the discovered model, and `modelOverrides` still apply last. Use them to correct anything the server gets wrong:
+
+```json
+{
+  "providers": {
+    "vllm": {
+      "baseUrl": "http://localhost:8000/v1",
+      "api": "openai-completions",
+      "apiKey": "vllm",
+      "discover": true,
+      "modelOverrides": {
+        "my-model": { "contextWindow": 32768, "reasoning": true }
+      }
+    }
+  }
+}
+```
+
+Discovered catalogs persist in the local model store, so models stay listed across restarts and offline sessions (`PI_OFFLINE` disables the fetch, not the list). The dummy-`apiKey` note above applies to discovery too: auth must resolve before pi contacts the server.
 
 ## Full Example
 
@@ -140,6 +190,7 @@ Set `api` at provider level (default for all models) or model level (override pe
 | `oauth` | Dynamic OAuth provider type. Currently supports `"radius"`; requires the gateway `baseUrl`. |
 | `headers` | Custom headers (see value resolution below) |
 | `authHeader` | Set `true` to add `Authorization: Bearer <apiKey>` automatically |
+| `discover` | Fetch the model list from the server (see [Model Discovery](#model-discovery)): `true`/`"openai"` for OpenAI-compatible listings, `"ollama"` for Ollama's native endpoints |
 | `models` | Array of model configurations |
 | `modelOverrides` | Per-model overrides for built-in or extension-registered models on this provider |
 

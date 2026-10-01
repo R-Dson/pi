@@ -21,6 +21,7 @@ import {
 } from "@earendil-works/pi-ai";
 import { getApiProvider } from "@earendil-works/pi-ai/compat";
 import type { ModelConfig, ModelsJsonModel, ModelsJsonModelOverride, ModelsJsonProvider } from "./model-config.ts";
+import { discoveryProtocolOf, refreshDiscoveredModels } from "./model-discovery.ts";
 import {
 	clearConfigValueCache,
 	getConfigValueEnvVarNames,
@@ -212,6 +213,9 @@ function applyModelsJson(
 	if (!config) return [...baseModels];
 	if (config.oauth && !config.baseUrl) {
 		throw new Error(`Provider ${providerId}: "baseUrl" is required when "oauth" is set.`);
+	}
+	if (config.discover && !config.baseUrl) {
+		throw new Error(`Provider ${providerId}: "baseUrl" is required when "discover" is set.`);
 	}
 	const hasOverrides = config.modelOverrides && Object.keys(config.modelOverrides).length > 0;
 	if (
@@ -463,16 +467,23 @@ export function composeModelProvider(
 	extension: ProviderConfigInput | undefined,
 ): Provider {
 	const config = modelConfig.getProvider(providerId);
+	const discoveryProtocol = config ? discoveryProtocolOf(config) : undefined;
+	let discoveredModels: readonly Model<Api>[] | undefined;
 	let extensionOAuthCredential: OAuthCredentials | undefined;
 	let refreshedExtensionModels: ProviderConfigInput["models"];
 	const currentExtension = (): ProviderConfigInput | undefined =>
 		extension && refreshedExtensionModels ? { ...extension, models: refreshedExtensionModels } : extension;
 	// models.json modelOverrides are the topmost user-config layer: they apply once,
 	// after custom-model upserts, extension model replacement, and legacy OAuth projection.
+	// Discovered models are a baseline beneath all of them: ids the base catalog
+	// already carries stay authoritative, explicit config.models entries upsert over
+	// discovered ids, and modelOverrides apply last.
 	const getModels = () => {
+		const baseModels = base?.getModels() ?? [];
+		const discovered = (discoveredModels ?? []).filter((model) => !baseModels.some((entry) => entry.id === model.id));
 		let models = applyExtension(
 			providerId,
-			applyModelsJson(providerId, base?.getModels() ?? [], config),
+			applyModelsJson(providerId, [...baseModels, ...discovered], config),
 			currentExtension(),
 		);
 		if (extensionOAuthCredential && extension?.oauth?.modifyModels) {
@@ -520,8 +531,17 @@ export function composeModelProvider(
 		auth: { ...(apiKey ? { apiKey } : {}), ...(oauth ? { oauth } : {}) },
 		getModels,
 		refreshModels:
-			base?.refreshModels || extension?.refreshModels || extension?.oauth?.modifyModels
+			base?.refreshModels || extension?.refreshModels || extension?.oauth?.modifyModels || discoveryProtocol
 				? async (context) => {
+						if (discoveryProtocol && config) {
+							if (
+								!(await refreshDiscoveredModels(providerId, config, context, (models) => {
+									discoveredModels = models;
+								}))
+							) {
+								return;
+							}
+						}
 						await base?.refreshModels?.(context);
 						let refreshed: NonNullable<ProviderConfigInput["models"]> | undefined;
 						if (extension?.refreshModels) refreshed = await extension.refreshModels(context);
