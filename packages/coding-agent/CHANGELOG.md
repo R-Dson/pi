@@ -24,6 +24,7 @@
 - Enabled strict-prefer JSON-schema sampling by default for built-in `read`, `bash`, `powershell`, `edit`, and `write` tools, without requiring `PI_EXPERIMENTAL`. Extensions can re-register tool definitions with `constrainedSampling: false`.
 - Internal: the compaction/branch-summary replay construction moved to fork-owned modules (`core/compaction/replay.ts`, `core/compaction/branch-units.ts`) with request bytes pinned by a golden digest test; no behavior change.
 - Changed the default xAI model to Grok 4.7.
+- Changed default models that drifted out of the current provider catalogs: Fireworks now defaults to the Kimi router (`accounts/fireworks/routers/kimi-latest`), Together to Kimi K3, and OpenCode Go to Kimi K3.
 
 ### Fixed
 
