@@ -220,6 +220,7 @@
 - Enabled strict-prefer JSON-schema sampling by default for built-in `read`, `bash`, `powershell`, `edit`, and `write` tools, without requiring `PI_EXPERIMENTAL`. Extensions can re-register tool definitions with `constrainedSampling: false`.
 - Internal: the compaction/branch-summary replay construction moved to fork-owned modules (`core/compaction/replay.ts`, `core/compaction/branch-units.ts`) with request bytes pinned by a golden digest test; no behavior change.
 - Changed default models that drifted out of the current provider catalogs: Fireworks now defaults to the Kimi router (`accounts/fireworks/routers/kimi-latest`), Together to Kimi K3, and OpenCode Go to Kimi K3.
+- Changed the first-run wizard's theme step to default to System and follow the terminal's colors live (adopted with upstream's system theme); an install that already set a theme still skips the step and starts at the privacy questions.
 
 ### Fixed
 
@@ -230,6 +231,8 @@
 - Updated runtime dependencies, including undici 8.10.2 with security fixes for interceptor cache poisoning, TLS callback reuse, and WebSocket crashes ([#9341](https://github.com/earendil-works/pi/pull/9341)).
 - Preserved the active operation status (compaction, branch summary, retry) in the editor border when navigating the session tree.
 - Fixed `before_agent_start` handlers returning `systemPrompt` (and `forceSystemPrompt`) on models with mid-conversation system messages: the forced prompt is now persisted as a replacing system message and sent as the provider's leading system prompt instead of being appended as a section patch after the original prompt.
+- Fixed the hidden-thinking preview fade resolving only hex-defined preview grays: it now resolves every theme color form (okhsl and palette values included) through the new theme engine.
+- Fixed the package-manager requirements note missing from the condensed package docs: the `npmCommand` form, the precompiled-binary statement, and the missing-package-manager hint are documented again (2026-10-02 review of the sync).
 
 ## [0.87.0] - 2026-09-21
 
