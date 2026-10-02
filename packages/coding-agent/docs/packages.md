@@ -16,6 +16,8 @@ pi install ./local-package
 
 `pi list` shows configured packages. Use `pi remove <source>` to remove one and `pi update --extensions` to reconcile package installations. See [Command Line](cli.md#package-commands) for every package command and option.
 
+For npm and git sources, `install`/`remove`/`update` shell out to a package manager: `npm` by default, or whatever the [`npmCommand`](settings.md#shell) setting names (argv-style, e.g. `["bun"]` or `["mise", "exec", "--", "npm"]`). The precompiled pi binary runs pi and its packages without Node.js — packages load as source inside pi, so the package manager is only the fetch tool. When the command is missing, pi fails with a hint listing the options: install Node.js, point `npmCommand` at an installed manager such as bun, or place the package's files under `~/.pi/agent/` yourself.
+
 Personal installs are written to `~/.pi/agent/settings.json`. Add `--local` or `-l` to write the package declaration to `.pi/settings.json`. Pi reads declarations from that file only after project trust is granted.
 
 Project packages are installed and loaded only after project trust is resolved. Packages can execute extension code and can include skills that instruct the model to run programs. Review third-party package source before installing it. Review project package declarations before granting project trust.

@@ -247,11 +247,11 @@ describe("Google provider stream events", () => {
 });
 
 describe("Google Generative AI user agent", () => {
-	it("uses pi's User-Agent by default", async () => {
+	it("sends no app User-Agent by default (node's default goes out)", async () => {
 		expect(await captureGoogleHeaders()).not.toHaveProperty("User-Agent");
 	});
 
-	it("lets explicit headers override the default User-Agent", async () => {
+	it("lets explicit model headers set a User-Agent", async () => {
 		expect((await captureGoogleHeaders({ "User-Agent": "custom-agent" }))["User-Agent"]).toBe("custom-agent");
 	});
 });
