@@ -11,6 +11,7 @@ import {
 	registerFauxProvider,
 	streamSimple,
 } from "@earendil-works/pi-ai/compat";
+import { Type } from "typebox";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createTaskTool, SubAgentLimiter } from "../../src/core/tools/task.ts";
 import { createHarness, getMessageText, type Harness } from "./harness.ts";
@@ -193,6 +194,52 @@ describe("task tool", () => {
 		const toolResults = taskToolResults(harness);
 		expect(toolResults).toHaveLength(1);
 		expect(getMessageText(toolResults[0])).toContain("blocked by test policy");
+	});
+
+	it("bounds oversized sub-agent tool results through the session's output bound", async () => {
+		const bigLines = Array.from({ length: 30 * 1024 }, (_, index) => `payload-line-${index}`);
+		const bigOutput = ["HEAD-START", ...bigLines, "TAIL-END"].join("\n");
+		const harness = await createHarness({
+			extensionFactories: [
+				(pi) => {
+					pi.registerTool({
+						name: "big_output",
+						label: "Big output",
+						description: "Returns a large output",
+						parameters: Type.Object({}),
+						execute: async () => ({ content: [{ type: "text", text: bigOutput }], details: undefined }),
+					});
+				},
+			],
+			settings: { tools: { maxToolOutputBytes: 8 * 1024 } },
+		});
+		harnesses.push(harness);
+
+		const subContexts: Context[] = [];
+		harness.setResponses([
+			fauxAssistantMessage([fauxToolCall("task", { prompt: "Run the big tool and report." })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("big_output", {})], { stopReason: "toolUse" }),
+			(context) => {
+				subContexts.push(context);
+				return fauxAssistantMessage(`sub-agent saw: ${toolResultTexts(context).join(" | ")}`);
+			},
+			fauxAssistantMessage("main agent conclusion"),
+		]);
+
+		await harness.session.prompt("delegate this");
+
+		// The bound rides the session's after-hook, which the task tool shares with
+		// the main agent's calls: the sub-agent's follow-up context carries the
+		// truncated result, not the full output the tool produced.
+		expect(subContexts).toHaveLength(1);
+		const subToolResult = toolResultTexts(subContexts[0]).join("\n");
+		expect(subToolResult.startsWith("HEAD-START")).toBe(true);
+		expect(subToolResult).toContain("TAIL-END");
+		expect(subToolResult).toContain("big_output output truncated");
+		expect(subToolResult).not.toContain("payload-line-15000");
+		expect(Buffer.byteLength(subToolResult, "utf-8")).toBeLessThan(8 * 1024 + 1024);
 	});
 
 	it("caps concurrently running sub-agents at maxSubAgents; excess spawns queue", async () => {
