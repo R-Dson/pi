@@ -23,8 +23,9 @@ const SEMVER_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 // Sections copied verbatim from the source manifest when present. description,
 // license, and type are scalars; engines and overrides are objects (overrides
 // nests, so object sections are deep-copied). The overrides pin known-bad
-// transitives (protobufjs, rimraf) that the excluded shrinkwrap would otherwise
-// cover; their keys reference external packages only, so no scope rewrite.
+// transitives (protobufjs, rimraf) that no lockfile covers — upstream removed
+// its shrinkwrap on 2026-10-02 and the standalone manifest ships no lockfile;
+// their keys reference external packages only, so no scope rewrite.
 const COPIED_SECTIONS = ["description", "license", "type", "engines", "overrides"];
 
 export function deriveStandaloneManifest(manifest, { version, bundledDependencies = {}, vendoredDependencies = {} }) {
@@ -40,7 +41,7 @@ export function deriveStandaloneManifest(manifest, { version, bundledDependencie
 
 	// The CLI reads package-relative assets at runtime (themes, export templates,
 	// assets, docs, examples) outside dist/bundle, so the standalone ships the
-	// same file set as the upstream npm package, minus the shrinkwrap.
+	// same file set as the upstream npm package.
 	// bundledDependencies (the bundler's external workspace packages) are also
 	// declared as regular dependencies and physically vendored under
 	// node_modules/ by stageStandaloneDirectory, so installs never resolve them

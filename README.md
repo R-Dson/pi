@@ -124,7 +124,7 @@ Dependency changes are treated as reviewed code changes:
 
 - Direct deps pinned to exact versions; `package-lock.json` is ground truth and pre-commit blocks accidental lockfile commits (`PI_ALLOW_LOCKFILE_CHANGE=1` to override).
 - `.npmrc` sets `save-exact=true` and `min-release-age=2`.
-- Installs use `--ignore-scripts`; shrinkwrap generation has an explicit allowlist for dependency lifecycle scripts.
+- Installs use `--ignore-scripts`; install-lock generation has an explicit allowlist for dependency lifecycle scripts.
 - `npm run release:local` builds an unpublished release for isolated smoke testing before tagging.
 
 ## License

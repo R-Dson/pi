@@ -6,17 +6,13 @@ For native Windows setup, read [Windows Setup](windows.md). For Android, read [T
 
 ## 1. Install Pi
 
-On macOS or Linux, you can use the installer:
+This fork publishes to its GitHub Releases, not to npmjs.org. On macOS and Linux (x64, arm64) the installer places a prebuilt self-contained binary (only `curl` and `tar` needed, no Node.js); other platforms fall back to the npm tarball, which requires Node.js 22.19 or newer with npm:
 
 ```bash
-curl -fsSL https://pi.dev/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/R-Dson/pi/main/scripts/install.sh | sh
 ```
 
-Alternatively, install Pi from npm. This requires Node.js 22.19 or newer:
-
-```bash
-npm install -g --ignore-scripts @earendil-works/pi-coding-agent
-```
+Re-running the install upgrades in place, and `--uninstall` removes it. For library use, the `@r-dson/*` packages are available from GitHub Packages — see [install from GitHub](https://github.com/R-Dson/pi/blob/main/docs/fork/install-from-github.md).
 
 Pi does not require dependency lifecycle scripts for a normal npm installation.
 
@@ -119,4 +115,10 @@ If you used the installer, run it again and choose **Uninstall Pi**:
 curl -fsSL https://pi.dev/install.sh | sh
 ```
 
-Neither method removes configuration, credentials, sessions, or installed Pi packages from `~/.pi/agent/`.
+If you installed Pi with Nix, run:
+
+```bash
+nix profile remove pi
+```
+
+None of these methods removes configuration, credentials, sessions, or installed Pi packages from `~/.pi/agent/`.

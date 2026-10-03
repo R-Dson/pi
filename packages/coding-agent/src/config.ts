@@ -196,8 +196,11 @@ function getSelfUpdateCommandForMethod(
 			const [command = "npm", ...npmArgs] = npmCommand ?? [];
 			const inferred = npmCommand?.length ? undefined : getInferredNpmInstall();
 			const prefixArgs = [...npmArgs, ...(inferred ? ["--prefix", inferred.prefix] : [])];
-			// Probe the running npm's version once, and only for remote tarball
-			// specs (registry specs never need --allow-remote).
+			// Releases land on the fork's channels (GitHub Releases, GitHub Packages)
+			// immediately, so a configured npm age gate would block the update; npm
+			// has no per-package age gate, so this also lets new transitive dependency
+			// releases through. Probe the running npm's version once, and only for
+			// remote tarball specs (registry specs never need --allow-remote).
 			const npmVersionOutput = isRemoteTarballInstallSpec(target.installSpec)
 				? readCommandOutput(command, [...npmArgs, "--version"])
 				: undefined;
