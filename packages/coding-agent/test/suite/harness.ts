@@ -124,8 +124,8 @@ export interface HarnessOptions {
 	sessionManager?: SessionManager;
 	/**
 	 * Custom agent stream function. Default: the faux provider's `streamSimple`.
-	 * The AgentSession monitor wrapper sits above it, so a custom streamFn sees
-	 * the options object the monitor injected (e.g. `onWireRewrite`).
+	 * The AgentSession monitor wrapper sits above it, so a custom streamFn
+	 * observes exactly what the session forwards to the provider.
 	 */
 	streamFn?: StreamFn;
 }

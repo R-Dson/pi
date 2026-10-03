@@ -45,7 +45,6 @@ export function buildBaseOptions(
 		maxRetryDelayMs: options?.maxRetryDelayMs,
 		metadata: options?.metadata,
 		env: options?.env,
-		onWireRewrite: options?.onWireRewrite,
 	};
 }
 

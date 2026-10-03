@@ -1,7 +1,7 @@
 /**
  * Permission Policies built-in extension
  *
- * The fork's permission engine as a hidden built-in extension: token-boundary
+ * The fork's permission engine as a built-in extension: token-boundary
  * command matching, normalized path matching, deny > ask > allow precedence,
  * code/review/minimal profiles, and hide-from-the-model, with zero core
  * surface beyond the exported evaluator. It activates only when a policy file
@@ -10,8 +10,9 @@
  * visibility change, no call-time decisions. Core performs no permission
  * enforcement; this is still extension territory.
  *
- * Configuration lives in policy files instead of settings.json (extensions
- * cannot read pi settings). Precedence, exactly as the evaluator computes it:
+ * Configuration lives in policy files rather than settings.json so a project
+ * carries its rules in the checkout (loaded only when trusted) and the
+ * extension stays inert with nothing to read. Precedence, exactly as the evaluator computes it:
  * a matching PROJECT rule decides outright; otherwise the GLOBAL rules and
  * the profile preset compose as one base layer under deny > ask > allow — a
  * global rule can strengthen a profile (deny over its ask/allow) but a global

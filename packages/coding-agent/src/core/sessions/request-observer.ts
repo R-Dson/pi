@@ -9,8 +9,7 @@
  * - prefix-stability monitoring (issue #41): serialize each request prefix,
  *   diff it against the previous one, attribute announced invalidations,
  *   count and emit unannounced ones; blockImages toggles announce before the
- *   diff (issue #53); provider wire-rewrites count directly from the
- *   packages/ai `onWireRewrite` seam (issue #56).
+ *   diff (issue #53).
  * - cache-economics attribution (issue #42): claim a request kind per call
  *   and record the stream's final-message usage under it.
  *
@@ -25,13 +24,11 @@
 
 import type { StreamFn } from "@earendil-works/pi-agent-core";
 import type { AssistantMessageEventStream, TranscriptContext } from "@earendil-works/pi-ai";
-import type { Model } from "@earendil-works/pi-ai/compat";
 import type { AgentSessionEvent } from "../agent-session.ts";
 import { type CacheUsageTotals, CacheUsageTracker, type RequestKind } from "./cache-usage.ts";
 import {
 	attributeUnannouncedInvalidation,
 	diffRequestPrefix,
-	isProviderWireRewriteCause,
 	type PrefixInvalidationCause,
 	type PrefixInvalidationExpectation,
 	PrefixInvalidationTracker,
@@ -74,13 +71,6 @@ export class ProviderRequestObserver {
 	 */
 	private _lastBlockImages: boolean | undefined;
 
-	// Provider wire-rewrite attribution (issue #56). The streamFn observer
-	// injects the onWireRewrite seam callback into the options it forwards, and
-	// the adapter invokes it during request serialization. In-memory only: a
-	// resumed session restarts these counters from zero.
-	private readonly _wireRewriteCausesThisRequest = new Set<string>();
-	private _observedProviderRequests = 0;
-
 	// Cache-economics attribution (issue #42), observed at the same streamFn
 	// boundary. In-memory only: a resumed session restarts these counters
 	// from zero.
@@ -106,18 +96,13 @@ export class ProviderRequestObserver {
 	wrap(streamFn: StreamFn): StreamFn {
 		const inner = streamFn;
 		const monitored = (async (
-			model: Model<any>,
+			model: Parameters<StreamFn>[0],
 			context: Parameters<StreamFn>[1],
 			options?: Parameters<StreamFn>[2],
 		) => {
-			this._observedProviderRequests++;
-			this._wireRewriteCausesThisRequest.clear();
 			const kind = this._claimRequestKind();
 			this._observeProviderRequest(model, context);
-			// Inject the wire-rewrite seam callback (issue #56) so the provider
-			// adapter can report wire-only rewrites; requires no changes to how
-			// pi-ai or the sdk stream function builds its defaults.
-			const stream = await inner(model, context, { ...options, onWireRewrite: this._onWireRewrite });
+			const stream = await inner(model, context, options);
 			this._observeRequestUsage(kind, stream);
 			return stream;
 		}) as StreamFn;
@@ -210,7 +195,7 @@ export class ProviderRequestObserver {
 	 * prompt caches are per model. Surfaces, never crashes: monitor failures
 	 * must not take down the request path.
 	 */
-	private _observeProviderRequest(model: Model<any>, context: TranscriptContext): void {
+	private _observeProviderRequest(model: Parameters<StreamFn>[0], context: TranscriptContext): void {
 		try {
 			// A blockImages flip rewrites every message's images on this request
 			// (sdk.ts reads the setting per request). Announce BEFORE diffing so
@@ -252,30 +237,4 @@ export class ProviderRequestObserver {
 			// Diagnostic only; never block the provider request.
 		}
 	}
-
-	/**
-	 * Consumer for the packages/ai wire-rewrite seam (issue #56). The adapter
-	 * invokes this during request serialization, INSIDE the wrapped stream
-	 * call — i.e. after `_observeProviderRequest` diffed this request against
-	 * the previous one. Unlike the blockImages flip (whose rewrite the next
-	 * context diff sees), these transforms are recomputed from state the
-	 * request context does not carry (auth mode, deferred-tool anchoring) and
-	 * never mutate the context, so they never appear in a later context diff
-	 * either: an `expectInvalidation` latch armed here would be cleared by the
-	 * next stable request without ever being consumed, and it would
-	 * mis-attribute the next unannounced context divergence to the provider.
-	 * The report itself is the only observation point, so it counts directly —
-	 * once per cause per request, and never for the first observed request
-	 * (nothing to diverge from before it).
-	 */
-	private _onWireRewrite = (cause: string): void => {
-		try {
-			if (!isProviderWireRewriteCause(cause)) return;
-			if (this._observedProviderRequests <= 1 || this._wireRewriteCausesThisRequest.has(cause)) return;
-			this._wireRewriteCausesThisRequest.add(cause);
-			this._prefixInvalidationsByCause[cause] = (this._prefixInvalidationsByCause[cause] ?? 0) + 1;
-		} catch {
-			// Diagnostic only; never surface as an unhandled rejection.
-		}
-	};
 }

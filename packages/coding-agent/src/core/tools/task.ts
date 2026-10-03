@@ -9,7 +9,7 @@ import {
 	type BeforeToolCallResult,
 	type StreamFn,
 } from "@earendil-works/pi-agent-core";
-import type { Model, TextContent, Usage } from "@earendil-works/pi-ai";
+import type { Api, Model, TextContent, Usage } from "@earendil-works/pi-ai";
 import { type Static, Type } from "typebox";
 import type { ToolDefinition } from "../extensions/types.ts";
 import { taskRenderers } from "./renderers/task.ts";
@@ -221,7 +221,7 @@ export interface TaskToolOptions {
 	/** Stream function for sub-agent completions. Pass the session's, unwrapped. */
 	getStreamFn(): StreamFn;
 	/** Current model, inherited by sub-agents. */
-	getModel(): Model<any> | undefined;
+	getModel(): Model<Api> | undefined;
 	/** Current thinking level, inherited by sub-agents. */
 	getThinkingLevel(): ThinkingLevel | undefined;
 	/** Main agent's active tools; `task` is filtered out so sub-agents stay one layer deep. */

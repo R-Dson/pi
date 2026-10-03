@@ -13,9 +13,10 @@ export const builtInExtensions: InlineExtension[] = [
 	{ name: "codemode", factory: codemodeExtension, replaceable: true, builtin: true },
 	{ name: "tool-search", factory: toolSearchExtension, replaceable: true, builtin: true },
 	{ name: "mcp", factory: mcpExtension, replaceable: true, builtin: true },
-	// No-ops unless a policy file exists (see the module doc); hidden so an
-	// inert entry never shows in the startup Extensions list.
-	{ name: "permission-policies", factory: permissionPoliciesExtension, hidden: true },
-	// No-ops unless a handoff config file exists (see the module doc).
-	{ name: "model-handoff", factory: modelHandoffExtension, hidden: true },
+	// No-ops unless a policy file exists (see the module doc); `builtin:` so
+	// `-permission-policies` in the extensions setting can disable it.
+	{ name: "permission-policies", factory: permissionPoliciesExtension, builtin: true },
+	// No-ops unless a handoff config file exists (see the module doc); `builtin:`
+	// for the same disable path as permission-policies.
+	{ name: "model-handoff", factory: modelHandoffExtension, builtin: true },
 ];

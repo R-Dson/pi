@@ -4,8 +4,12 @@
 
 ### Added
 
-- Added `cacheWriteReadRatio(model)`: cache-write ÷ cache-read cost rate from the model's pricing, for deciding when a context rewrite (for example compaction) pays off. Returns 0 when cache writes are free and undefined when cache reads are free or unrated. Design informed by NVlabs/SoL-Pi's compaction economics.
 - Added Cloudflare's Clef and Clef Flash classifier models (`@cf/cloudflare/clef`, `@cf/cloudflare/clef-flash`) to the `cloudflare-workers-ai` provider ([#10316](https://github.com/earendil-works/pi/pull/10316) by [@ndisidore](https://github.com/ndisidore), [#10322](https://github.com/earendil-works/pi/pull/10322) by [@RealAlexandreAI](https://github.com/RealAlexandreAI))
+
+### Removed
+
+- Removed the `onWireRewrite` stream option: no adapter has fired the callback since the 1.0.0 native-tool-changes restructure deleted both fire points, so the option was API surface without a producer. It returns together with a live fire site if an adapter reports wire rewrites again.
+- Removed `cacheWriteReadRatio(model)` before any release consumed it; the fork has no caller, and it returns with the compaction-economics extension that needs it.
 
 ### Changed
 

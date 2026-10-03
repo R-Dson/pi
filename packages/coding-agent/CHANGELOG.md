@@ -19,8 +19,13 @@
 - Added project overrides for user-level MCP servers: a `.pi/mcp.json` entry without `command` or `url` sets only `enabled`, `exposure`, and `toolExposure` of the user-level server, and `/mcp` can enable or disable a server for the current project ([#10277](https://github.com/earendil-works/pi/issues/10277))
 - Added Cloudflare's Clef and Clef Flash classifier models to `cloudflare-workers-ai`, usable from codemode scripts and extensions ([#10316](https://github.com/earendil-works/pi/pull/10316) by [@ndisidore](https://github.com/ndisidore), [#10322](https://github.com/earendil-works/pi/pull/10322) by [@RealAlexandreAI](https://github.com/RealAlexandreAI))
 
+### Changed
+
+- The `permission-policies` and `model-handoff` built-in extensions register as `builtin:` resources, matching upstream's own built-ins: `-permission-policies` or `-model-handoff` in the `extensions` setting (or `--no-extensions`) disables them, `pi config` lists them, and they stay out of the startup Extensions list. Both remain fully inert without their config files.
+
 ### Removed
 
+- Removed provider wire-rewrite attribution from the prefix monitor: the `provider-deferred-tool-load` and `provider-auth-mode` invalidation causes, the `onWireRewrite` callback the monitor injected into provider requests, and the packages/ai stream option behind them. No adapter has fired the callback since upstream's 1.0.0 native-tool-changes restructure deleted both fire points, so the path was dead surface; context-level prefix attribution is unchanged.
 - Removed `npm-shrinkwrap.json` and its generator along with upstream ([#5653](https://github.com/earendil-works/pi/issues/5653)). The fork already excluded the shrinkwrap from its publishes (fork installs never pinned transitives through it), so installs are unaffected; `pi update` keeps pointing at the fork's own channels and does not recommend upstream's installer.
 
 ### Fixed

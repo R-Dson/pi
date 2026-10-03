@@ -1212,19 +1212,6 @@ export function calculateCost(model: AnyModel, usage: Usage): Usage["cost"] {
 	return usage.cost;
 }
 
-/**
- * Cache-write to cache-read cost ratio for a model.
- *
- * Prices context rewrites: writing N cache tokens costs roughly `ratio - 1`
- * more than re-reading them, so a rewrite pays off only when enough
- * subsequent requests amortize it. Returns 0 when cache writes are free and
- * undefined when cache reads are free or pricing is unknown.
- */
-export function cacheWriteReadRatio<TApi extends Api>(model: Model<TApi>): number | undefined {
-	if (model.cost.cacheRead <= 0) return undefined;
-	return model.cost.cacheWrite / model.cost.cacheRead;
-}
-
 const EXTENDED_THINKING_LEVELS: ModelThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 
 export function getSupportedThinkingLevels<TApi extends Api>(model: Model<TApi>): ModelThinkingLevel[] {

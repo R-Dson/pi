@@ -7,18 +7,25 @@ extension API as any user extension; nothing here is special-cased in core.
 
 | Entry | Owner | What it is |
 |---|---|---|
+| `codemode/` | upstream | scriptable tool-calling mode |
 | `llama/` | upstream | llama.cpp router integration |
+| `mcp/` | upstream | MCP server connections |
+| `tool-search/` | upstream | on-demand tool discovery |
 | `permission-policies/` | fork | config-gated tool permission engine |
 | `model-handoff/` | fork | config-gated mid-session model switching |
 
 ## How a built-in is registered
 
-`index.ts` exports `builtInExtensions`, an array of `{ name, factory, hidden }`
-entries. `main.ts` merges it ahead of caller-provided factories, so built-ins
-load before discovered extensions: their event handlers (for example
-`tool_call` interception) run first, and a later-loaded extension can still
-rewrite what they allowed. `hidden: true` keeps the entry out of the startup
-Extensions list, which is right for built-ins that are inert unless configured.
+`index.ts` exports `builtInExtensions`, an array of `{ name, factory, builtin: true }`
+entries (plus `replaceable: true` where a third-party extension may take over a
+shared tool, command, or flag name). `main.ts` merges it ahead of
+caller-provided factories, so built-ins load before discovered extensions:
+their event handlers (for example `tool_call` interception) run first, and a
+later-loaded extension can still rewrite what they allowed. A `builtin:` entry
+loads as a `builtin:<name>` extension resource: enabled by default, listed by
+`pi config`, disable-able with `-<name>` in the `extensions` setting or
+`--no-extensions`, loadable explicitly with `-e builtin:<name>`, and hidden
+from the startup Extensions list.
 
 `index.ts` is the only upstream-owned file this directory touches (the change
 within it is just the `builtInExtensions` array and its imports); everything
@@ -29,11 +36,13 @@ here versus an example extension or core.
 
 ## The config-gated pattern
 
-Both fork built-ins are opt-in through config files rather than settings,
-because extensions cannot read pi settings:
+Both fork built-ins are opt-in through config files. Extensions can read
+settings (`pi.getSettings()`), but a config file gives this shape instead:
 
 - No config file anywhere: the extension is fully inert. No tool registered,
   no prompt bytes, no call-time decisions. Sessions behave exactly as upstream.
+- A project carries its rules in the checkout (`.pi/` file), and trust
+  scoping decides whether an untrusted checkout's file is read at all.
 - Config present but unusable (fewer tiers than required, no resolvable
   rules): the extension warns once through the UI notify channel and stays
   inactive.

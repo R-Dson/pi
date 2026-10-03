@@ -126,11 +126,11 @@ function projectWithoutPolicy(): string {
 }
 
 describe("permission-policies builtin", () => {
-	it("is registered as a hidden builtInExtensions entry", () => {
+	it("is registered as a builtin builtInExtensions entry", () => {
 		const entry = builtInExtensions.find(
 			(extension) => typeof extension === "object" && extension.name === "permission-policies",
 		);
-		expect(entry).toEqual({ name: "permission-policies", factory: permissionPolicies, hidden: true });
+		expect(entry).toEqual({ name: "permission-policies", factory: permissionPolicies, builtin: true });
 	});
 
 	it("stays inert with no policy file anywhere", async () => {

@@ -8,14 +8,15 @@
  * tells the incoming model who handed off, why, and with what brief. Same
  * transcript, no subagent, no context copy.
  *
- * Configuration lives in handoff.json (extensions cannot read pi settings):
- * `{ "tiers": { "fast": { "provider": "...", "modelId": "...", "description":
- * "..." } } }`, machine config dir by default, plus a project file under .pi
- * in trusted projects; tiers merge and the project file wins on a name
- * collision. Inert without any file; fewer than two registry-resolvable tiers
- * in the merged set is also inert (deactivated by subtraction from the active
- * tool list), with a warning. The refusal guards landed with #108,
- * returnAfterRun with #109, project config with #110.
+ * Configuration lives in handoff.json, so a project can carry its tier set in
+ * the checkout (loaded only when trusted) and the extension stays inert with
+ * nothing to read: `{ "tiers": { "fast": { "provider": "...", "modelId":
+ * "...", "description": "..." } } }`, machine config dir by default, plus a
+ * project file under .pi in trusted projects; tiers merge and the project
+ * file wins on a name collision. Inert without any file; fewer than two
+ * registry-resolvable tiers in the merged set is also inert (deactivated by
+ * subtraction from the active tool list), with a warning. The refusal guards
+ * landed with #108, returnAfterRun with #109, project config with #110.
  */
 
 import { existsSync, readFileSync } from "node:fs";
