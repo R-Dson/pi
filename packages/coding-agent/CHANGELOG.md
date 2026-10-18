@@ -19,6 +19,7 @@
 ### Changed
 
 - The `permission-policies` and `model-handoff` built-in extensions register as `builtin:` resources, matching upstream's own built-ins: `-permission-policies` or `-model-handoff` in the `extensions` setting (or `--no-extensions`) disables them, `pi config` lists them, and they stay out of the startup Extensions list. Both remain fully inert without their config files.
+- The published configuration JSON Schemas (`settings`, `models`, `keybindings`, `theme`) carry `$id`/`$schema` URLs pointing at this fork's repository instead of pi.dev, and the documented `$schema` lines use them, so editor validation and completion against `https://raw.githubusercontent.com/R-Dson/pi/main/packages/coding-agent/schemas/` sees the fork's settings (the fork schema has the fork-only fields and none of the telemetry keys). Pi itself never fetches these URLs; editors do, on the user's explicit `$schema` line.
 - `generateSummary()` and `generateSummaryWithUsage()` now ignore their `reserveTokens` parameter. Summary requests use the model's output limit instead.
 
 ### Removed
