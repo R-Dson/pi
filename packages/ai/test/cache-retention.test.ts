@@ -539,7 +539,7 @@ describe("Cache Retention (PI_CACHE_RETENTION)", () => {
 		});
 
 		it("routes and applies long cache retention for opencode-go models", async () => {
-			const model = MODELS["opencode-go"]["deepseek-v4-flash"] as Model<"openai-completions">;
+			const model = MODELS["opencode-go"]["deepseek-v4.1-flash"] as Model<"openai-completions">;
 			let capturedPayload: OpenAICompletionsCachePayload | undefined;
 
 			try {

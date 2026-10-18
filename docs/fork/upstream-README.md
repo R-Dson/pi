@@ -77,7 +77,7 @@ This monorepo contains the Pi CLI and its supporting libraries.
 
 | Package | Description |
 |---------|-------------|
-| **[@earendil-works/chord](packages/chord)** | Standalone application-composition runtime for services, replicated state, RPC, and plugins |
+| **[@earendil-works/chord](packages/chord)** | Typed host runtime for hot-reloadable plugins, contracts, replicated state, and RPC over JSON links |
 | **[@earendil-works/pi-telemetry](packages/telemetry)** | Vendor-neutral telemetry contracts, reference adapter, conformance tests, and typed schemas |
 | **[@earendil-works/pi-ai](packages/ai)** | Unified multi-provider LLM API (OpenAI, Anthropic, Google, etc.) |
 | **[@earendil-works/pi-durable](packages/durable)** | Durable conversation, task, and document runtime |
@@ -86,6 +86,16 @@ This monorepo contains the Pi CLI and its supporting libraries.
 | **[@earendil-works/pi-tui](packages/tui)** | Terminal UI library with differential rendering |
 
 For Slack/chat automation and workflows see [earendil-works/pi-chat](https://github.com/earendil-works/pi-chat).
+
+## Permissions & Containerization
+
+Pi does not include a built-in permission system for restricting filesystem, process, network, or credential access. By default, it runs with the permissions of the user and process that launched it.
+
+If you need stronger boundaries, containerize or sandbox Pi. See [packages/coding-agent/docs/containerization.md](packages/coding-agent/docs/containerization.md) for three patterns:
+
+- **Gondolin extension**: keep `pi` and provider auth on the host while routing built-in tools and `!` commands into a local Linux micro-VM.
+- **Plain Docker**: run the whole `pi` process in a local container for simple isolation.
+- **OpenShell**: run the whole `pi` process in a policy-controlled sandbox.
 
 ## Installing the fork
 
@@ -112,16 +122,6 @@ All additions default to upstream behavior; the fork ledger records every decisi
 - **Permissions (opt-in)**: the built-in `permission-policies` extension (activates only when a policy file exists) enforces allow/ask/deny rules with deny > ask > allow precedence, model-visible tool hiding, and `code` / `review` / `minimal` profiles from `~/.pi/agent/permissions.json` and trusted-project `.pi/permissions.json` policy files; the rule evaluator and capability metadata ship as exported library API, and core performs no enforcement.
 - **Diagnostics**: session stats report tool output volume, truncated bytes, and artifact counts alongside the existing token/cache stats.
 
-## Permissions & Containerization
-
-Pi does not include a built-in permission system for restricting filesystem, process, network, or credential access. By default, it runs with the permissions of the user and process that launched it.
-
-If you need stronger boundaries, containerize or sandbox Pi. See [packages/coding-agent/docs/containerization.md](packages/coding-agent/docs/containerization.md) for three patterns:
-
-- **Gondolin extension**: keep `pi` and provider auth on the host while routing built-in tools and `!` commands into a local Linux micro-VM.
-- **Plain Docker**: run the whole `pi` process in a local container for simple isolation.
-- **OpenShell**: run the whole `pi` process in a policy-controlled sandbox.
-
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines and [AGENTS.md](AGENTS.md) for project-specific rules (for both humans and agents).  Longer term plans for Pi can also be found in [RFCs](https://rfc.earendil.com/keyword/pi/).
@@ -136,6 +136,48 @@ npm run check         # Lint, format, and type check
 ./test.sh            # Run tests (skips LLM-dependent tests without API keys)
 ./pi-test.sh         # Run pi from sources (can be run from any directory)
 ```
+
+### Using local packages outside the monorepo
+
+Build every public package into one coherent local artifact set:
+
+```bash
+npm run pack:packages -- --out .artifacts/pi-packages
+```
+
+This refreshes model data before building `pi-ai`. To avoid network access when
+model data is already hydrated, pass `--offline-model-data`.
+
+Then configure an external project to consume one package and resolve all of
+its Pi dependencies from the same artifact set. npm is the default:
+
+```bash
+node scripts/use-local-packages.mjs \
+  --manifest .artifacts/pi-packages/manifest.json \
+  --consumer ../my-project \
+  --package @earendil-works/pi-durable \
+  --package @earendil-works/pi-agent-core
+cd ../my-project
+npm install --ignore-scripts
+```
+
+For a pnpm project, point `--consumer` at the workspace root:
+
+```bash
+node scripts/use-local-packages.mjs \
+  --manifest .artifacts/pi-packages/manifest.json \
+  --consumer ../my-project \
+  --package @earendil-works/pi-agent-core \
+  --package-manager pnpm
+cd ../my-project
+pnpm install --ignore-scripts
+```
+
+Repeat `--package` for each direct dependency. The command updates the
+consumer's `package.json` with content-addressed local `file:` references. It
+writes transitive overrides to `package.json` for npm or `pnpm-workspace.yaml`
+for pnpm. Keep the artifact directory available while installing or updating
+the consumer. Re-run both commands after changing Pi source.
 
 ## Building standalone binaries from release source
 
@@ -159,7 +201,7 @@ We treat npm dependency changes as reviewed code changes.
 - `package-lock.json` is the dependency ground truth. Pre-commit blocks accidental lockfile commits unless `PI_ALLOW_LOCKFILE_CHANGE=1` is set.
 - `npm run check` verifies pinned direct deps, native TypeScript import compatibility, and the generated coding-agent install lock.
 - The pi.dev installer installs from `packages/coding-agent/install-lock/`, generated from the root lockfile, to pin transitive deps. The npm package does not pin transitive deps.
-- Release smoke tests use `npm run release:local` to build, pack, and create isolated npm and Bun installs outside the repo before tagging a release.
+- Local release smoke tests and npm publication use the same tarball packer; npm publishes the validated tarballs rather than repacking workspace directories.
 - Local release installs, documented npm installs, and `pi update --self` use `--ignore-scripts` where supported.
 - CI installs with `npm ci --ignore-scripts`, and a scheduled GitHub workflow runs `npm audit --omit=dev` plus `npm audit signatures --omit=dev`.
 - Install lock generation has an explicit allowlist for dependency lifecycle scripts; new lifecycle-script deps fail checks until reviewed.

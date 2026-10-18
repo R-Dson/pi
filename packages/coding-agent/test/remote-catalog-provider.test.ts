@@ -7,7 +7,11 @@ import {
 	type RefreshModelsContext,
 } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { withRemoteCatalog } from "../src/core/remote-catalog-provider.ts";
+import {
+	type PersonalizeCatalog,
+	withPersonalizedCatalog,
+	withRemoteCatalog,
+} from "../src/core/remote-catalog-provider.ts";
 
 const neverAbortedSignal = new AbortController().signal;
 
@@ -110,5 +114,98 @@ describe("remote catalog provider (issue #32: no network)", () => {
 		await refreshProvider(provider, store, { allowNetwork: true, force: true });
 
 		expect(provider.getModels().map((entry) => entry.id)).toEqual(["static"]);
+	});
+});
+
+describe("personalized catalog provider (issue #32: provider endpoint only)", () => {
+	const personalize: PersonalizeCatalog = async (catalog) => catalog.filter((entry) => entry.id !== "static");
+
+	function personalizedProvider() {
+		return withPersonalizedCatalog(
+			createProvider({
+				id: "test-provider",
+				auth: { apiKey: { name: "Test", resolve: async () => ({ auth: {} }) } },
+				models: [model("static"), model("kept")],
+				api: {
+					stream: () => {
+						throw new Error("not used");
+					},
+					streamSimple: () => {
+						throw new Error("not used");
+					},
+				},
+			}),
+			personalize,
+		);
+	}
+
+	it("runs personalize over the builtin models on a network refresh and persists the result", async () => {
+		const provider = personalizedProvider();
+		const store = new InMemoryModelsStore();
+
+		await refreshProvider(provider, store, { allowNetwork: true });
+
+		expect(provider.getModels().map((entry) => entry.id)).toEqual(["kept"]);
+		const stored = await store.read(provider.id);
+		expect(stored?.models.map((entry) => entry.id)).toEqual(["kept"]);
+	});
+
+	it("restores the persisted personalized list without network or personalize calls", async () => {
+		const fetchSpy = vi.spyOn(globalThis, "fetch");
+		const personalizeSpy = vi.fn(personalize);
+		const provider = withPersonalizedCatalog(
+			createProvider({
+				id: "test-provider",
+				auth: { apiKey: { name: "Test", resolve: async () => ({ auth: {} }) } },
+				models: [model("static")],
+				api: {
+					stream: () => {
+						throw new Error("not used");
+					},
+					streamSimple: () => {
+						throw new Error("not used");
+					},
+				},
+			}),
+			personalizeSpy,
+		);
+		const store = new InMemoryModelsStore();
+		await store.write(provider.id, {
+			models: [model("personalized")],
+			checkedAt: Date.now(),
+			lastModified: 0,
+		});
+
+		await refreshProvider(provider, store, { allowNetwork: false });
+
+		expect(provider.getModels().map((entry) => entry.id)).toEqual(["personalized"]);
+		expect(fetchSpy).not.toHaveBeenCalled();
+		expect(personalizeSpy).not.toHaveBeenCalled();
+	});
+
+	it("skips personalize when network refresh is not allowed", async () => {
+		const personalizeSpy = vi.fn(personalize);
+		const provider = withPersonalizedCatalog(
+			createProvider({
+				id: "test-provider",
+				auth: { apiKey: { name: "Test", resolve: async () => ({ auth: {} }) } },
+				models: [model("static")],
+				api: {
+					stream: () => {
+						throw new Error("not used");
+					},
+					streamSimple: () => {
+						throw new Error("not used");
+					},
+				},
+			}),
+			personalizeSpy,
+		);
+		const store = new InMemoryModelsStore();
+
+		await refreshProvider(provider, store, { allowNetwork: false });
+
+		expect(provider.getModels().map((entry) => entry.id)).toEqual(["static"]);
+		expect(personalizeSpy).not.toHaveBeenCalled();
 	});
 });

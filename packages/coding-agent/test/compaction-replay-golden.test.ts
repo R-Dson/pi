@@ -341,13 +341,13 @@ describe("compaction replay golden (byte-stable summarizer requests)", () => {
 			"branch/options": branch[0]?.optionsDigest,
 		}).toEqual({
 			"fresh/context": "d1e61f86a1caaa7fb5ce4204ed7812b8e5cf310f1139c0c00a7d1ab91f247b76",
-			"fresh/options": "5aa5e979a9f279ab0e47e14359dd4006e63a25a36c18e1c94d4c8386b8e5f61f",
+			"fresh/options": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
 			"update-replay/context": "3202b04c97600703357565d88fbde48d1e05dfbf0dc1e1be6aab5dc5d243d7b2",
-			"update-replay/options": "5aa5e979a9f279ab0e47e14359dd4006e63a25a36c18e1c94d4c8386b8e5f61f",
+			"update-replay/options": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
 			"update-turn-prefix/context": "b06ead44e80eb4b33bf1ecbd616d56cefb8f5d412e831b0a7a283f41043a65e3",
-			"update-turn-prefix/options": "88a4d423a4d221bfc8ed297401059018db3f19f67475da9ba9e6259047f8de50",
+			"update-turn-prefix/options": "af52fe4875e9950aeed5199a6a2c912848f0cf177f5539a7b8b53ed0d8782e8f",
 			"branch/context": "e84f6897db65e357fd54abfd10cd5f9b6700e110567d3804c672c5ca5c433d2e",
-			"branch/options": "fe582f49f2dcb163cb4074ce64ff08272ae70451056ad2b42ff2ea585ce7c19f",
+			"branch/options": "ad70f59bafa5a75fbbab33bac5b6c16cd04b8f22d20ed33e7aeb0af6ca4a3866",
 		});
 	});
 });

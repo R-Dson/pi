@@ -1,8 +1,6 @@
-import { randomBytes } from "node:crypto";
-import { createWriteStream, mkdirSync, type WriteStream } from "node:fs";
+import { mkdirSync, type WriteStream } from "node:fs";
 import { open } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { createOutputFileStream } from "../../utils/output-files.ts";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, type TruncationResult, truncateTail } from "./truncate.ts";
 
 export interface OutputAccumulatorOptions {
@@ -256,12 +254,14 @@ export class OutputAccumulator {
 		if (this.tempFilePath) {
 			return;
 		}
-		const dir = this.dir;
-		if (dir) {
-			mkdirSync(dir, { recursive: true });
+		// A caller-supplied dir (the session artifacts directory for persisted
+		// sessions) must exist before the spill file lands in it.
+		if (this.dir) {
+			mkdirSync(this.dir, { recursive: true });
 		}
-		this.tempFilePath = join(dir ?? tmpdir(), `${this.tempFilePrefix}-${randomBytes(8).toString("hex")}.log`);
-		this.tempFileStream = createWriteStream(this.tempFilePath);
+		const { path, stream } = createOutputFileStream(this.tempFilePrefix, ".log", this.dir);
+		this.tempFilePath = path;
+		this.tempFileStream = stream;
 		for (const chunk of this.rawChunks) {
 			this.tempFileStream.write(chunk);
 		}

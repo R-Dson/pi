@@ -317,12 +317,10 @@ export async function generateBranchSummary(
 	// completeSummarization; prefer the session stream function so SDK request
 	// behavior (timeouts, retries, attribution headers) stays consistent without
 	// running through agent state/events. Retried via completeSummarization so
-	// transient stream drops reuse the configured retry policy.
+	// transient stream drops reuse the configured retry policy. Summaries use
+	// the model's output limit (#9512).
 	const context = buildReplaySummarizationContext(messages, promptText, prefix);
-	// Upstream #8845: reasoning can consume a fixed 2048-token cap before the
-	// summary is written; derive the cap from the model instead.
-	const maxTokens = Math.min(4096, model.maxTokens > 0 ? model.maxTokens : Number.POSITIVE_INFINITY);
-	const requestOptions: SimpleStreamOptions = { apiKey, headers, env, signal, maxTokens, sessionId };
+	const requestOptions: SimpleStreamOptions = { apiKey, headers, env, signal, sessionId };
 	if (model.reasoning && options.thinkingLevel && options.thinkingLevel !== "off") {
 		requestOptions.reasoning = options.thinkingLevel;
 	}
