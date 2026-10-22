@@ -1,5 +1,5 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import type { AssistantMessage, Model, Usage } from "@earendil-works/pi-ai";
+import type { AssistantMessage, Model, TranscriptContext, Usage } from "@earendil-works/pi-ai";
 import { normalizeContext } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -194,6 +194,27 @@ describe("generateSummary reasoning options", () => {
 		expect(prompt).toContain("# Instructions\\nThe messages above are earlier context from an ongoing conversation.");
 	});
 
+	it("applies custom instructions to the turn prefix summary of a split turn", async () => {
+		// Regression test for #11058
+		const preparation: CompactionPreparation = {
+			firstKeptEntryId: "entry-keep",
+			messagesToSummarize: [],
+			replayMessages: [],
+			turnPrefixMessages: messages,
+			isSplitTurn: true,
+			tokensBefore: 100,
+			previousSummary: "previous checkpoint",
+			fileOps: { read: new Set(), written: new Set(), edited: new Set() },
+			settings: { enabled: true, reserveTokens: 2000, keepRecentTokens: 20 },
+		};
+
+		await compact(preparation, createModel(false), prefix, "test-key", undefined, "keep migration decisions");
+
+		expect(completeSimpleMock).toHaveBeenCalledTimes(1);
+		const requestContext = completeSimpleMock.mock.calls[0][1] as TranscriptContext;
+		expect(JSON.stringify(requestContext.messages)).toContain("Additional focus: keep migration decisions");
+	});
+
 	it("rejects tool calls from conversation summaries", async () => {
 		completeSimpleMock.mockResolvedValueOnce(mockToolCallResponse);
 
@@ -343,7 +364,7 @@ describe("generateSummary reasoning options", () => {
 			input: 20,
 			output: 20,
 			totalTokens: 40,
-			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0, totalFromProvider: false },
 		});
 	});
 });

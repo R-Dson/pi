@@ -954,6 +954,8 @@ export async function compact(
 			streamFn,
 			retry,
 			callbacks,
+			sessionId,
+			customInstructions,
 		);
 		// Merge into single summary
 		summary = `${historyText}\n\n---\n\n**Turn Context (split turn):**\n\n${turnPrefixResult.text}`;
@@ -1012,10 +1014,18 @@ async function generateTurnPrefixSummary(
 	streamFn?: StreamFn,
 	retry?: RetryPolicy,
 	callbacks?: RetryCallbacks,
+	// Signature parity with the replaying summarizers; the standalone split-turn
+	// request keeps the throwaway session id (no routing affinity for the
+	// cache-opt-out request) but honors custom instructions (#11058).
+	_sessionId?: string,
+	customInstructions?: string,
 ): Promise<{ text: string; usage: Usage }> {
 	const llmMessages = convertToLlm(messages);
 	const conversationText = serializeConversation(llmMessages);
-	const promptText = `# Conversation\n${conversationText}\n\n# Instructions\n${TURN_PREFIX_SUMMARIZATION_PROMPT}`;
+	let promptText = `# Conversation\n${conversationText}\n\n# Instructions\n${TURN_PREFIX_SUMMARIZATION_PROMPT}`;
+	if (customInstructions) {
+		promptText = `${promptText}\n\nAdditional focus: ${customInstructions}`;
+	}
 
 	const response = await completeSummarization(
 		model,

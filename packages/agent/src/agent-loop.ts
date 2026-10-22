@@ -5,9 +5,11 @@
 
 import {
 	type AssistantMessage,
+	type ClientIdentity,
 	EventStream,
 	getCurrentTools,
 	getToolStateChanges,
+	mergeClientIdentity,
 	normalizeContext,
 	type SystemMessage,
 	type ToolResultMessage,
@@ -30,6 +32,14 @@ import type {
 } from "./types.ts";
 
 export type AgentEventSink = (event: AgentEvent) => Promise<void> | void;
+
+/**
+ * Request identity of agent loops. `AgentLoopConfig.identity` overrides it field by field.
+ *
+ * Fork (issue #32): attribution off — apps opt in by passing their own `identity` (the coding
+ * agent's `providerAttribution` setting injects the fork's OpenRouter headers per request).
+ */
+export const DEFAULT_AGENT_IDENTITY: ClientIdentity = { attribution: null };
 
 /**
  * Start an agent loop with a new prompt message.
@@ -403,6 +413,7 @@ async function streamAssistantResponse(
 	const response = await streamFunction(config.model, llmContext, {
 		...config,
 		apiKey: resolvedApiKey,
+		identity: mergeClientIdentity(DEFAULT_AGENT_IDENTITY, config.identity),
 		signal,
 	});
 	// Record the requested level, whichever stream function answered.
