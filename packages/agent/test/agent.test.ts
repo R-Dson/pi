@@ -1,4 +1,4 @@
-import { type ClientIdentity, PI_ATTRIBUTION } from "@earendil-works/pi-ai";
+import { type ClientIdentity } from "@earendil-works/pi-ai";
 import {
 	type AssistantMessage,
 	createAssistantMessageEventStream,
