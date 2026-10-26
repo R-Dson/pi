@@ -20,6 +20,7 @@ import { contained, SessionImpl } from "../session/session.ts";
 import type { Transaction } from "../session/transaction.ts";
 import { hostTimers } from "../timers.ts";
 import type {
+	CommitOptions,
 	ConversationId,
 	ConversationOwnership,
 	ConversationRecord,
@@ -27,6 +28,8 @@ import type {
 	EntryId,
 	EntryQuery,
 	EntryRecord,
+	Observation,
+	Observer,
 	Page,
 	ReportInfo,
 	Storage,
@@ -45,7 +48,7 @@ import { ProviderDoc } from "./provider.ts";
 import { BUILTIN_TASKS } from "./registry.ts";
 import { type InvocationBinding, TaskScheduler } from "./scheduler.ts";
 import { Submissions } from "./submissions.ts";
-import { TaskGraphView, type TaskGraphWatch } from "./task-graph.ts";
+import { type TaskGraph, TaskGraphView, type TaskGraphWatch } from "./task-graph.ts";
 import { DURABLE_TELEMETRY_SCHEMA } from "./telemetry.ts";
 import type {
 	Agent,
@@ -71,7 +74,7 @@ import type {
 } from "./types.ts";
 import { addUsageState, UsageDoc, type UsageState } from "./usage.ts";
 import { scanAll } from "./util.ts";
-import { ConversationViews } from "./view.ts";
+import { type ConversationView, ConversationViews } from "./view.ts";
 
 const SCAN_PAGE_SIZE = 256;
 
@@ -138,8 +141,8 @@ class ConversationImpl<Tool extends ToolRegistration> implements Conversation {
 		await this.#host.submissions.submit(this.id, { type: "write", entry }, context);
 	}
 
-	commit<T>(change: (tx: Tx) => T | Promise<T>, context: Context): Promise<T> {
-		return this.#host.harness.commitWith(change, context, { conversationId: this.id });
+	commit<T>(change: (tx: Tx) => T | Promise<T>, context: Context, options?: CommitOptions): Promise<T> {
+		return this.#host.harness.commitWith(change, context, { conversationId: this.id }, options);
 	}
 
 	context(context: Context, options?: { readonly at?: EntryId }): Promise<ContextView> {
@@ -213,8 +216,15 @@ class HarnessImpl<Tool extends ToolRegistration> extends SessionImpl implements 
 		const report = safeReport(options.onReport, options.telemetry ?? NOOP_TELEMETRY_CONTEXT);
 		const now = safeNow(options.now, report);
 		const hostSettings = currentSettings(options.settings);
-		// Read at each use, as all settings are, but only this field: it is read on every commit.
-		super(rawStorage, now, () => hostSettings()?.documentRetentionMs, options.setTimer, options.readOnly === true);
+		// Read at each use, as all settings are, but only these fields: they are read on every commit.
+		super(
+			rawStorage,
+			now,
+			() => hostSettings()?.documentRetentionMs,
+			options.setTimer,
+			options.readOnly === true,
+			() => hostSettings()?.progress?.persistWithinMs,
+		);
 		// Every component reads and writes through the Session's failure guard: `rawStorage` serves only `super()`.
 		const storage = this.storage;
 		this.#options = options;
@@ -365,6 +375,20 @@ class HarnessImpl<Tool extends ToolRegistration> extends SessionImpl implements 
 		return this.#taskGraph.watch(context);
 	}
 
+	async observeTaskGraph(observer: Observer<TaskGraph>, context: Context): Promise<Observation<TaskGraph>> {
+		this.assertUsable();
+		return this.#taskGraph.observe(observer, context);
+	}
+
+	async observeConversation(
+		id: ConversationId,
+		observer: Observer<ConversationView>,
+		context: Context,
+	): Promise<Observation<ConversationView>> {
+		this.assertUsable();
+		return this.#host.views.observe(id, observer, context);
+	}
+
 	root(
 		context: Context,
 		options?: { readonly agent?: AgentChange; readonly init?: ConversationInit },
@@ -425,7 +449,10 @@ class HarnessImpl<Tool extends ToolRegistration> extends SessionImpl implements 
 	}
 }
 
-/** Preserve the host callback's error containment; telemetry adapters are responsible for their own failures. */
+/**
+ * Report to `onReport`, then count it and record its event. Never throws, since reports also come from inside Storage's
+ * `adopt`: a throwing `onReport` is dropped, and so is a throwing metric or event, as reporting it would report again.
+ */
 function safeReport(
 	onReport: ((error: unknown, info: ReportInfo) => void) | undefined,
 	telemetry: TelemetryContext,
@@ -459,8 +486,12 @@ function safeReport(
 				attributes["task.id"] = info.task?.id;
 				break;
 		}
-		reports.add(1, { type: info.type });
-		context?.telemetry.addEvent("pi.durable.report", attributes);
+		try {
+			reports.add(1, { type: info.type });
+			context?.telemetry.addEvent("pi.durable.report", attributes);
+		} catch {
+			// Dropped: see above.
+		}
 	};
 }
 

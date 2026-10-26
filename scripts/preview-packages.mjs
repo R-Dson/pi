@@ -58,9 +58,9 @@ async function pack(argv) {
 				stdio: ["inherit", "pipe", "inherit"],
 				maxBuffer: 64 * 1024 * 1024,
 			});
-			// npm >= 12 wraps the pack output in an object keyed by package name; npm 11 returned an array.
+			// npm 10/11 print an array, npm 12 prints an object keyed by package name.
 			const parsed = JSON.parse(output);
-			const [info] = Array.isArray(parsed) ? parsed : Object.values(parsed);
+			const info = Array.isArray(parsed) ? parsed[0] : Object.values(parsed)[0];
 			packed.push({ name: info.name, file: info.filename });
 			console.error(`packed ${info.name}@${info.version} -> ${info.filename}`);
 		} finally {

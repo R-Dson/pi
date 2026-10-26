@@ -26,7 +26,7 @@ async function record(conversation: Conversation) {
 	const watch = await conversation.watch(context);
 	const initial = watch.value;
 	const frames: Frame[] = [];
-	watch.start(async (value, ops) => {
+	watch.start(async ({ value, ops }) => {
 		frames.push({ value, ops });
 	});
 	return { initial, frames, stop: () => watch.stop() };
@@ -228,19 +228,21 @@ describe("conversation view", () => {
 		await harness.close(context);
 	});
 
-	it("replaces undelivered frames with the newest view after 100 pending frames", async () => {
+	it("folds undelivered commits into one call whose ops reach the newest view", async () => {
 		const { harness, root } = await openChat(new MemoryStorage(), chatSetup());
 		const watch = await root.watch(context);
+		const initial = watch.value;
 		for (let index = 0; index < 101; index++) {
 			await root.commit((tx) => tx.appendEntry(root.id, { kind: "note" }), context);
 		}
 		const frames: Frame[] = [];
-		watch.start(async (value, ops) => {
+		watch.start(async ({ value, ops }) => {
 			frames.push({ value, ops });
 		});
 		await drained();
 		expect(frames).toHaveLength(1);
-		expect(frames[0]!.ops).toEqual([["r", frames[0]!.value]]);
+		expect(frames[0]!.ops[0]?.[0]).not.toBe("r");
+		expect(applyImmutable(initial, frames[0]!.ops)).toEqual(frames[0]!.value);
 		expect(frames[0]!.value.entries).toHaveLength(101);
 		await watch.stop();
 		await harness.close(context);

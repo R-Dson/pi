@@ -1310,7 +1310,7 @@ describe("tool rounds", () => {
 		opened = harness;
 		const stream = await watchEvents(harness, root.id, context);
 		const events: AgentEvent[] = [];
-		stream.start(async (batch) => {
+		stream.start(async ({ value: batch }) => {
 			events.push(...batch);
 		});
 		await (await root.submit({ type: "input", content: "go" }, context)).wait(context);
@@ -1336,6 +1336,9 @@ describe("tool rounds", () => {
 			},
 		});
 		const setup = { ...base, models };
+		// The partial is stored at once, so the failed final commit leaves it for the reopened run to convert; held, it would
+		// be lost with the failed Session.
+		setup.settings.progress = { persistWithinMs: 0 };
 		addTask(setup.registry, Node);
 		let opened: Harness | undefined;
 		addHooks(setup.registry, GenerationTask, {
@@ -1758,7 +1761,7 @@ describe("tool rounds and events", () => {
 	async function listen(harness: Harness, conversation: Conversation) {
 		const stream = await watchEvents(harness, conversation.id, context);
 		const events: AgentEvent[] = [];
-		stream.start(async (batch) => {
+		stream.start(async ({ value: batch }) => {
 			events.push(...batch);
 		});
 		return { stream, events };

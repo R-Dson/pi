@@ -1,5 +1,6 @@
 import { type Context, copyJson, type JsonValue } from "@earendil-works/chord";
 import { awaitWithContext, withAbortSignal, withoutAbortSignal, withTelemetry } from "@earendil-works/chord/context";
+import { ownedSlice } from "@earendil-works/chord/delta";
 import type { Models } from "@earendil-works/pi-ai";
 import {
 	createTypedMetrics,
@@ -10,11 +11,11 @@ import {
 } from "@earendil-works/pi-telemetry";
 import type { ExecutionEnv } from "../env/index.ts";
 import { errorMessage, ReadOnlySession } from "../errors.ts";
-import type { SessionImpl } from "../session/session.ts";
+import type { ObservedCommit, SessionImpl } from "../session/session.ts";
 import type { Transaction } from "../session/transaction.ts";
 import type { Timers } from "../timers.ts";
 import type {
-	CommitPublication,
+	CommitOptions,
 	ConversationId,
 	DocumentWatch,
 	EntryId,
@@ -634,7 +635,9 @@ export class TaskScheduler {
 
 	// ─── Scheduling ────────────────────────────────────────────────────────
 
-	#observe(publication: CommitPublication): void {
+	#observe(publication: ObservedCommit): void {
+		// A commit held in memory changes documents only.
+		if (publication.kind === "memory") return;
 		const updated: AnyTaskRecord[] = [];
 		const failed: TaskId[] = [];
 		let changed = false;
@@ -661,9 +664,10 @@ export class TaskScheduler {
 			}
 			if (record.abortRequested && previous?.abortRequested !== true) {
 				this.#cascadePending = true;
-				// Signal a run invocation of the newly marked task; its next step ends it.
+				// Signal a run invocation of the newly marked task; its next step ends it. Abort listeners are task code, which
+				// never runs inside Storage's `adopt`: the signal follows in a microtask, after host commit listeners.
 				const invocation = this.#invocations.get(record.id);
-				if (invocation?.mode === "run") invocation.controller.abort();
+				if (invocation?.mode === "run") queueMicrotask(() => invocation.controller.abort());
 			}
 			// A request replacing a `restart` mark upgrades the marks of the work below.
 			if (previous?.abortReason !== undefined && record.abortReason === undefined) this.#cascadePending = true;
@@ -1020,10 +1024,10 @@ export class TaskScheduler {
 		const invocation = this.#invocations.get(id);
 		if (invocation !== undefined) invocation.record = record as TaskRecord<JsonValue, Checkpoint, JsonValue>;
 		if (record.state.status === "terminal") {
-			if (previous !== undefined && !this.#closing) this.#activeMetric.add(-1, { task: record.kind });
+			if (previous !== undefined && !this.#closing) this.#countActive(-1, record.kind);
 			this.#resumed.delete(id);
 		} else if (previous === undefined && !this.#closing) {
-			this.#activeMetric.add(1, { task: record.kind });
+			this.#countActive(1, record.kind);
 		}
 		if (previous?.state.status === "waiting") for (const on of previous.state.on) deleteFrom(this.#waiters, on, id);
 		if (record.state.status === "terminal") {
@@ -1301,6 +1305,18 @@ export class TaskScheduler {
 		return undefined;
 	}
 
+	/**
+	 * Count a task in or out of `pi.durable.tasks.active`. Commit observers count inside Storage's `adopt`, which must not
+	 * throw, so a throwing adapter is reported.
+	 */
+	#countActive(delta: 1 | -1, kind: string): void {
+		try {
+			this.#activeMetric.add(delta, { task: kind });
+		} catch (error) {
+			this.#report(error, TELEMETRY);
+		}
+	}
+
 	/** Fail the Session, which reports it, for a throw in one of the scheduler's own commits; ignored once closing. */
 	#failSession(error: unknown, context?: Context): void {
 		if (!this.#closing) this.#session.fail(error, context);
@@ -1308,7 +1324,7 @@ export class TaskScheduler {
 
 	/** Close listener: runs synchronously once admission is sealed, before `join()`, or when the Session fails. */
 	#seal(): void {
-		for (const record of this.#live.values()) this.#activeMetric.add(-1, { task: record.kind });
+		for (const record of this.#live.values()) this.#countActive(-1, record.kind);
 		this.#resumed.clear();
 		this.#closing = true;
 		try {
@@ -1326,7 +1342,10 @@ export class TaskScheduler {
 		this.#timer = undefined;
 	}
 
-	/** Recompute the wake in a microtask, off the Session line: arm the built-in timer, or tell `onWake` of a change. */
+	/**
+	 * Recompute the wake in a microtask the line never waits for, with no order relative to host commit listeners (one
+	 * already queued serves later changes too): arm the built-in timer, or tell `onWake` of a change.
+	 */
 	#scheduleWake(): void {
 		if (this.#wakeScheduled || this.#closing || this.#readOnly) return;
 		this.#wakeScheduled = true;
@@ -1801,7 +1820,7 @@ export class TaskScheduler {
 						const message = terminal.status === "orphaned" ? terminal.reason : terminal.error.message;
 						span.setStatus({
 							status: "error",
-							error: { name: `task_${terminal.status}`, message: message.slice(0, 500) },
+							error: { name: `task_${terminal.status}`, message: ownedSlice(message, 0, 500) },
 						});
 					} else if (outcome === "aborted") {
 						span.setStatus({ status: "ok" });
@@ -2144,7 +2163,7 @@ export class TaskScheduler {
 			get registry() {
 				return phase.snapshot();
 			},
-			commit: async (change, context) => {
+			commit: async (change, context, options) => {
 				let checkpoint: string | undefined;
 				await this.#gated(
 					invocation,
@@ -2156,6 +2175,7 @@ export class TaskScheduler {
 						}
 					},
 					context,
+					options,
 				);
 				if (checkpoint !== undefined) {
 					invocation.context.telemetry.addEvent("pi.durable.checkpoint", {
@@ -2342,6 +2362,7 @@ export class TaskScheduler {
 		invocation: Invocation,
 		change: (tx: Transaction, current: ErasedRunningTask) => T | Promise<T>,
 		context: Context,
+		options?: CommitOptions,
 	): Promise<T> {
 		if (invocation.ended) return Promise.reject(endedError(invocation));
 		return this.#session.commitWith(
@@ -2359,6 +2380,7 @@ export class TaskScheduler {
 			},
 			context,
 			{ conversationId: invocation.conversationId, taskId: invocation.taskId },
+			options,
 		);
 	}
 
@@ -2379,6 +2401,7 @@ export class TaskScheduler {
 const REGISTRY: ReportInfo = { type: "host_error", callback: "registry" };
 const SETTINGS: ReportInfo = { type: "host_error", callback: "settings" };
 const ON_WAKE: ReportInfo = { type: "host_error", callback: "onWake" };
+const TELEMETRY: ReportInfo = { type: "host_error", callback: "telemetry" };
 
 /** The extension that installed `task` in `snapshot`, the last one that lists it; none for a built-in task. */
 function installerOf(snapshot: RegistrySnapshot, task: AnyTask | undefined): string | undefined {
