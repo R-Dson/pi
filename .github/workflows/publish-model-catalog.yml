@@ -1,11 +1,9 @@
 name: Publish Model Catalog
 
+# Fork: the workflow_run (post-CI publish) and hourly schedule triggers are
+# removed — the fork does not publish catalogs to pi.dev's worker (issue #32);
+# the path-filtered pull_request self-test and manual dispatch remain.
 on:
-  workflow_run:
-    workflows:
-      - CI
-    types:
-      - completed
   pull_request:
     paths:
       - '.github/workflows/publish-model-catalog.yml'
@@ -16,11 +14,6 @@ on:
       - 'scripts/model-catalog-minimum-version.mjs'
       - 'scripts/model-catalog-protocol.ts'
       - 'scripts/publish-model-catalog.mjs'
-  # GitHub schedules use UTC. Run hourly candidates across the CET/CEST
-  # boundaries; the publish job only uploads at 10:17, 12:17, and 14:17
-  # Europe/Vienna time.
-  schedule:
-    - cron: '17 8-13 * * 1-5'
   workflow_dispatch:
     inputs:
       source_ref:
