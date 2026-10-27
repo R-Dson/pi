@@ -216,8 +216,11 @@ export class AssistantMessageComponent extends Container {
 		// Clear content container
 		this.contentContainer.clear();
 
+		// Hidden thinking renders nothing when the label is blank (#11470), so it
+		// cannot make the message count as having visible content either.
+		const hiddenThinkingBlank = this.hideThinkingBlock && !this.hiddenThinkingLabel.trim();
 		const hasVisibleContent = message.content.some(
-			(c) => (c.type === "text" && c.text.trim()) || hasVisibleThinking(c),
+			(c) => (c.type === "text" && c.text.trim()) || (!hiddenThinkingBlank && hasVisibleThinking(c)),
 		);
 
 		if (hasVisibleContent) {
@@ -274,6 +277,10 @@ export class AssistantMessageComponent extends Container {
 					.some((c) => (c.type === "text" && c.text.trim()) || (c.type === "thinking" && c.thinking.trim()));
 
 				if (this.hideThinkingBlock) {
+					// A blank label renders no rows at all, including no spacing (#11470).
+					if (!this.hiddenThinkingLabel.trim()) {
+						continue;
+					}
 					// Older runs never render when hidden; only the newest run becomes the preview.
 					const hasThinkingAfter = message.content.slice(i + 1).some(hasVisibleThinking);
 					if (hasThinkingAfter) {

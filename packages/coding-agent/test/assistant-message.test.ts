@@ -116,6 +116,51 @@ describe("AssistantMessageComponent", () => {
 		expect(rendered).toContain("answer");
 	});
 
+	test("renders nothing for hidden thinking with an empty label (#11470)", () => {
+		initTheme("dark");
+
+		const thinkingOnly = new AssistantMessageComponent(
+			createAssistantMessage(
+				[
+					{ type: "thinking", thinking: "reasoning" },
+					{ type: "toolCall", id: "tool-1", name: "read", arguments: { path: "file.txt" } },
+				],
+				{ stopReason: "toolUse" },
+			),
+			true,
+			undefined,
+			"",
+		);
+		expect(thinkingOnly.render(80)).toEqual([]);
+
+		const withText = new AssistantMessageComponent(
+			createAssistantMessage([
+				{ type: "thinking", thinking: "reasoning" },
+				{ type: "text", text: "answer" },
+			]),
+			true,
+			undefined,
+			"",
+		);
+		expect(withText.render(80).map((line) => stripAnsi(line).trim())).toEqual(["", "answer"]);
+	});
+
+	test("keeps the preview header row and spacing for hidden thinking with a label", () => {
+		initTheme("dark");
+
+		const component = new AssistantMessageComponent(
+			createAssistantMessage([
+				{ type: "thinking", thinking: "reasoning" },
+				{ type: "text", text: "answer" },
+			]),
+			true,
+		);
+		const rows = component.render(80).map((line) => stripAnsi(line).trim());
+		// The fork's hidden marker is the label plus the expand hint, over a tail excerpt.
+		expect(rows.some((line) => line.startsWith("Thinking..."))).toBe(true);
+		expect(rows[rows.length - 1]).toBe("answer");
+	});
+
 	test("uses configured output padding for text and thinking", () => {
 		initTheme("dark");
 
